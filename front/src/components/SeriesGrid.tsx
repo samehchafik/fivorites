@@ -99,21 +99,36 @@ export function SeriesGrid({
             allowDeselect={false}
             w={100}
           />
-          <Button
-            variant="default"
-            leftSection={<IconRefresh size={16} />}
-            onClick={onRefreshProjection}
-            loading={refreshing}
-          >
-            Rafraîchir la projection
-          </Button>
         </Group>
       </Paper>
 
       {projection?.stale && (
         <Alert color="orange" variant="light" icon={<IconAlertTriangle size={18} />}>
-          {formatNumber(projection.collected - projection.projected)} série(s) collectée(s) depuis
-          le dernier calcul des vignettes. « Rafraîchir la projection » les fera apparaître.
+          <Group justify="space-between" wrap="wrap" gap="sm">
+            <Text size="sm">
+              {formatNumber(projection.collected - projection.projected)} série(s) collectée(s)
+              depuis le dernier calcul des vignettes.{' '}
+              {/* Sans cette phrase, un compteur qui ne retombe jamais à zéro
+                  ressemble à une panne. Il en est l'inverse : c'est la collecte
+                  qui avance pendant qu'on regarde. */}
+              <Text span c="dimmed">
+                Tant qu'une collecte tourne, l'écart se recreuse aussitôt : c'est normal.
+              </Text>
+            </Text>
+            {/* Le bouton est ici plutôt que dans la barre d'outils : c'est
+                l'endroit où l'on apprend qu'il y a quelque chose à faire. Le
+                même geste est disponible dans l'en-tête, à tout moment. */}
+            <Button
+              size="xs"
+              variant="filled"
+              color="orange"
+              leftSection={<IconRefresh size={16} />}
+              onClick={onRefreshProjection}
+              loading={refreshing}
+            >
+              Les faire apparaître
+            </Button>
+          </Group>
         </Alert>
       )}
 

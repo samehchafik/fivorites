@@ -166,9 +166,26 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
 
   const signOut = useMutation({ mutationFn: api.logout, onSuccess: onSignedOut })
 
-  const refreshProjection = useMutation({
+  /**
+   * Le rafraîchissement, en un seul geste.
+   *
+   * Il recalcule d'abord `admin.tv_card` côté serveur — le même
+   * `refresh materialized view` que `fiv-admin catalog refresh`, appelé par la
+   * même fonction — puis relit tout l'affichage. Il y avait auparavant deux
+   * boutons d'aspect voisin, l'un qui relisait, l'autre qui recalculait :
+   * personne ne pouvait deviner lequel faisait quoi, et cliquer sur le mauvais
+   * ne produisait aucun effet visible.
+   *
+   * Le front n'exécute évidemment pas `docker compose` : il n'a pas à savoir
+   * qu'il tourne dans un conteneur, et lui donner la main sur le démon Docker
+   * reviendrait à lui donner la machine. Les deux chemins — bouton et ligne de
+   * commande — arrivent au même SQL par des portes différentes.
+   */
+  const refresh = useMutation({
     mutationFn: api.refreshCatalog,
     onSuccess: (projection) => {
+      void client.invalidateQueries({ queryKey: ['summary'] })
+      void client.invalidateQueries({ queryKey: ['items'] })
       void client.invalidateQueries({ queryKey: ['cards'] })
       notifications.show({
         color: 'teal',
@@ -177,14 +194,12 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       })
     },
     onError: (error: Error) =>
-      notifications.show({ color: 'red', title: 'Échec du rafraîchissement', message: error.message }),
+      notifications.show({
+        color: 'red',
+        title: 'Échec du rafraîchissement',
+        message: error.message,
+      }),
   })
-
-  const reload = () => {
-    void client.invalidateQueries({ queryKey: ['summary'] })
-    void client.invalidateQueries({ queryKey: ['items'] })
-    void client.invalidateQueries({ queryKey: ['cards'] })
-  }
 
   return (
     <AppShell header={{ height: 64 }} padding="md">
@@ -211,13 +226,15 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
               onChange={setLang}
               summary={summary.data}
             />
-            <Tooltip label="Recharger">
+            <Tooltip label="Recalculer les vignettes et tout relire" multiline w={220}>
               <ActionIcon
                 variant="default"
                 size="lg"
-                onClick={reload}
-                loading={items.isFetching || summary.isFetching || cards.isFetching}
-                aria-label="Recharger"
+                onClick={() => refresh.mutate()}
+                loading={
+                  refresh.isPending || items.isFetching || summary.isFetching || cards.isFetching
+                }
+                aria-label="Rafraîchir"
               >
                 <IconRefresh size={18} />
               </ActionIcon>
@@ -276,8 +293,8 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
                 page={gridPage}
                 onPage={setGridPage}
                 onOpen={setModalId}
-                onRefreshProjection={() => refreshProjection.mutate()}
-                refreshing={refreshProjection.isPending}
+                onRefreshProjection={() => refresh.mutate()}
+                refreshing={refresh.isPending}
               />
             </Tabs.Panel>
 
