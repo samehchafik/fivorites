@@ -1,0 +1,16 @@
+# vendor/ pèse ~200 Mo de binaires macOS (CPython + Node) : inutiles dans
+# l'image, et coûteux à envoyer au démon à chaque build.
+vendor/
+.venv/
+bin/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+.env
+tests/
+Makefile
+README.md
+.DS_Store
