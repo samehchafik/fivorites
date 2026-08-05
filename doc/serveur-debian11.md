@@ -251,6 +251,104 @@ Pour éviter `sudo` sur chaque commande Docker :
 sudo usermod -aG docker "$USER"   # puis se reconnecter
 ```
 
+## 7. Le front d'administration
+
+Contrairement au sourcing, c'est un **service permanent** : il répond en HTTP.
+Deux sortes de requêtes, et le partage est net —
+
+| Requête | Traitée par |
+|---|---|
+| `/api/*` | FastAPI, dans le conteneur `admin` |
+| tout le reste | des fichiers, lus dans `./www` monté en volume |
+
+Le front n'est pas dans l'image : ses sources vivent dans `www/`, se
+construisent dans `www/dist`, et le conteneur y accède par le montage. En
+redéployer une version ne demande donc **ni rebuild ni push**.
+
+Le secret de session d'abord — sans lui le compose refuse de démarrer :
+
+```bash
+echo "ADMIN_SECRET_KEY=$(openssl rand -hex 32)" >> .env
+```
+
+Le schéma `admin` (il ajoute aussi les index de lecture sur `sourcing`, donc
+`sourcing db migrate` doit être passé avant) :
+
+```bash
+sudo docker compose run --rm admin db migrate
+```
+
+Le front, construit par un conteneur Node qui ne vit que le temps du build :
+
+```bash
+sudo docker compose run --rm www-build
+```
+
+Un compte — le mot de passe est demandé à l'invite, jamais passé en argument,
+sans quoi il finirait dans l'historique du shell. `-it` est nécessaire pour que
+l'invite fonctionne :
+
+```bash
+sudo docker compose run --rm -it admin user add sameh --name "Sameh"
+```
+
+Puis le service :
+
+```bash
+sudo docker compose up -d admin
+sudo docker compose run --rm admin doctor
+```
+
+`doctor` doit afficher :
+
+```
+✓  interpréteur         3.12.x — image, pas de vendor/
+✓  secret de session    configuré
+✓  base                 postgresql://fivorites_v2:***@172.28.0.1:5432/fivorites_v2
+✓  schéma sourcing      présent
+✓  schéma admin         présent
+✓  comptes              1
+✓  catalogue            228 454 séries
+✓  front construit      /srv/www/dist
+```
+
+**Le port n'est publié que sur `127.0.0.1`**, volontairement : un formulaire de
+connexion sur l'internet sans TLS, c'est un mot de passe en clair sur le réseau.
+Deux façons d'y accéder :
+
+```bash
+ssh -L 8182:127.0.0.1:8182 serveur     # tunnel — rien à installer sur le serveur
+```
+
+ou un reverse proxy TLS devant (nginx, Caddy). Dans ce cas, et seulement dans ce
+cas, passer `ADMIN_COOKIE_SECURE=true` dans `.env` : le cookie de session refuse
+alors de circuler hors HTTPS.
+
+### Après une collecte
+
+La grille de cartes lit une projection (`admin.tv_card`), pas le brut — trier
+228 000 séries sur une date qui vit dans un `jsonb` de plusieurs centaines de
+kilooctets décompresserait toute la table à chaque page. À recalculer donc après
+chaque passe :
+
+```bash
+sudo docker compose run --rm admin catalog refresh
+```
+
+Le front le signale de lui-même quand la projection est en retard, et un bouton
+y fait la même chose. La fiche d'une série, elle, relit toujours le brut : ce
+qu'on ouvre n'est jamais périmé.
+
+### Mettre à jour
+
+```bash
+git pull
+sudo docker compose run --rm www-build          # le front
+sudo docker compose build admin                 # l'API, seulement si src/ a bougé
+sudo docker compose run --rm admin db migrate   # seulement si migrations/ a bougé
+sudo docker compose up -d admin
+```
+
 ## Sauvegarde
 
 La base est sur l'hôte : pas de volume Docker à sauvegarder.

@@ -31,6 +31,76 @@ services:
       TMDB_RATE_LIMIT: ${TMDB_RATE_LIMIT:-20}
       TMDB_SEASON_LANGUAGES: ${TMDB_SEASON_LANGUAGES:-fr-FR,en-US,es-ES,ar-SA,tr-TR}
 
+  # --- Administration --------------------------------------------------------
+  #
+  # Service permanent, contrairement à `sourcing` : il répond en HTTP.
+  #
+  # Deux sortes de requêtes, et le partage se lit ici :
+  #
+  #   /api/*        → FastAPI, dans ce conteneur
+  #   tout le reste → des fichiers, lus dans ./www monté en volume
+  #
+  # Le front n'est pas dans l'image. Ses sources sont dans ./www, se construisent
+  # dans ./www/dist, et le conteneur y accède par le montage ci-dessous. En
+  # redéployer une version ne demande donc ni rebuild ni push : on reconstruit
+  # ./www/dist et on recharge la page.
+  #
+  # Ce qui est *servi* est `./www/dist`, pas `./www` : le répertoire porte aussi
+  # les sources, `package.json` et `node_modules`. Les exposer en HTTP donnerait
+  # à lire le code du front et des dizaines de milliers de fichiers de
+  # dépendances. Le montage couvre ./www, le service ne publie que dist/.
+  admin:
+    build:
+      context: ./admin
+    image: fivorites-v2/admin:latest
+    restart: unless-stopped
+    ports:
+      # Sur 127.0.0.1 seulement : l'administration n'a rien à faire sur
+      # l'internet sans TLS ni reverse proxy devant. Publier sur 0.0.0.0
+      # exposerait un formulaire de connexion en clair.
+      - "127.0.0.1:${ADMIN_PORT:-8182}:8182"
+    volumes:
+      # Lecture seule : le service sert ces fichiers, il ne les écrit jamais.
+      - ./www:/srv/www:ro
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-fivorites_v2}:${DB_PASSWORD:?DB_PASSWORD doit être défini dans .env}@${DB_HOST:-172.28.0.1}:${DB_PORT:-5432}/${DB_NAME:-fivorites_v2}
+      SOURCING_SCHEMA: ${DB_SCHEMA:-sourcing}
+      ADMIN_SCHEMA: ${ADMIN_SCHEMA:-admin}
+      # Obligatoire : sans elle un secret est tiré au hasard à chaque démarrage,
+      # donc toute session saute au redémarrage.  openssl rand -hex 32
+      ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:?ADMIN_SECRET_KEY doit être défini dans .env}
+      # `Secure` sur le cookie : à mettre à true dès qu'un TLS est devant.
+      COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
+      SESSION_TTL_HOURS: ${ADMIN_SESSION_TTL_HOURS:-12}
+      # Une seule origine en production (l'API sert les fichiers) : rien à
+      # autoriser en CORS.
+      CORS_ORIGINS: ""
+      SEASON_LANGUAGES: ${TMDB_SEASON_LANGUAGES:-fr-FR,en-US,es-ES,ar-SA,tr-TR}
+      WEB_DIST: /srv/www/dist
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8182/api/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Construit ./www/dist depuis ./www. Node ne vit que le temps du build : il n'y
+  # a pas de service Node en production, seulement des fichiers.
+  #
+  #   docker compose run --rm www-build
+  #
+  # Le profil `build` l'écarte de `compose up` — c'est une tâche, pas un service.
+  www-build:
+    image: node:22-bookworm-slim
+    profiles: ["build"]
+    working_dir: /srv/www
+    volumes:
+      # En écriture ici, forcément : c'est ce service qui produit dist/.
+      - ./www:/srv/www
+    # `npm ci` plutôt que `install` : les versions sont celles du lock, à
+    # l'octet près, et non « ce que le registre propose aujourd'hui ».
+    command: sh -c "npm ci --no-audit --no-fund && npm run build"
+
 networks:
   default:
     ipam:
