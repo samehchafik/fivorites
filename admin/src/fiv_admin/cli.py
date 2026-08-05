@@ -179,6 +179,11 @@ def user_add(
 ) -> None:
     """Crée un compte. Le mot de passe est demandé, jamais passé en argument —
     une ligne de commande finit dans l'historique du shell."""
+    # Vérifié avant l'invite, pas après : se faire saisir un mot de passe deux
+    # fois pour apprendre ensuite que la table n'existe pas est le genre de
+    # détail qui use.
+    _require_admin_schema()
+
     password = typer.prompt("Mot de passe", hide_input=True, confirmation_prompt=True)
     if len(password) < 12:
         typer.echo("Mot de passe trop court : 12 caractères au minimum.")
@@ -325,12 +330,48 @@ async def _status() -> dict[str, Any]:
     }
 
 
+def _require_admin_schema() -> None:
+    """Échoue avec une consigne si `admin.admin_user` n'existe pas.
+
+    C'est l'état d'une base migrée pour `sourcing` mais pas encore pour
+    l'administration — le cas normal au premier déploiement. Sans ce contrôle,
+    la première commande de compte se termine par une trace `UndefinedTable`,
+    qui dit *quelle table* manque mais pas *quoi faire*.
+    """
+    settings = get_settings()
+
+    async def run() -> str | None:
+        async with connect(settings.database_url) as conn, conn.cursor() as cur:
+            await cur.execute("select to_regclass(%s)", (f"{settings.admin_schema}.admin_user",))
+            row = await cur.fetchone()
+        return row[0] if row else None
+
+    if _run(run()) is None:
+        typer.echo(f"Le schéma « {settings.admin_schema} » n'existe pas encore.")
+        typer.echo("→ appliquer les migrations d'abord :")
+        typer.echo("     fiv-admin db migrate")
+        typer.echo("   en conteneur :")
+        typer.echo("     docker compose run --rm admin db migrate")
+        typer.echo("")
+        typer.echo("   Si cette commande échoue sur « schéma sourcing absent », c'est que")
+        typer.echo("   la collecte n'a pas encore migré cette base :")
+        typer.echo("     docker compose run --rm sourcing db migrate")
+        raise typer.Exit(1)
+
+
 def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     try:
         return asyncio.run(coro)
     except psycopg.OperationalError as exc:
         typer.echo(f"ERREUR de connexion : {exc}")
         typer.echo("→ vérifier DATABASE_URL dans admin/.env")
+        raise typer.Exit(1) from exc
+    except psycopg.errors.UndefinedTable as exc:
+        # Le filet pour les autres commandes de compte, qui n'ont pas d'invite
+        # à protéger et vont donc droit à la requête.
+        typer.echo(f"ERREUR : {exc}")
+        typer.echo("→ le schéma de l'administration n'est pas créé :")
+        typer.echo("     fiv-admin db migrate")
         raise typer.Exit(1) from exc
 
 

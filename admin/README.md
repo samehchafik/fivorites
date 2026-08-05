@@ -104,7 +104,7 @@ make dev          # l'API (8182) et Vite (5173) côte à côte → http://localh
 make api          # l'API seule, rechargement à chaud
 make web-build    # construit ../front dans ../www
 make serve        # l'API sert le front → http://127.0.0.1:8182
-make test         # 71 tests
+make test         # 74 tests
 make lint         # ruff + tsc
 ```
 
@@ -147,9 +147,9 @@ Trois points de conception, tous vérifiables dans le compose :
 * **Node ne tourne pas en production.** Le service `www-build` est une tâche
   (profil `build`), pas un service : il construit des fichiers et s'arrête. Ce
   qui reste servi, ce sont des fichiers statiques.
-* **Le port n'est publié que sur `127.0.0.1`.** Un formulaire de connexion sur
-  l'internet sans TLS, c'est un mot de passe en clair sur le réseau : un tunnel
-  SSH ou un reverse proxy TLS se met devant, et alors seulement
+* **Le port est publié sur `0.0.0.0`**, réglable par `ADMIN_BIND`. Tant qu'il
+  n'y a pas de TLS devant, le mot de passe de connexion et le cookie de session
+  circulent en clair. Avec un reverse proxy TLS : `ADMIN_BIND=127.0.0.1` et
   `ADMIN_COOKIE_SECURE=true`.
 
 ## Comment c'est fait

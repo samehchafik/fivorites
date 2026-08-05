@@ -321,17 +321,28 @@ sudo docker compose run --rm admin doctor
 ✓  front construit      /srv/www
 ```
 
-**Le port n'est publié que sur `127.0.0.1`**, volontairement : un formulaire de
-connexion sur l'internet sans TLS, c'est un mot de passe en clair sur le réseau.
-Deux façons d'y accéder :
+Le port est publié sur `0.0.0.0` par défaut : l'administration répond sur
+`http://<serveur>:8182`, directement.
+
+Ce qui circule alors en clair sur le réseau : le mot de passe saisi dans le
+formulaire, et le cookie de session à chaque requête. C'est acceptable le temps
+de la mise en route ; ça ne l'est plus quand la base contient des données ou que
+le service reste en ligne.
+
+Le jour où un reverse proxy TLS est devant (nginx, Caddy), deux lignes dans
+`.env` referment tout :
 
 ```bash
-ssh -L 8182:127.0.0.1:8182 serveur     # tunnel — rien à installer sur le serveur
+ADMIN_BIND=127.0.0.1        # plus joignable que depuis la machine
+ADMIN_COOKIE_SECURE=true    # le cookie refuse de circuler hors HTTPS
 ```
 
-ou un reverse proxy TLS devant (nginx, Caddy). Dans ce cas, et seulement dans ce
-cas, passer `ADMIN_COOKIE_SECURE=true` dans `.env` : le cookie de session refuse
-alors de circuler hors HTTPS.
+Avec `ADMIN_BIND=127.0.0.1`, l'accès se fait par un tunnel — rien à installer
+sur le serveur :
+
+```bash
+ssh -L 8182:127.0.0.1:8182 serveur
+```
 
 ### Après une collecte
 

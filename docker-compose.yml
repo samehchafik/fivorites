@@ -54,10 +54,14 @@ services:
     image: fivorites-v2/admin:latest
     restart: unless-stopped
     ports:
-      # Sur 127.0.0.1 seulement : l'administration n'a rien à faire sur
-      # l'internet sans TLS ni reverse proxy devant. Publier sur 0.0.0.0
-      # exposerait un formulaire de connexion en clair.
-      - "127.0.0.1:${ADMIN_PORT:-8182}:8182"
+      # Adresse d'écoute réglable, ouverte par défaut — choix explicite pour
+      # pouvoir joindre l'administration directement pendant la mise en route.
+      #
+      # Ce qui circule alors en clair : le mot de passe du formulaire de
+      # connexion, et le cookie de session à chaque requête. `ADMIN_BIND=127.0.0.1`
+      # dans `.env` referme l'accès à la machine (on y arrive par un tunnel SSH)
+      # le jour où un reverse proxy TLS est en place — avec `ADMIN_COOKIE_SECURE=true`.
+      - "${ADMIN_BIND:-0.0.0.0}:${ADMIN_PORT:-8182}:8182"
     volumes:
       # Lecture seule : le service sert ces fichiers, il ne les écrit jamais.
       - ./www:/srv/www:ro
