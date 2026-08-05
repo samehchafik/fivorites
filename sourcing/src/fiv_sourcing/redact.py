@@ -21,13 +21,45 @@ from urllib.parse import urlsplit, urlunsplit
 # `api_key` pour TMDB, les autres par précaution : ce filtre traverse tous les
 # logs, autant qu'il couvre les noms usuels.
 _SECRET_PARAM = re.compile(
-    r"(?i)\b(api_key|apikey|access_token|session_id|password|token)=[^&\s\"'<>]+"
+    r"(?i)\b(api_key|apikey|access_token|session_id|password|passwd|secret|token)"
+    r"=([^&\s\"'<>]+)"
 )
+
+# Un mot de passe est choisi par un humain : souvent court, souvent structuré.
+# En montrer treize caractères en révélerait l'essentiel. Une clé d'API est
+# tirée au hasard sur trente caractères ou plus — une empreinte n'y donne aucune
+# prise. D'où deux traitements distincts.
+_TOUJOURS_MASQUE = frozenset({"password", "passwd", "secret"})
+
+HEAD, TAIL = 5, 8
+_LONGUEUR_MINIMALE = HEAD + TAIL + 8
+
+
+def fingerprint(value: str) -> str:
+    """Empreinte lisible d'un secret : `b2788.....23721262`.
+
+    Assez pour reconnaître la clé en usage — vérifier qu'une rotation a bien
+    pris, distinguer deux environnements — pas assez pour s'en servir : sur une
+    clé TMDB de 32 caractères hexadécimaux, il en reste 19 inconnus.
+
+    En dessous d'une certaine longueur, on masque tout : sur un secret court,
+    une empreinte en révélerait la majeure partie.
+    """
+    if len(value) < _LONGUEUR_MINIMALE:
+        return "***"
+    return f"{value[:HEAD]}.....{value[-TAIL:]}"
 
 
 def redact_secrets(text: str) -> str:
-    """Remplace la valeur des paramètres sensibles par `***`."""
-    return _SECRET_PARAM.sub(r"\1=***", text)
+    """Remplace la valeur des paramètres sensibles par leur empreinte."""
+
+    def remplacer(match: re.Match[str]) -> str:
+        nom, valeur = match.group(1), match.group(2)
+        if nom.lower() in _TOUJOURS_MASQUE:
+            return f"{nom}=***"
+        return f"{nom}={fingerprint(valeur)}"
+
+    return _SECRET_PARAM.sub(remplacer, text)
 
 
 def redact_dsn(dsn: str) -> str:

@@ -10,32 +10,55 @@ import logging
 
 import pytest
 
-from fiv_sourcing.redact import SecretFilter, redact_dsn, redact_secrets
+from fiv_sourcing.redact import SecretFilter, fingerprint, redact_dsn, redact_secrets
 
-URL_TMDB = (
-    "https://api.themoviedb.org/3/tv/217/season/21"
-    "?language=ar-SA&api_key=b2788d431e93532f095b33ea23721262"
-)
+CLE = "b2788d431e93532f095b33ea23721262"
+EMPREINTE = "b2788.....23721262"
+
+URL_TMDB = f"https://api.themoviedb.org/3/tv/217/season/21?language=ar-SA&api_key={CLE}"
 
 
-def test_la_cle_api_est_masquee_dans_une_url():
+def test_l_empreinte_identifie_la_cle_sans_la_livrer():
+    """Reconnaître quelle clé est chargée — après une rotation, entre deux
+    environnements — sans qu'elle soit réutilisable : sur 32 caractères
+    hexadécimaux, 19 restent inconnus."""
+    assert fingerprint(CLE) == EMPREINTE
+    assert CLE not in fingerprint(CLE)
+
+
+def test_un_secret_court_est_masque_entierement():
+    """Une empreinte sur un secret court en révélerait la majeure partie."""
+    assert fingerprint("court") == "***"
+    assert fingerprint("a" * 20) == "***"
+    assert fingerprint("a" * 21) != "***"
+
+
+def test_la_cle_api_est_remplacee_par_son_empreinte_dans_une_url():
     masque = redact_secrets(URL_TMDB)
-    assert "b2788d431e93532f095b33ea23721262" not in masque
-    assert "api_key=***" in masque
+    assert CLE not in masque
+    assert f"api_key={EMPREINTE}" in masque
     assert "language=ar-SA" in masque, "le reste de l'URL doit rester lisible"
 
 
 @pytest.mark.parametrize(
-    "parametre",
-    ["api_key", "apikey", "API_KEY", "access_token", "session_id", "password", "token"],
+    "parametre", ["api_key", "apikey", "API_KEY", "access_token", "session_id", "token"]
 )
 def test_les_noms_usuels_sont_couverts(parametre: str):
-    assert redact_secrets(f"https://h/x?{parametre}=s3cr3t") == f"https://h/x?{parametre}=***"
+    assert (
+        redact_secrets(f"https://h/x?{parametre}={CLE}") == f"https://h/x?{parametre}={EMPREINTE}"
+    )
+
+
+@pytest.mark.parametrize("parametre", ["password", "passwd", "secret"])
+def test_un_mot_de_passe_est_masque_en_entier_meme_s_il_est_long(parametre: str):
+    """Contrairement à une clé tirée au hasard, un mot de passe est choisi par
+    un humain : souvent structuré, donc devinable à partir d'un fragment."""
+    assert redact_secrets(f"https://h/x?{parametre}={CLE}") == f"https://h/x?{parametre}=***"
 
 
 def test_un_parametre_suivi_d_un_autre_est_masque_sans_deborder():
-    masque = redact_secrets("https://h/x?api_key=s3cr3t&page=2")
-    assert masque == "https://h/x?api_key=***&page=2"
+    masque = redact_secrets(f"https://h/x?api_key={CLE}&page=2")
+    assert masque == f"https://h/x?api_key={EMPREINTE}&page=2"
 
 
 def test_le_filtre_masque_les_messages_de_bibliotheques_tierces():
@@ -53,8 +76,8 @@ def test_le_filtre_masque_les_messages_de_bibliotheques_tierces():
 
     SecretFilter().filter(record)
 
-    assert "b2788d431e93532f095b33ea23721262" not in record.getMessage()
-    assert "api_key=***" in record.getMessage()
+    assert CLE not in record.getMessage()
+    assert f"api_key={EMPREINTE}" in record.getMessage()
 
 
 def test_le_filtre_laisse_passer_les_messages_sans_secret():

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 from fiv_sourcing.config import VENDOR_DIR, Settings, get_settings
 from fiv_sourcing.db import MigrationsNotFound, connect, migrate, ping
 from fiv_sourcing.http import FetcherStats
-from fiv_sourcing.redact import SecretFilter, redact_dsn
+from fiv_sourcing.redact import SecretFilter, fingerprint, redact_dsn
 
 app = typer.Typer(help="Acquisition de données Fivorites V2 — séries", no_args_is_help=True)
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
@@ -72,7 +72,11 @@ def doctor() -> None:
         ok &= _line("identifiants TMDB", False, "aucun")
         typer.echo("        → renseigner TMDB_BEARER (token v4) dans .env")
     else:
+        # L'empreinte permet de vérifier *quelle* clé est chargée — utile après
+        # une rotation, ou pour distinguer deux environnements.
+        secret = settings.tmdb_bearer or settings.tmdb_api_key
         kind = "token v4" if settings.tmdb_bearer else "clé v3"
+        kind = f"{kind} {fingerprint(secret)}"
         # On demande son avis à TMDB : une variable non vide ne prouve rien.
         status = asyncio.run(_tmdb_check(settings))
         ok &= _line("identifiants TMDB", status == 200, f"{kind} — {_http_label(status)}")
