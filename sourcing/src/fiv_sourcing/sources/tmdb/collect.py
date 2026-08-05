@@ -85,6 +85,13 @@ async def collect_series(
     return report
 
 
+# Un 401/403 ne dit rien sur l'œuvre, seulement sur notre configuration. Le
+# stocker polluerait `raw_source` d'autant de lignes qu'il y a d'ids tentés le
+# jour où un jeton expire. Un 404, à l'inverse, est un fait sur la source —
+# « cet id a disparu de TMDB » — et se conserve.
+NOT_ABOUT_THE_WORK = frozenset({401, 403})
+
+
 async def _persist(
     conn: psycopg.AsyncConnection,
     kind: str,
@@ -92,15 +99,17 @@ async def _persist(
     lang: str,
     result: FetchResult,
 ) -> bool:
-    written = await store.store_raw(
-        conn,
-        source=SOURCE,
-        kind=kind,
-        source_id=source_id,
-        lang=lang,
-        http_status=result.status,
-        payload=result.payload,
-    )
+    written = False
+    if result.status not in NOT_ABOUT_THE_WORK:
+        written = await store.store_raw(
+            conn,
+            source=SOURCE,
+            kind=kind,
+            source_id=source_id,
+            lang=lang,
+            http_status=result.status,
+            payload=result.payload,
+        )
     await store.mark_fetch(
         conn,
         source=SOURCE,

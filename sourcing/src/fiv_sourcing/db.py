@@ -46,13 +46,28 @@ async def connect(dsn: str, *, schema: str | None = None) -> AsyncIterator[psyco
         await conn.close()
 
 
+class MigrationsNotFound(RuntimeError):
+    """Le répertoire de migrations est absent ou vide."""
+
+
 async def migrate(conn: psycopg.AsyncConnection, migrations_dir: Path) -> list[str]:
     """Applique les migrations manquantes, dans l'ordre du nom de fichier.
 
     Chaque fichier est joué dans sa propre transaction et enregistré dans le
     même commit : une migration qui échoue à mi-parcours n'est jamais marquée
     comme appliquée.
+
+    Lève `MigrationsNotFound` si le répertoire est introuvable ou ne contient
+    aucun `.sql`. Sans ce garde-fou, un chemin erroné — cas typique d'une image
+    mal construite, où `migrations/` n'a pas été copié — se traduirait par
+    « 0 migration appliquée » et un code de sortie 0 : un succès apparent, une
+    base vide, et rien pour relier les deux.
     """
+    if not migrations_dir.is_dir():
+        raise MigrationsNotFound(f"répertoire de migrations introuvable : {migrations_dir}")
+    if not any(migrations_dir.glob("*.sql")):
+        raise MigrationsNotFound(f"aucun fichier .sql dans {migrations_dir}")
+
     await conn.execute(_MIGRATIONS_TABLE)
 
     async with conn.cursor() as cur:

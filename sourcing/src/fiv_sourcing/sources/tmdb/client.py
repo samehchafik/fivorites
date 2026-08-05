@@ -101,6 +101,16 @@ class TmdbClient:
             self._params({"start_date": start_date, "page": page}),
         )
 
+    async def configuration(self) -> FetchResult:
+        """L'endpoint authentifié le plus léger de TMDB.
+
+        Sert à vérifier les identifiants pour de vrai : une variable non vide ne
+        prouve rien, seul TMDB sait si le jeton est valide.
+        """
+        return await self._fetcher.get_json(
+            f"{self._settings.tmdb_base_url}/configuration", self._params({})
+        )
+
 
 def build_fetcher(settings: Settings) -> HttpFetcher:
     return HttpFetcher(
