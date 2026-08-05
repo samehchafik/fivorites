@@ -26,8 +26,8 @@ DB_HOST  ?= localhost
 DB_PORT  ?= 5432
 PSQL     := psql -h $(DB_HOST) -p $(DB_PORT) -U postgres -d postgres
 
-.PHONY: bootstrap sync guard doctor test lint fmt db-create db-drop migrate \
-        docker-build docker-create docker-migrate docker-doctor docker-down clean
+.PHONY: bootstrap sync guard doctor test lint fmt db-create db-drop db-drop-test \
+        migrate docker-build docker-create docker-migrate docker-doctor docker-down clean
 
 ## Installe le CPython vendorisé, la venv et les dépendances.
 bootstrap:
@@ -74,19 +74,30 @@ migrate: guard
 
 # --- Postgres local (poste de dev, sans Docker) ------------------------------
 
-## Crée le rôle et la base sur le Postgres déjà installé sur la machine.
+## Crée le rôle et les deux bases sur le Postgres déjà installé sur la machine.
 ## Idempotent.
+##
+## Deux bases, et ce n'est pas du zèle : les tests vident les tables entre
+## chaque cas. S'ils tournaient sur la base de travail, un `make test` suffirait
+## à effacer un catalogue de 228 000 séries.
 db-create:
 	@$(PSQL) -tAc "select 1 from pg_roles where rolname = '$(DB_OWNER)'" | grep -q 1 \
 	  && echo "rôle $(DB_OWNER) déjà présent" \
 	  || $(PSQL) -c 'create role $(DB_OWNER) with login'
-	@$(PSQL) -tAc "select 1 from pg_database where datname = '$(DB_NAME)'" | grep -q 1 \
-	  && echo "base $(DB_NAME) déjà présente" \
-	  || $(PSQL) -c 'create database $(DB_NAME) owner $(DB_OWNER)'
+	@for base in $(DB_NAME) $(DB_NAME)_test; do \
+	  $(PSQL) -tAc "select 1 from pg_database where datname = '$$base'" | grep -q 1 \
+	    && echo "base $$base déjà présente" \
+	    || $(PSQL) -c "create database $$base owner $(DB_OWNER)"; \
+	done
 
-## Détruit la base. Ne touche jamais aux autres bases du serveur.
+## Détruit les deux bases. Ne touche jamais aux autres bases du serveur.
 db-drop:
 	$(PSQL) -c 'drop database if exists $(DB_NAME)'
+	$(PSQL) -c 'drop database if exists $(DB_NAME)_test'
+
+## Détruit la seule base de test.
+db-drop-test:
+	$(PSQL) -c 'drop database if exists $(DB_NAME)_test'
 
 # --- Serveur (Docker) --------------------------------------------------------
 # Le compose vit à la racine du dépôt : il orchestrera aussi les autres services

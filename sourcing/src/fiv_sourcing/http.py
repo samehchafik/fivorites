@@ -95,6 +95,31 @@ class HttpFetcher:
         if self._owns_client:
             await self._client.aclose()
 
+    async def get_bytes(self, url: str, timeout: float | None = None) -> tuple[int, bytes]:
+        """Télécharge un fichier. Renvoie (statut HTTP, contenu).
+
+        Distinct de `get_json` parce que l'export quotidien de TMDB n'est pas
+        une réponse d'API : c'est une archive de plusieurs mégaoctets, sans
+        authentification, dont on ne veut ni le parsing JSON ni la mise en
+        `raw_source`. Même limiteur et même politique de reprise malgré tout.
+        """
+        last_status = 0
+        for attempt in range(1, self._max_attempts + 1):
+            await self._limiter.acquire()
+            try:
+                response = await self._client.get(url, timeout=timeout)
+            except httpx.HTTPError as exc:
+                log.warning("échec du téléchargement de %s : %s", url, exc)
+            else:
+                last_status = response.status_code
+                if response.is_success:
+                    return last_status, response.content
+                if last_status not in RETRYABLE_STATUS:
+                    return last_status, b""
+            if attempt < self._max_attempts:
+                await asyncio.sleep(_backoff(attempt))
+        return last_status, b""
+
     async def get_json(self, url: str, params: dict[str, Any] | None = None) -> FetchResult:
         last_error: str | None = None
         status = 0

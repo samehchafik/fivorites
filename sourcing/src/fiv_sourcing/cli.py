@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 import sys
+import time
 from collections.abc import Callable, Coroutine
+from datetime import date
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import psycopg
 import typer
+
+if TYPE_CHECKING:
+    from fiv_sourcing.sources.tmdb.backfill import BackfillReport
+    from fiv_sourcing.sources.tmdb.export import ExportReport
 
 from fiv_sourcing.config import VENDOR_DIR, Settings, get_settings
 from fiv_sourcing.db import MigrationsNotFound, connect, migrate, ping
@@ -136,12 +143,220 @@ def tmdb_fetch(
     raise typer.Exit(1 if _run_db(run) else 0)
 
 
+@tmdb_app.command("export")
+def tmdb_export(
+    day: Annotated[
+        str | None,
+        typer.Option(
+            "--date", help="Export d'un jour donné (AAAA-MM-JJ). Défaut : le plus récent."
+        ),
+    ] = None,
+) -> None:
+    """Récupère la liste de toutes les séries depuis l'export quotidien TMDB.
+
+    Fichier public, aucune clé d'API requise, aucun quota consommé.
+    """
+    from fiv_sourcing.sources.tmdb.client import build_public_fetcher
+    from fiv_sourcing.sources.tmdb.export import ExportUnavailable, refresh_catalog
+
+    settings = get_settings()
+    wanted = date.fromisoformat(day) if day else None
+
+    async def run() -> ExportReport:
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            fetcher = build_public_fetcher(settings)
+            async with fetcher:
+                return await refresh_catalog(conn, fetcher, wanted)
+
+    try:
+        report = _run_db(run)
+    except ExportUnavailable as exc:
+        typer.echo(f"ERREUR : {exc}")
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"export       : {report.url}")
+    typer.echo(f"date         : {report.exported_on}")
+    typer.echo(f"séries lues  : {report.series_read:>9,}".replace(",", " "))
+    typer.echo(f"nouvelles    : {report.inserted:>9,}".replace(",", " "))
+    typer.echo(f"mises à jour : {report.updated:>9,}".replace(",", " "))
+
+
+@tmdb_app.command("backfill")
+def tmdb_backfill(
+    limit: Annotated[
+        int | None, typer.Option("--limit", help="Nombre de séries à traiter. Défaut : toutes.")
+    ] = None,
+    concurrency: Annotated[
+        int, typer.Option("--concurrency", help="Séries traitées en parallèle.")
+    ] = 4,
+    order: Annotated[
+        str, typer.Option("--order", help="id (neutre, défaut) ou popularity.")
+    ] = "id",
+    refresh_after: Annotated[
+        int | None,
+        typer.Option(
+            "--refresh-after", help="Reprendre aussi les séries collectées il y a plus de N jours."
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Compter le reste à faire, sans rien collecter.")
+    ] = False,
+) -> None:
+    """Collecte tout le catalogue. Reprend là où la passe précédente s'est arrêtée.
+
+    Aucun filtre : ce qui mérite d'être montré se décide en aval, sur des
+    données complètes.
+    """
+    from fiv_sourcing.sources.tmdb.backfill import BackfillReport, backfill, pending_ids
+    from fiv_sourcing.sources.tmdb.client import TmdbClient, build_fetcher
+
+    settings = get_settings()
+    if not settings.has_tmdb_credentials and not dry_run:
+        typer.echo("Aucun identifiant TMDB. Renseigner TMDB_BEARER ou TMDB_API_KEY dans .env")
+        raise typer.Exit(2)
+
+    started = time.monotonic()
+    last_shown = 0.0
+
+    def show(report: BackfillReport) -> None:
+        nonlocal last_shown
+        now = time.monotonic()
+        # Une ligne toutes les 10 s, plus la dernière : sur 228 000 séries, un
+        # affichage par unité noierait les avertissements réellement utiles.
+        if now - last_shown < 10 and report.remaining:
+            return
+        last_shown = now
+        elapsed = now - started
+        rate = report.done / elapsed if elapsed else 0
+        eta = report.remaining / rate if rate else 0
+        typer.echo(
+            f"{report.done:>7}/{report.selected}  "
+            f"{report.ok} ok  {report.failed} échec(s)  "
+            f"{rate:5.2f} série/s  reste {_duree(eta)}"
+        )
+
+    async def run() -> BackfillReport:
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            ids = await pending_ids(conn, refresh_after=refresh_after, limit=limit, order=order)
+            if dry_run or not ids:
+                return BackfillReport(selected=len(ids))
+
+            stop = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for signame in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(signame, _request_stop, stop)
+
+            fetcher = build_fetcher(settings)
+            async with fetcher:
+                return await backfill(
+                    conn,
+                    TmdbClient(fetcher, settings),
+                    ids,
+                    concurrency=concurrency,
+                    stop=stop,
+                    on_progress=show,
+                )
+
+    typer.echo(f"langues : {', '.join(settings.season_languages)}")
+    report = _run_db(run)
+
+    if dry_run:
+        typer.echo(f"à collecter : {report.selected} série(s)")
+        return
+    if not report.selected:
+        typer.echo("Rien à collecter. Lancer `tmdb export` si le catalogue est vide.")
+        return
+
+    typer.echo("")
+    typer.echo(f"traitées      : {report.done}/{report.selected}")
+    typer.echo(f"réussies      : {report.ok}")
+    typer.echo(f"en échec      : {report.failed}")
+    typer.echo(f"requêtes      : {report.requests}")
+    typer.echo(f"lignes brutes : {report.rows_written}")
+    if report.interrupted:
+        typer.echo("")
+        typer.echo(f"Interrompu — {report.remaining} série(s) restantes.")
+        typer.echo("Relancer la même commande reprend où on s'est arrêté.")
+        raise typer.Exit(130)
+
+
+def _request_stop(stop: asyncio.Event) -> None:
+    if not stop.is_set():
+        typer.echo("\nArrêt demandé — on termine les collectes en cours…")
+        stop.set()
+
+
+def _duree(seconds: float) -> str:
+    if seconds <= 0:
+        return "—"
+    heures, reste = divmod(int(seconds), 3600)
+    minutes, secondes = divmod(reste, 60)
+    if heures:
+        return f"{heures} h {minutes:02d}"
+    if minutes:
+        return f"{minutes} min {secondes:02d}"
+    return f"{secondes} s"
+
+
+@tmdb_app.command("catalog")
+def tmdb_catalog() -> None:
+    """Volumétrie du catalogue et répartition par popularité."""
+    settings = get_settings()
+
+    async def run() -> tuple[tuple, list[tuple]]:
+        async with (
+            connect(settings.database_url, schema=settings.db_schema) as conn,
+            conn.cursor() as cur,
+        ):
+            await cur.execute(
+                """
+                select count(*), count(*) filter (where adult),
+                       max(exported_on), count(*) filter (where exported_on < (
+                           select max(exported_on) from tmdb_catalog))
+                from tmdb_catalog
+                """
+            )
+            resume = await cur.fetchone()
+
+            # Déciles de popularité : c'est la stratification sur laquelle
+            # reposera l'échantillon, et la courbe qui dira où s'arrête le
+            # périmètre notable.
+            await cur.execute(
+                """
+                select decile, count(*), max(popularity), min(popularity)
+                from (
+                    select popularity,
+                           ntile(10) over (order by popularity desc) as decile
+                    from tmdb_catalog
+                ) t
+                group by decile order by decile
+                """
+            )
+            return resume, await cur.fetchall()
+
+    (total, adultes, dernier_export, disparues), deciles = _run_db(run)
+
+    if not total:
+        typer.echo("Catalogue vide. Lancer `tmdb export` d'abord.")
+        raise typer.Exit(1)
+
+    espace = lambda n: f"{n:,}".replace(",", " ")  # noqa: E731
+    typer.echo(f"séries          : {espace(total)}")
+    typer.echo(f"dont adulte     : {espace(adultes)}")
+    typer.echo(f"dernier export  : {dernier_export}")
+    typer.echo(f"absentes depuis : {espace(disparues)}  (supprimées de TMDB)")
+    typer.echo("")
+    typer.echo(f"{'décile':<8}{'séries':>10}{'popularité max':>16}{'min':>12}")
+    for decile, nombre, maxi, mini in deciles:
+        typer.echo(f"{decile:<8}{espace(nombre):>10}{maxi:>16.2f}{mini:>12.2f}")
+
+
 @tmdb_app.command("stats")
 def tmdb_stats() -> None:
     """Ce qu'il y a en base, par type d'objet."""
     settings = get_settings()
 
-    async def run() -> list[tuple]:
+    async def run() -> tuple[list[tuple], tuple]:
         async with (
             connect(settings.database_url, schema=settings.db_schema) as conn,
             conn.cursor() as cur,
@@ -155,15 +370,51 @@ def tmdb_stats() -> None:
                 group by kind order by kind
                 """
             )
-            return await cur.fetchall()
+            rows = await cur.fetchall()
 
-    rows = _run_db(run)
+            # Projection sur le catalogue entier. `pg_total_relation_size` plutôt
+            # que la taille des payloads : il inclut les index et la compression
+            # TOAST, donc il mesure ce que le disque va réellement encaisser.
+            await cur.execute(
+                """
+                select (select count(distinct source_id) from raw_source
+                        where source = 'tmdb' and kind = 'tv'),
+                       pg_total_relation_size('raw_source'),
+                       (select count(*) from tmdb_catalog)
+                """
+            )
+            return rows, await cur.fetchone()
+
+    rows, (series_faites, octets, catalogue) = _run_db(run)
     if not rows:
         typer.echo("raw_source est vide.")
         return
+
     typer.echo(f"{'type':<12}{'lignes':>9}{'objets':>9}{'poids':>12}  dernier")
     for kind, lignes, objets, poids, dernier in rows:
         typer.echo(f"{kind:<12}{lignes:>9}{objets:>9}{poids or '-':>12}  {dernier}")
+
+    # Sous ~100 séries l'extrapolation ne vaut rien : la taille varie d'un
+    # facteur dix entre un pilote sans suite et une série de quinze saisons.
+    if series_faites >= 100 and catalogue:
+        par_serie = octets / series_faites
+        projection = par_serie * catalogue
+        typer.echo("")
+        typer.echo(f"mesuré sur    : {series_faites} série(s)")
+        typer.echo(f"par série     : {_octets(par_serie)}")
+        typer.echo(f"projection    : {_octets(projection)} pour {catalogue} séries")
+        typer.echo("                (index compris ; vérifier `df -h` avant la passe complète)")
+    elif catalogue:
+        typer.echo("")
+        typer.echo(f"Projection de volume à partir de 100 séries ({series_faites} pour l'instant).")
+
+
+def _octets(taille: float) -> str:
+    for unite in ("o", "Ko", "Mo", "Go", "To"):
+        if taille < 1024 or unite == "To":
+            return f"{taille:.1f} {unite}"
+        taille /= 1024
+    return f"{taille:.1f} To"
 
 
 async def _db_status(dsn: str, schema: str, migrations_dir: Path) -> tuple[str, int, int]:

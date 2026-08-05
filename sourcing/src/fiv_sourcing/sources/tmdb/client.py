@@ -120,6 +120,20 @@ class TmdbClient:
         )
 
 
+def build_public_fetcher(settings: Settings) -> HttpFetcher:
+    """Client sans authentification, pour les exports quotidiens.
+
+    Ils sont publics, et on n'envoie pas un jeton à un hôte qui n'en a pas
+    besoin — `files.tmdb.org` n'est pas `api.themoviedb.org`.
+    """
+    return HttpFetcher(
+        rate_limit=settings.tmdb_rate_limit,
+        timeout=settings.http_timeout,
+        max_attempts=settings.http_max_attempts,
+        user_agent=settings.http_user_agent,
+    )
+
+
 def build_fetcher(settings: Settings) -> HttpFetcher:
     return HttpFetcher(
         rate_limit=settings.tmdb_rate_limit,
