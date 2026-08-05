@@ -1,0 +1,4 @@
+# ~/.gitignore_global exclut README.md et doc/ : on les réautorise pour ce dépôt
+!README.md
+!doc/
+!doc/**
