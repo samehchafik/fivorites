@@ -31,7 +31,14 @@ log = logging.getLogger(__name__)
 
 ORDERS = {
     # Neutre : aucun jugement implicite sur ce qui compte. C'est le défaut.
+    #
+    # Attention pour autant : les petits ids sont les plus anciennes entrées de
+    # TMDB, donc les séries installées à nombreuses saisons. Un `--limit 200`
+    # dans cet ordre coûte bien plus de requêtes par série que la moyenne du
+    # catalogue — c'est un mauvais échantillon pour estimer une durée.
     "id": "c.id",
+    # Pour estimer : seul ordre dont la moyenne vaut celle du catalogue.
+    "random": "random()",
     # Utile si la passe risque d'être interrompue : les plus consultées
     # d'abord. À n'employer qu'en connaissance de ce que `popularity` mesure.
     "popularity": "c.popularity desc, c.id",

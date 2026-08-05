@@ -77,6 +77,18 @@ async def test_le_tri_par_popularite_reste_disponible(conn):
     assert await pending_ids(conn, order="popularity") == [7, 3]
 
 
+async def test_le_tri_aleatoire_couvre_tout_le_catalogue(conn):
+    """Le seul ordre dont un échantillon a la même moyenne que le catalogue.
+    En ordre d'id, les petits ids sont les séries installées à nombreuses
+    saisons : estimer une durée dessus la surévalue lourdement."""
+    await _catalogue(conn, [(i, f"S{i}", 1.0) for i in range(1, 21)])
+
+    tirage = await pending_ids(conn, order="random", limit=5)
+
+    assert len(tirage) == 5
+    assert set(tirage) <= set(range(1, 21))
+
+
 async def test_un_tri_inconnu_est_refuse(conn):
     """Le nom du tri est interpolé dans le SQL : il doit être clos."""
     with pytest.raises(ValueError, match="tri inconnu"):

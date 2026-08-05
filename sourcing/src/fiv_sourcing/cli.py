@@ -201,7 +201,11 @@ def tmdb_backfill(
         int, typer.Option("--concurrency", help="Séries traitées en parallèle.")
     ] = 4,
     order: Annotated[
-        str, typer.Option("--order", help="id (neutre, défaut) ou popularity.")
+        str,
+        typer.Option(
+            "--order",
+            help="id (neutre, défaut), random (pour estimer une durée) ou popularity.",
+        ),
     ] = "id",
     refresh_after: Annotated[
         int | None,
