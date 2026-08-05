@@ -270,8 +270,9 @@ confondre les deux derniers :
 | `front/` | les **sources** du front, jamais montées en production |
 | `www/` | le **répertoire statique** — `index.html` et ses fichiers, rien d'autre |
 
-`www/` n'est pas versionné : il se reconstruit depuis `front/`. En redéployer
-une version ne demande donc **ni rebuild ni push d'image**.
+`www/` est **versionné** : il est construit sur le poste de dev et arrive par
+`git pull`. Il n'y a donc pas de Node sur le serveur, et redéployer le front ne
+demande **ni build, ni rebuild d'image**.
 
 Le secret de session d'abord — sans lui le compose refuse de démarrer :
 
@@ -286,11 +287,21 @@ Le schéma `admin` (il ajoute aussi les index de lecture sur `sourcing`, donc
 sudo docker compose run --rm admin db migrate
 ```
 
-Le front — un conteneur Node lit `front/`, écrit `www/`, et s'arrête. Il n'y a
-pas de service Node en production, seulement des fichiers :
+Le front est déjà là : il est arrivé avec le `git pull`. Vérification —
+trois fichiers, toujours les mêmes :
 
 ```bash
-sudo docker compose run --rm www-build
+ls www www/assets
+```
+
+⚠️ **Ne pas lancer `www-build` sur le serveur.** Ce service existe pour le
+dépannage, mais il tourne en root : il laisse `www/` inécrivable pour votre
+compte, et le `git pull` suivant échoue sur
+`cannot create directory at 'www/assets': Permission denied`. Si c'est déjà
+arrivé, ou si Docker a créé `www/` avant le premier `git pull` :
+
+```bash
+sudo rm -rf www && git pull
 ```
 
 Un compte — le mot de passe est demandé à l'invite, jamais passé en argument,
@@ -362,12 +373,14 @@ qu'on ouvre n'est jamais périmé.
 ### Mettre à jour
 
 ```bash
-git pull
-sudo docker compose run --rm www-build          # front/ → www/
-sudo docker compose build admin                 # l'API, seulement si src/ a bougé
-sudo docker compose run --rm admin db migrate   # seulement si migrations/ a bougé
+git pull                                        # amène le front déjà construit
+sudo docker compose build admin                 # seulement si admin/src a bougé
+sudo docker compose run --rm admin db migrate   # seulement si admin/migrations a bougé
 sudo docker compose up -d admin
 ```
+
+Le front seul ne demande rien de plus que le `git pull` : le conteneur lit
+`www/` à chaque requête, il n'y a même pas à le redémarrer.
 
 ## Sauvegarde
 

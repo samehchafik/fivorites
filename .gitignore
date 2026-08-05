@@ -29,16 +29,19 @@ admin/.env
 front/node_modules/
 front/*.tsbuildinfo
 
-# --- www/ : le répertoire statique ---
-# Entièrement généré par `vite build` depuis front/, et rien n'y est suivi — pas
-# même un README : `emptyOutDir` vide le répertoire à chaque build, donc tout
-# fichier qu'on y placerait disparaîtrait au suivant. Le rôle de www/ est décrit
-# dans front/README.md, à l'endroit qui le produit.
+# --- www/ : le répertoire statique, VERSIONNÉ ---
+# Il n'est volontairement pas ignoré : le build y produit toujours les trois
+# mêmes fichiers (noms fixes, la version étant portée par `?version=`), donc le
+# suivre ne fait pas gonfler la liste des chemins. En échange, le déploiement se
+# réduit à `git pull` — aucun Node sur le serveur.
 #
-# Le versionner reviendrait à committer un artefact de build à chaque changement
-# de front, et à arbitrer des conflits sur du code minifié. Il se reconstruit
-# d'un `docker compose run --rm www-build`.
-www/
+# Ce que ça implique : un changement du front se commite en deux morceaux, le
+# code dans front/ et le build dans www/. `make -C admin web-build` avant de
+# committer, sinon le serveur sert l'ancienne version.
+#
+# Rien à ignorer ici : si un futur build ajoute un fichier (une police, une
+# image, un chunk), il doit être suivi lui aussi — ignoré, il manquerait au
+# déploiement et la page tomberait sur un 404 sans explication.
 
 # --- données locales ---
 sourcing/data/

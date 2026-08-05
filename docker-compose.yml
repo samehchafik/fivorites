@@ -87,10 +87,15 @@ services:
       retries: 3
       start_period: 10s
 
-  # Construit ./www à partir des sources de ./front. Node ne vit que le temps du
-  # build : il n'y a pas de service Node en production, seulement des fichiers.
+  # Construit ./www à partir des sources de ./front.
   #
   #   docker compose run --rm www-build
+  #
+  # ⚠️ **Ce n'est pas le chemin normal.** ./www est versionné : le front est
+  # construit sur le poste de dev, commité, et arrive sur le serveur par
+  # `git pull`. Ce service est là pour le dépannage — et il tourne en root, donc
+  # il laisse ./www inécrivable pour le compte qui fait les `git pull`. Après
+  # usage :  sudo chown -R "$USER" www
   #
   # Le profil `build` l'écarte de `compose up` — c'est une tâche, pas un service.
   www-build:

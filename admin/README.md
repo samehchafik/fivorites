@@ -21,14 +21,14 @@ deux derniers :
 |---|---|---|
 | **`admin/`** (ici) | l'API, les migrations, la ligne de commande | oui |
 | [`front/`](../front) | les **sources** du front — React, Mantine, TypeScript | oui |
-| `www/` | le **répertoire statique** — `index.html` et ses fichiers, rien d'autre | non, entièrement généré |
+| `www/` | le **répertoire statique** — `index.html` et ses fichiers, rien d'autre | oui — c'est par là que le front se déploie |
 
 `vite build` lit `front/` et écrit `www/` — toujours les trois mêmes fichiers,
 `index.html`, `assets/index.js` et `assets/style.css`, la fraîcheur étant portée
 par un `?version=x.y.z` incrémenté à chaque build (voir
-[`front/README.md`](../front/README.md)). Sur le serveur, `www/` est monté en
-volume dans le conteneur : redéployer le front ne demande ni rebuild ni push
-d'image.
+[`front/README.md`](../front/README.md)). `www/` est versionné et monté en
+volume dans le conteneur : déployer le front, c'est `git pull` — ni build ni
+Node sur le serveur, ni reconstruction d'image.
 
 ## Les deux vues
 
@@ -131,7 +131,7 @@ dépôt ; la procédure complète est dans
 [`doc/serveur-debian11.md`](../doc/serveur-debian11.md) §7.
 
 ```bash
-docker compose run --rm www-build            # front/ → www/ (Node jetable)
+git pull                                     # amène aussi www/, déjà construit
 docker compose run --rm admin db migrate     # le schéma admin
 docker compose run --rm -it admin user add sameh
 docker compose up -d admin                   # service permanent, port 8182
@@ -140,13 +140,15 @@ docker compose up -d admin                   # service permanent, port 8182
 Trois points de conception, tous vérifiables dans le compose :
 
 * **L'image ne contient que l'API.** `www/` est un volume monté en lecture
-  seule. Redéployer le front, c'est reconstruire `www/`, rien de plus.
+  seule, et il arrive par git. Redéployer le front, c'est `git pull`.
 * **Les sources ne sont montées nulle part en production.** Seul `www/` l'est,
   et il ne contient que le résultat du build : un répertoire servi en HTTP n'a
   à contenir ni code source, ni `package.json`, ni `node_modules`.
-* **Node ne tourne pas en production.** Le service `www-build` est une tâche
-  (profil `build`), pas un service : il construit des fichiers et s'arrête. Ce
-  qui reste servi, ce sont des fichiers statiques.
+* **Node ne tourne pas en production**, et n'a même pas besoin d'y être
+  installé : le build est fait sur le poste et commité. Le service `www-build`
+  reste disponible en dépannage — c'est une tâche (profil `build`), pas un
+  service — mais il écrit en root, donc il faut réparer les droits de `www/`
+  après usage, sinon le `git pull` suivant échoue.
 * **Le port est publié sur `0.0.0.0`**, réglable par `ADMIN_BIND`. Tant qu'il
   n'y a pas de TLS devant, le mot de passe de connexion et le cookie de session
   circulent en clair. Avec un reverse proxy TLS : `ADMIN_BIND=127.0.0.1` et

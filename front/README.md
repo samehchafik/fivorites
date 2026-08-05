@@ -10,15 +10,27 @@ Trois répertoires, et la frontière entre eux est le point à ne pas confondre 
 |---|---|---|
 | [`../admin`](../admin) | l'API — FastAPI, Postgres, la ligne de commande | oui |
 | **`front/`** (ici) | les **sources** du front — `src/`, `package.json`, `node_modules` | oui, sauf `node_modules` |
-| [`../www`](../www) | le **répertoire statique** — `index.html` et ses fichiers, rien d'autre | **non, entièrement généré** |
+| [`../www`](../www) | le **répertoire statique** — `index.html` et ses fichiers, rien d'autre | oui — c'est par là que le front est déployé |
 
 `vite build` lit ici et écrit dans `../www`. Rien d'autre ne va dans `www/` :
 c'est le répertoire que FastAPI sert tel quel, et un répertoire servi en HTTP
 n'a à contenir ni code source, ni `package.json`, ni `node_modules`.
 
-`www/` n'est pas versionné et **aucun fichier ne doit y être ajouté à la main** :
-`emptyOutDir` le vide à chaque build, donc tout ce qu'on y déposerait
-disparaîtrait au suivant. C'est aussi pourquoi ce README est ici et pas là-bas.
+**Aucun fichier ne doit être ajouté à `www/` à la main** : `emptyOutDir` le vide
+à chaque build, donc tout ce qu'on y déposerait disparaîtrait au suivant. C'est
+pourquoi ce README est ici et pas là-bas.
+
+`www/` **est versionné**, lui : le build produit toujours les trois mêmes noms,
+donc le suivre ne fait pas gonfler la liste des chemins, et le déploiement se
+réduit à un `git pull` — aucun Node sur le serveur. En échange, un changement du
+front se commite en deux morceaux :
+
+```bash
+make -C ../admin web-build        # met à jour ../www et incrémente la version
+git add ../www front/package.json src/
+```
+
+Oublier le build, c'est déployer l'ancienne version sans que rien ne le signale.
 
 Le partage des requêtes, du poste de dev au serveur :
 
@@ -84,11 +96,14 @@ En développement, Vite relaie `/api` vers l'API : **une seule origine** vue du
 navigateur, donc le cookie de session reste propriétaire et il n'y a rien à
 configurer en CORS.
 
-Sur le serveur, le build passe par un conteneur Node jetable — il n'y a pas de
-service Node en production, seulement des fichiers :
+Il existe bien un service `www-build` (un conteneur Node jetable) pour
+construire sur le serveur, mais **ce n'est plus le chemin normal** depuis que
+`www/` est versionné — et il tourne en root, donc il laisse derrière lui des
+fichiers que le `git pull` suivant ne peut plus écrire. À réserver au dépannage,
+en réparant les droits ensuite :
 
 ```bash
-docker compose run --rm www-build
+sudo chown -R "$USER" www
 ```
 
 ## Les écrans
