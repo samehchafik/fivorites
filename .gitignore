@@ -20,3 +20,7 @@ sourcing/.env
 
 # --- données locales ---
 sourcing/data/
+
+# --- secrets du déploiement serveur ---
+# `.env` porte POSTGRES_PASSWORD et le token TMDB ; seul .env.example est suivi.
+.env
