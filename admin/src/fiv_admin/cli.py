@@ -17,7 +17,7 @@ import typer
 
 from fiv_admin.config import VENDOR_DIR, get_settings
 from fiv_admin.db import MigrationsNotFound, connect, migrate
-from fiv_admin.dsn import redact_dsn
+from fiv_admin.redact import SecretFilter, redact_dsn
 from fiv_admin.security import hash_password
 
 app = typer.Typer(help="Administration Fivorites V2 — suivi de l'acquisition", no_args_is_help=True)
@@ -54,6 +54,11 @@ def _root(verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False) -> 
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(levelname)-7s %(name)s: %(message)s",
     )
+    # Posé sur le gestionnaire, pas sur un logger particulier : une fuite vient
+    # presque toujours d'une bibliothèque tierce, et on ne veut pas dépendre de
+    # la liste de celles qui journalisent des URL.
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(SecretFilter())
 
 
 @app.command()
