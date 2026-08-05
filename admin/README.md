@@ -11,12 +11,21 @@ serveur :
 
 | Requête | Traitée par |
 |---|---|
-| `/api/*` | FastAPI |
-| tout le reste | des fichiers, servis depuis [`../www`](../www) |
+| `/api/*` | FastAPI, ici |
+| tout le reste | un fichier de [`../www`](../www) |
 
-Les sources du front sont dans **`www/`** à la racine du dépôt, pas ici : sur le
-serveur, ce répertoire est monté en volume dans le conteneur, si bien que
-redéployer le front ne demande ni rebuild ni push d'image.
+Trois répertoires à la racine du dépôt, et il vaut mieux ne pas confondre les
+deux derniers :
+
+| Répertoire | Contenu | Suivi par git |
+|---|---|---|
+| **`admin/`** (ici) | l'API, les migrations, la ligne de commande | oui |
+| [`front/`](../front) | les **sources** du front — React, Mantine, TypeScript | oui |
+| `www/` | le **répertoire statique** — `index.html` et ses fichiers, rien d'autre | non, entièrement généré |
+
+`vite build` lit `front/` et écrit `www/`. Sur le serveur, `www/` est monté en
+volume dans le conteneur : redéployer le front ne demande ni rebuild ni push
+d'image.
 
 ## Les deux vues
 
@@ -90,7 +99,7 @@ commande finit dans l'historique du shell. `make doctor` vérifie l'ensemble.
 ```bash
 make dev          # l'API (8182) et Vite (5173) côte à côte → http://localhost:5173
 make api          # l'API seule, rechargement à chaud
-make web-build    # construit le front dans ../www/dist
+make web-build    # construit ../front dans ../www
 make serve        # l'API sert le front → http://127.0.0.1:8182
 make test         # 66 tests
 make lint         # ruff + tsc
@@ -119,7 +128,7 @@ dépôt ; la procédure complète est dans
 [`doc/serveur-debian11.md`](../doc/serveur-debian11.md) §7.
 
 ```bash
-docker compose run --rm www-build            # construit www/dist (Node jetable)
+docker compose run --rm www-build            # front/ → www/ (Node jetable)
 docker compose run --rm admin db migrate     # le schéma admin
 docker compose run --rm -it admin user add sameh
 docker compose up -d admin                   # service permanent, port 8182
@@ -128,7 +137,10 @@ docker compose up -d admin                   # service permanent, port 8182
 Trois points de conception, tous vérifiables dans le compose :
 
 * **L'image ne contient que l'API.** `www/` est un volume monté en lecture
-  seule. Redéployer le front, c'est reconstruire `www/dist`, rien de plus.
+  seule. Redéployer le front, c'est reconstruire `www/`, rien de plus.
+* **Les sources ne sont montées nulle part en production.** Seul `www/` l'est,
+  et il ne contient que le résultat du build : un répertoire servi en HTTP n'a
+  à contenir ni code source, ni `package.json`, ni `node_modules`.
 * **Node ne tourne pas en production.** Le service `www-build` est une tâche
   (profil `build`), pas un service : il construit des fichiers et s'arrête. Ce
   qui reste servi, ce sont des fichiers statiques.
@@ -200,7 +212,7 @@ reviendrait à pouvoir engager deux millions de requêtes TMDB d'un clic.
 | [`media.py`](src/fiv_admin/media.py) | les univers observables et les libellés de langue |
 | [`app.py`](src/fiv_admin/app.py) | l'application FastAPI |
 | [`migrations/`](migrations) | le schéma `admin` et les index de lecture |
-| [`../www/src/`](../www/src) | les écrans React |
+| [`../front/src/`](../front/src) | les écrans React — voir [`front/README.md`](../front/README.md) |
 | [`Dockerfile`](Dockerfile) | l'image du serveur — l'API seule, sans le front |
 | [`Makefile`](Makefile) | point d'entrée unique — c'est lui qui tient les deux vendorisations |
 

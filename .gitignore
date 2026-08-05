@@ -18,19 +18,27 @@ sourcing/.env
 **/__pycache__/
 *.py[cod]
 
-# --- admin/ (API Python) et www/ (front) ---
+# --- admin/ (API Python) et front/ (sources React) ---
 # Deux toolchains vendorisées, aucune versionnée : elles se réinstallent à
 # l'identique depuis .python-version, .node-version, uv.lock et package-lock.json.
-# `www/dist` est un artefact de build : produit par `docker compose run --rm
-# www-build` sur le serveur, par `make -C admin web-build` en local.
 admin/vendor/
 admin/.venv/
 admin/.pytest_cache/
 admin/.ruff_cache/
 admin/.env
-www/node_modules/
-www/dist/
-www/*.tsbuildinfo
+front/node_modules/
+front/*.tsbuildinfo
+
+# --- www/ : le répertoire statique ---
+# Entièrement généré par `vite build` depuis front/, et rien n'y est suivi — pas
+# même un README : `emptyOutDir` vide le répertoire à chaque build, donc tout
+# fichier qu'on y placerait disparaîtrait au suivant. Le rôle de www/ est décrit
+# dans front/README.md, à l'endroit qui le produit.
+#
+# Le versionner reviendrait à committer un artefact de build à chaque changement
+# de front, et à arbitrer des conflits sur du code minifié. Il se reconstruit
+# d'un `docker compose run --rm www-build`.
+www/
 
 # --- données locales ---
 sourcing/data/

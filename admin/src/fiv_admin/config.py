@@ -56,12 +56,16 @@ class Settings(BaseSettings):
     # présentes en base s'y ajoutent d'elles-mêmes.
     season_languages: str = "fr-FR,en-US,es-ES,ar-SA,tr-TR"
 
-    # Le contenu servi en GET. Les sources du front vivent dans `www/` à la
-    # racine du dépôt et se construisent dans `www/dist` ; c'est ce répertoire
-    # que l'API sert. En conteneur il est monté depuis l'hôte, donc redéployer
-    # le front ne demande pas de reconstruire l'image — d'où la surcharge par
-    # variable d'environnement.
-    web_dist: Path = PROJECT_ROOT.parent / "www" / "dist"
+    # Le répertoire statique : tout ce qui n'est pas `/api/*` y est cherché.
+    #
+    # Il ne contient que le résultat du build — `index.html` et ses fichiers.
+    # Les sources React sont dans `front/`, et n'y descendent jamais : un
+    # répertoire servi en HTTP n'a à contenir ni code source ni node_modules.
+    #
+    # En conteneur il est monté depuis l'hôte, donc redéployer le front ne
+    # demande pas de reconstruire l'image — d'où la surcharge par variable
+    # d'environnement.
+    web_dist: Path = PROJECT_ROOT.parent / "www"
 
     migrations_dir: Path = PROJECT_ROOT / "migrations"
 

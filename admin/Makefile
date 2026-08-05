@@ -21,7 +21,8 @@ VENV     := $(CURDIR)/.venv
 BIN      := $(VENV)/bin
 NODE_DIR := $(VENDOR)/node
 NODE_BIN := $(NODE_DIR)/bin
-WEB      := $(CURDIR)/../www
+FRONT    := $(CURDIR)/../front
+WWW      := $(CURDIR)/../www
 
 # Node est publié par plateforme ; on résout la bonne archive plutôt que de la
 # figer, pour que le même Makefile serve sur le poste (darwin/arm64) et sur le
@@ -76,7 +77,7 @@ bootstrap-node:
 	  rm -rf "$$tmp"; \
 	  echo "node $$($(NODE_BIN)/node -v) installé dans vendor/node"; \
 	fi
-	cd $(WEB) && $(NPM) install --no-audit --no-fund
+	cd $(FRONT) && $(NPM) install --no-audit --no-fund
 
 ## Met à jour les dépendances Python depuis uv.lock.
 sync:
@@ -109,7 +110,7 @@ test: guard
 lint: guard
 	$(BIN)/ruff check src tests
 	$(BIN)/ruff format --check src tests
-	cd $(WEB) && $(NPM) run lint
+	cd $(FRONT) && $(NPM) run lint
 
 fmt: guard
 	$(BIN)/ruff format src tests
@@ -124,7 +125,7 @@ api: guard
 
 ## Le front seul, servi par Vite sur 5173, qui relaie /api vers l'API.
 web: guard
-	cd $(WEB) && $(NPM) run dev
+	cd $(FRONT) && $(NPM) run dev
 
 ## Les deux, côte à côte. C'est la cible de travail au quotidien.
 dev:
@@ -133,11 +134,12 @@ dev:
 ## Construit le front dans web/dist. À partir de là, `serve` suffit : une seule
 ## origine, plus de CORS, plus de Vite.
 web-build: guard
-	cd $(WEB) && $(NPM) run build
+	cd $(FRONT) && $(NPM) run build
 
 serve: guard
 	$(BIN)/fiv-admin serve
 
 clean:
-	rm -rf .venv .pytest_cache .ruff_cache $(WEB)/dist $(WEB)/node_modules
+	rm -rf .venv .pytest_cache .ruff_cache $(FRONT)/node_modules
+	find $(WWW) -mindepth 1 ! -name README.md -delete
 	find src tests -name __pycache__ -type d -exec rm -rf {} +

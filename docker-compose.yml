@@ -40,15 +40,14 @@ services:
   #   /api/*        → FastAPI, dans ce conteneur
   #   tout le reste → des fichiers, lus dans ./www monté en volume
   #
-  # Le front n'est pas dans l'image. Ses sources sont dans ./www, se construisent
-  # dans ./www/dist, et le conteneur y accède par le montage ci-dessous. En
-  # redéployer une version ne demande donc ni rebuild ni push : on reconstruit
-  # ./www/dist et on recharge la page.
+  # Le front n'est pas dans l'image. `./www` est le répertoire statique — il ne
+  # contient QUE le résultat du build, `index.html` et ses fichiers — et le
+  # conteneur y accède par le montage ci-dessous. Redéployer le front ne demande
+  # donc ni rebuild ni push : on reconstruit ./www et on recharge la page.
   #
-  # Ce qui est *servi* est `./www/dist`, pas `./www` : le répertoire porte aussi
-  # les sources, `package.json` et `node_modules`. Les exposer en HTTP donnerait
-  # à lire le code du front et des dizaines de milliers de fichiers de
-  # dépendances. Le montage couvre ./www, le service ne publie que dist/.
+  # Les sources React sont dans ./front et ne sont montées nulle part ici : un
+  # répertoire servi en HTTP n'a à contenir ni code source, ni package.json, ni
+  # node_modules.
   admin:
     build:
       context: ./admin
@@ -76,7 +75,7 @@ services:
       # autoriser en CORS.
       CORS_ORIGINS: ""
       SEASON_LANGUAGES: ${TMDB_SEASON_LANGUAGES:-fr-FR,en-US,es-ES,ar-SA,tr-TR}
-      WEB_DIST: /srv/www/dist
+      WEB_DIST: /srv/www
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8182/api/health').read()"]
       interval: 30s
@@ -84,8 +83,8 @@ services:
       retries: 3
       start_period: 10s
 
-  # Construit ./www/dist depuis ./www. Node ne vit que le temps du build : il n'y
-  # a pas de service Node en production, seulement des fichiers.
+  # Construit ./www à partir des sources de ./front. Node ne vit que le temps du
+  # build : il n'y a pas de service Node en production, seulement des fichiers.
   #
   #   docker compose run --rm www-build
   #
@@ -93,9 +92,11 @@ services:
   www-build:
     image: node:22-bookworm-slim
     profiles: ["build"]
-    working_dir: /srv/www
+    working_dir: /srv/front
     volumes:
-      # En écriture ici, forcément : c'est ce service qui produit dist/.
+      # Les sources en lecture-écriture : npm y installe node_modules.
+      - ./front:/srv/front
+      # La cible, forcément en écriture : c'est ce service qui la produit.
       - ./www:/srv/www
     # `npm ci` plutôt que `install` : les versions sont celles du lock, à
     # l'octet près, et non « ce que le registre propose aujourd'hui ».

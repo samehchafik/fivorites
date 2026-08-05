@@ -259,11 +259,19 @@ Deux sortes de requêtes, et le partage est net —
 | Requête | Traitée par |
 |---|---|
 | `/api/*` | FastAPI, dans le conteneur `admin` |
-| tout le reste | des fichiers, lus dans `./www` monté en volume |
+| tout le reste | un fichier de `./www`, monté en volume |
 
-Le front n'est pas dans l'image : ses sources vivent dans `www/`, se
-construisent dans `www/dist`, et le conteneur y accède par le montage. En
-redéployer une version ne demande donc **ni rebuild ni push**.
+Le front n'est pas dans l'image. Trois répertoires, et il vaut mieux ne pas
+confondre les deux derniers :
+
+| Répertoire | Contenu |
+|---|---|
+| `admin/` | l'API — c'est elle qui est dans l'image |
+| `front/` | les **sources** du front, jamais montées en production |
+| `www/` | le **répertoire statique** — `index.html` et ses fichiers, rien d'autre |
+
+`www/` n'est pas versionné : il se reconstruit depuis `front/`. En redéployer
+une version ne demande donc **ni rebuild ni push d'image**.
 
 Le secret de session d'abord — sans lui le compose refuse de démarrer :
 
@@ -278,7 +286,8 @@ Le schéma `admin` (il ajoute aussi les index de lecture sur `sourcing`, donc
 sudo docker compose run --rm admin db migrate
 ```
 
-Le front, construit par un conteneur Node qui ne vit que le temps du build :
+Le front — un conteneur Node lit `front/`, écrit `www/`, et s'arrête. Il n'y a
+pas de service Node en production, seulement des fichiers :
 
 ```bash
 sudo docker compose run --rm www-build
@@ -309,7 +318,7 @@ sudo docker compose run --rm admin doctor
 ✓  schéma admin         présent
 ✓  comptes              1
 ✓  catalogue            228 454 séries
-✓  front construit      /srv/www/dist
+✓  front construit      /srv/www
 ```
 
 **Le port n'est publié que sur `127.0.0.1`**, volontairement : un formulaire de
@@ -343,7 +352,7 @@ qu'on ouvre n'est jamais périmé.
 
 ```bash
 git pull
-sudo docker compose run --rm www-build          # le front
+sudo docker compose run --rm www-build          # front/ → www/
 sudo docker compose build admin                 # l'API, seulement si src/ a bougé
 sudo docker compose run --rm admin db migrate   # seulement si migrations/ a bougé
 sudo docker compose up -d admin
