@@ -27,6 +27,46 @@ Le partage des requêtes, du poste de dev au serveur :
 | `/api/*` | FastAPI |
 | tout le reste | un fichier de `www/`, à commencer par `index.html` |
 
+## Noms fixes et numéro de version
+
+Le build produit toujours les trois mêmes fichiers :
+
+```
+www/index.html
+www/assets/index.js
+www/assets/style.css
+```
+
+Pas d'empreinte du contenu dans le nom (`index-Cij1LZw0.js`) : à chaque build,
+elle change, les anciens fichiers s'accumulent partout où le répertoire est
+suivi ou synchronisé, et le diff d'un déploiement devient illisible.
+
+La fraîcheur est portée autrement — par la **requête**. `index.html` référence
+ses fichiers avec un numéro de version :
+
+```html
+<script type="module" src="/assets/index.js?version=0.1.2"></script>
+<link rel="stylesheet" href="/assets/style.css?version=0.1.2">
+```
+
+Une URL différente est une entrée de cache différente, pour le navigateur comme
+pour les intermédiaires. Le numéro est le `version` de `package.json`,
+**incrémenté à chaque `vite build`** — un build modifie donc un fichier suivi par
+git, et c'est le prix d'un compteur qui survit d'un build à l'autre. Un `make
+dev` ne l'incrémente pas : un serveur de développement ne livre rien.
+
+Le même numéro est injecté dans l'application (`__APP_VERSION__`) et affiché
+dans le menu du compte : la version lue à l'écran est celle du bundle qui
+s'exécute, pas celle que le serveur croit avoir déployé. Quand les deux
+diffèrent, c'est justement ce qu'on cherche à savoir.
+
+Ce schéma n'a de sens qu'accompagné des en-têtes de cache que pose l'API
+(`VersionedStatic`, dans [`../admin/src/fiv_admin/app.py`](../admin/src/fiv_admin/app.py)) :
+`no-cache` sur `index.html` pour qu'il soit revalidé à chaque fois, cache long
+sur `assets/` puisque leur URL change à chaque version. Sans le premier, le
+navigateur garderait l'ancienne page, continuerait à demander l'ancienne
+version, et le déploiement resterait invisible.
+
 ## Développer
 
 Tout passe par le Makefile de `admin/`, qui tient les deux toolchains

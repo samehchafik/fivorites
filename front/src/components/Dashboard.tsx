@@ -237,6 +237,11 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
                 >
                   Se déconnecter
                 </Menu.Item>
+                <Menu.Divider />
+                {/* La version du bundle qui s'exécute, pas celle que le serveur
+                    croit avoir déployé. Quand les deux diffèrent, c'est
+                    justement ce qu'on cherche à savoir. */}
+                <Menu.Label>front {__APP_VERSION__}</Menu.Label>
               </Menu.Dropdown>
             </Menu>
           </Group>

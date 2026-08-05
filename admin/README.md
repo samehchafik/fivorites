@@ -23,7 +23,10 @@ deux derniers :
 | [`front/`](../front) | les **sources** du front — React, Mantine, TypeScript | oui |
 | `www/` | le **répertoire statique** — `index.html` et ses fichiers, rien d'autre | non, entièrement généré |
 
-`vite build` lit `front/` et écrit `www/`. Sur le serveur, `www/` est monté en
+`vite build` lit `front/` et écrit `www/` — toujours les trois mêmes fichiers,
+`index.html`, `assets/index.js` et `assets/style.css`, la fraîcheur étant portée
+par un `?version=x.y.z` incrémenté à chaque build (voir
+[`front/README.md`](../front/README.md)). Sur le serveur, `www/` est monté en
 volume dans le conteneur : redéployer le front ne demande ni rebuild ni push
 d'image.
 
@@ -101,7 +104,7 @@ make dev          # l'API (8182) et Vite (5173) côte à côte → http://localh
 make api          # l'API seule, rechargement à chaud
 make web-build    # construit ../front dans ../www
 make serve        # l'API sert le front → http://127.0.0.1:8182
-make test         # 66 tests
+make test         # 71 tests
 make lint         # ruff + tsc
 ```
 
@@ -210,7 +213,7 @@ reviendrait à pouvoir engager deux millions de requêtes TMDB d'un clic.
 | [`queries.py`](src/fiv_admin/queries.py) | le tableau d'avancement — SQL et coût |
 | [`catalog.py`](src/fiv_admin/catalog.py) | la grille, la fiche, les saisons |
 | [`media.py`](src/fiv_admin/media.py) | les univers observables et les libellés de langue |
-| [`app.py`](src/fiv_admin/app.py) | l'application FastAPI |
+| [`app.py`](src/fiv_admin/app.py) | l'application FastAPI, et les en-têtes de cache du répertoire statique |
 | [`migrations/`](migrations) | le schéma `admin` et les index de lecture |
 | [`../front/src/`](../front/src) | les écrans React — voir [`front/README.md`](../front/README.md) |
 | [`Dockerfile`](Dockerfile) | l'image du serveur — l'API seule, sans le front |

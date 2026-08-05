@@ -20,6 +20,7 @@ import logging
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +34,35 @@ from fiv_admin.routes import acquisition, auth, catalog
 from fiv_admin.security import LoginThrottle
 
 log = logging.getLogger(__name__)
+
+
+class VersionedStatic(StaticFiles):
+    """Le répertoire statique, avec les en-têtes de cache qui vont avec sa
+    façon d'être nommé.
+
+    Le front est construit sous des **noms fixes** — `assets/index.js`,
+    `assets/style.css` — et c'est `index.html` qui porte la fraîcheur, sous
+    forme de `?version=x.y.z`. Ce choix n'a de sens qu'accompagné de ces deux
+    règles, sans quoi il se retourne contre lui-même :
+
+    * **`index.html` : `no-cache`.** Sans en-tête explicite, un navigateur
+      applique une heuristique et peut garder la page sans rien redemander. Il
+      continuerait alors à réclamer l'ancienne version des fichiers, et un
+      déploiement pourrait rester invisible des heures. `no-cache` ne veut pas
+      dire « ne garde rien » mais « revalide avant de servir » : avec l'ETag,
+      ça coûte un 304 vide.
+    * **`assets/*` : cache long.** C'est la contrepartie qu'on achète avec le
+      `?version=` — l'URL change à chaque build, donc l'entrée de cache aussi,
+      donc rien ne périme jamais sous une URL donnée.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        path = str(args[0]) if args else ""
+        response.headers["cache-control"] = (
+            "no-cache" if path.endswith(".html") else "public, max-age=31536000"
+        )
+        return response
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -113,7 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # pas un contenu d'image : redéployer le front ne demande pas de
     # reconstruire l'image.
     if settings.web_dist.is_dir():
-        app.mount("/", StaticFiles(directory=settings.web_dist, html=True), name="www")
+        app.mount("/", VersionedStatic(directory=settings.web_dist, html=True), name="www")
     else:
         # Le cas normal au premier démarrage : le conteneur tourne, le front
         # n'est pas encore construit. Un 404 nu enverrait chercher la panne du
