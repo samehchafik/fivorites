@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 from fiv_sourcing.config import VENDOR_DIR, Settings, get_settings
 from fiv_sourcing.db import MigrationsNotFound, connect, migrate, ping
-from fiv_sourcing.dsn import redact_dsn
 from fiv_sourcing.http import FetcherStats
+from fiv_sourcing.redact import SecretFilter, redact_dsn
 
 app = typer.Typer(help="Acquisition de données Fivorites V2 — séries", no_args_is_help=True)
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
@@ -33,10 +33,20 @@ app.add_typer(tmdb_app, name="tmdb")
 
 @app.callback()
 def _root(verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False) -> None:
+    handler = logging.StreamHandler()
+    handler.addFilter(SecretFilter())
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(levelname)-7s %(name)s: %(message)s",
+        handlers=[handler],
     )
+
+    # httpx journalise une ligne INFO par requête, URL complète comprise. Sur
+    # une passe de plusieurs millions d'appels, c'est des gigaoctets de logs
+    # pour aucune information — et, avec une clé v3, autant d'occasions de la
+    # faire fuir. Le filtre ci-dessus la masquerait, mais le mieux reste de ne
+    # pas l'écrire. À la demande avec --verbose.
+    logging.getLogger("httpx").setLevel(logging.DEBUG if verbose else logging.WARNING)
 
 
 @app.command()

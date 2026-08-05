@@ -1,0 +1,73 @@
+"""Masquage des secrets destinés à être affichés ou journalisés.
+
+Deux fuites possibles, traitées ici :
+
+- le mot de passe d'une URL de connexion, quand on trace la cible d'une commande ;
+- une clé d'API qui voyage en paramètre de requête. httpx journalise l'URL
+  complète de chaque appel : avec une clé TMDB v3, elle finirait en clair dans
+  les logs du conteneur, et dans tout ce qu'on colle dans un ticket.
+
+Le token v4 échappe au second cas — il passe en en-tête — mais on ne peut pas
+supposer que tout le monde l'utilisera, et un filet de sécurité qui ne
+fonctionne que dans le cas favorable n'en est pas un.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from urllib.parse import urlsplit, urlunsplit
+
+# `api_key` pour TMDB, les autres par précaution : ce filtre traverse tous les
+# logs, autant qu'il couvre les noms usuels.
+_SECRET_PARAM = re.compile(
+    r"(?i)\b(api_key|apikey|access_token|session_id|password|token)=[^&\s\"'<>]+"
+)
+
+
+def redact_secrets(text: str) -> str:
+    """Remplace la valeur des paramètres sensibles par `***`."""
+    return _SECRET_PARAM.sub(r"\1=***", text)
+
+
+def redact_dsn(dsn: str) -> str:
+    """Remplace le mot de passe d'une URL de connexion, garde le reste lisible.
+
+    Sert à tracer la cible d'une commande sans écrire le secret — en conteneur,
+    savoir sur quel hôte et quelle base on tape est presque toujours
+    l'information qui manque.
+    """
+    parts = urlsplit(dsn)
+    if not parts.hostname:
+        return dsn
+
+    auth = ""
+    if parts.username:
+        auth = parts.username
+        if parts.password:
+            auth += ":***"
+        auth += "@"
+
+    host = parts.hostname
+    if parts.port:
+        host = f"{host}:{parts.port}"
+
+    return urlunsplit((parts.scheme, f"{auth}{host}", parts.path, "", ""))
+
+
+class SecretFilter(logging.Filter):
+    """Masque les secrets dans tout ce qui passe par le journal.
+
+    Posé sur le gestionnaire plutôt que sur un logger particulier : la fuite
+    vient d'une bibliothèque tierce, et on ne veut pas dépendre de la liste des
+    bibliothèques qui journalisent des URL.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = redact_secrets(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                redact_secrets(arg) if isinstance(arg, str) else arg for arg in record.args
+            )
+        return True
