@@ -79,6 +79,19 @@ class Settings(BaseSettings):
     summary_cache_seconds: int = 60
 
     @property
+    def has_front(self) -> bool:
+        """Y a-t-il quelque chose à servir — pas seulement un répertoire.
+
+        La distinction n'est pas byzantine : en conteneur, `www/` est un volume
+        monté, et Docker **crée le répertoire hôte s'il est absent**. Un
+        `web_dist.is_dir()` répond donc oui sur un front qui n'a jamais été
+        construit, et la première requête tombe sur un `{"detail":"Not Found"}`
+        qui n'apprend rien à personne. C'est la présence d'`index.html` qui fait
+        foi.
+        """
+        return (self.web_dist / "index.html").is_file()
+
+    @property
     def languages(self) -> tuple[str, ...]:
         return tuple(code.strip() for code in self.season_languages.split(",") if code.strip())
 

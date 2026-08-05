@@ -95,3 +95,32 @@ def test_without_a_build_the_page_says_what_is_missing(tmp_path: Path) -> None:
 
     assert response.status_code == 503
     assert "www-build" in response.text
+
+
+def test_an_empty_directory_is_not_a_front(tmp_path: Path) -> None:
+    """Le cas rencontré en conteneur, et celui qu'un `is_dir()` laissait passer.
+
+    Docker crée le répertoire hôte d'un volume monté s'il est absent : `www/`
+    existe donc toujours, vide ou non. Monté tel quel, il faisait répondre
+    `{"detail": "Not Found"}` à la racine — la réponse d'une API qui ne connaît
+    pas la route, alors que le problème est qu'il n'y a rien à servir.
+    """
+    vide = tmp_path / "www"
+    vide.mkdir()
+
+    response = client_for(vide).get("/")
+
+    assert response.status_code == 503
+    assert "index.html" in response.text
+    assert "www-build" in response.text
+
+
+def test_any_path_says_the_same_thing_when_there_is_no_front(tmp_path: Path) -> None:
+    """Recharger une page profonde ne doit pas donner un diagnostic différent
+    de la racine — sauf pour l'API, qui continue de répondre."""
+    vide = tmp_path / "www"
+    vide.mkdir()
+    client = client_for(vide)
+
+    assert client.get("/assets/index.js").status_code == 503
+    assert client.get("/api/health").json() == {"status": "ok"}

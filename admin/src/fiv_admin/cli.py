@@ -76,7 +76,7 @@ def serve(
         typer.echo(f"  suggestion : ADMIN_SECRET_KEY={secrets.token_hex(32)}")
 
     typer.echo(f"base  : {redact_dsn(settings.database_url)}")
-    typer.echo(f"front : {settings.web_dist if settings.web_dist.is_dir() else 'non construit'}")
+    typer.echo(f"front : {settings.web_dist if settings.has_front else 'non construit'}")
 
     uvicorn.run(
         "fiv_admin.app:create_app",
@@ -142,8 +142,13 @@ def doctor() -> None:
             "catalogue", state["catalog"] > 0, f"{state['catalog']:,} séries".replace(",", " ")
         )
 
-    built = settings.web_dist.is_dir()
-    _line("front construit", built, str(settings.web_dist) if built else "non — `make web-build`")
+    _line(
+        "front construit",
+        settings.has_front,
+        str(settings.web_dist)
+        if settings.has_front
+        else f"pas d'index.html dans {settings.web_dist} — `make web-build`",
+    )
 
     raise typer.Exit(0 if ok else 1)
 

@@ -142,19 +142,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # `front/` et n'y descendent jamais. C'est un volume monté depuis l'hôte,
     # pas un contenu d'image : redéployer le front ne demande pas de
     # reconstruire l'image.
-    if settings.web_dist.is_dir():
+    #
+    # Le test porte sur `index.html`, pas sur le répertoire : Docker crée le
+    # répertoire hôte d'un volume monté s'il est absent, donc `www/` existe
+    # toujours en conteneur, vide ou non. Monter un répertoire vide ferait
+    # répondre `{"detail": "Not Found"}` à la racine — un message qui envoie
+    # chercher la panne du mauvais côté.
+    if settings.has_front:
         app.mount("/", VersionedStatic(directory=settings.web_dist, html=True), name="www")
     else:
         # Le cas normal au premier démarrage : le conteneur tourne, le front
-        # n'est pas encore construit. Un 404 nu enverrait chercher la panne du
-        # mauvais côté ; on dit ce qui manque et comment le produire.
-        log.warning("répertoire statique absent de %s — GET non servi", settings.web_dist)
+        # n'est pas encore construit.
+        log.warning("pas d'index.html dans %s — GET non servi", settings.web_dist)
 
-        @app.get("/", include_in_schema=False)
-        async def missing_front() -> Response:
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def missing_front(full_path: str) -> Response:
             return PlainTextResponse(
-                f"Le répertoire statique est absent : {settings.web_dist}.\n"
-                "Il se remplit depuis les sources de front/.\n\n"
+                f"Rien à servir : pas d'index.html dans {settings.web_dist}.\n"
+                "Le front se construit depuis les sources de front/.\n\n"
                 "Sur le serveur :  docker compose run --rm www-build\n"
                 "En local      :  make -C admin web-build\n"
                 "\nL'API, elle, répond : /api/health\n",
