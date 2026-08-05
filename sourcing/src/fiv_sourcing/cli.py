@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 from fiv_sourcing.config import VENDOR_DIR, Settings, get_settings
 from fiv_sourcing.db import MigrationsNotFound, connect, migrate, ping
 from fiv_sourcing.dsn import redact_dsn
+from fiv_sourcing.http import FetcherStats
 
 app = typer.Typer(help="Acquisition de données Fivorites V2 — séries", no_args_is_help=True)
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
@@ -248,7 +249,7 @@ def tmdb_backfill(
 
             fetcher = build_fetcher(settings)
             async with fetcher:
-                return await backfill(
+                report = await backfill(
                     conn,
                     TmdbClient(fetcher, settings),
                     ids,
@@ -256,8 +257,12 @@ def tmdb_backfill(
                     stop=stop,
                     on_progress=show,
                 )
+                stats.append(fetcher.stats)
+                return report
 
     typer.echo(f"langues : {', '.join(settings.season_languages)}")
+    typer.echo(f"débit   : {settings.tmdb_rate_limit} requête/s (TMDB_RATE_LIMIT)")
+    stats: list[FetcherStats] = []
     report = _run_db(run)
 
     if dry_run:
@@ -273,11 +278,42 @@ def tmdb_backfill(
     typer.echo(f"en échec      : {report.failed}")
     typer.echo(f"requêtes      : {report.requests}")
     typer.echo(f"lignes brutes : {report.rows_written}")
+
+    if stats:
+        _bilan_debit(stats[0], settings.tmdb_rate_limit)
+
     if report.interrupted:
         typer.echo("")
         typer.echo(f"Interrompu — {report.remaining} série(s) restantes.")
         typer.echo("Relancer la même commande reprend où on s'est arrêté.")
         raise typer.Exit(130)
+
+
+def _bilan_debit(stats: FetcherStats, rate_limit: float) -> None:
+    """Ce que la passe apprend sur le plafond réellement toléré par TMDB.
+
+    Leur limite dure a été supprimée en 2019 et ce qui subsiste n'est pas
+    documenté : plutôt que de régler le débit sur une valeur trouvée dans un
+    forum, on regarde combien de 429 une passe réelle a déclenchés.
+    """
+    typer.echo("")
+    typer.echo(f"requêtes HTTP : {stats.requests}  (dont {stats.retries} reprise(s))")
+    typer.echo(f"429 reçus     : {stats.rate_limited}")
+    if stats.transport_errors:
+        typer.echo(f"erreurs réseau: {stats.transport_errors}")
+
+    if not stats.rate_limited:
+        typer.echo(
+            f"              → aucun bridage à {rate_limit} req/s. "
+            "Monter TMDB_RATE_LIMIT accélérerait la passe."
+        )
+    elif stats.rate_limited_ratio > 0.01:
+        typer.echo(
+            f"              → {stats.rate_limited_ratio:.1%} des requêtes bridées. "
+            "Baisser TMDB_RATE_LIMIT : les reprises coûtent plus qu'elles ne rapportent."
+        )
+    else:
+        typer.echo("              → bridage marginal, le débit actuel est proche du plafond.")
 
 
 def _request_stop(stop: asyncio.Event) -> None:

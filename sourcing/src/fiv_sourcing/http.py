@@ -63,6 +63,27 @@ class FetchResult:
         return 200 <= self.status < 300
 
 
+@dataclass(slots=True)
+class FetcherStats:
+    """Compteurs d'une session de collecte.
+
+    Servent à répondre empiriquement à « quel débit TMDB tolère-t-il ? ».
+    Leur limite dure a été supprimée en 2019 et le plafond qui subsiste n'est
+    pas documenté : la seule façon honnête de le connaître est de regarder
+    combien de 429 une passe réelle a déclenchés.
+    """
+
+    requests: int = 0  # tentatives HTTP réellement émises, reprises comprises
+    retries: int = 0
+    rate_limited: int = 0  # réponses 429
+    honoured_retry_after: int = 0  # 429 dont on a suivi le délai demandé
+    transport_errors: int = 0
+
+    @property
+    def rate_limited_ratio(self) -> float:
+        return self.rate_limited / self.requests if self.requests else 0.0
+
+
 class HttpFetcher:
     """Enveloppe httpx : un seul point de sortie réseau pour tout le pipeline."""
 
@@ -78,6 +99,8 @@ class HttpFetcher:
     ) -> None:
         self._limiter = RateLimiter(rate_limit)
         self._max_attempts = max(1, max_attempts)
+        self.rate_limit = rate_limit
+        self.stats = FetcherStats()
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
             timeout=timeout,
@@ -106,12 +129,16 @@ class HttpFetcher:
         last_status = 0
         for attempt in range(1, self._max_attempts + 1):
             await self._limiter.acquire()
+            self.stats.requests += 1
+            self.stats.retries += int(attempt > 1)
             try:
                 response = await self._client.get(url, timeout=timeout)
             except httpx.HTTPError as exc:
+                self.stats.transport_errors += 1
                 log.warning("échec du téléchargement de %s : %s", url, exc)
             else:
                 last_status = response.status_code
+                self.stats.rate_limited += int(last_status == 429)
                 if response.is_success:
                     return last_status, response.content
                 if last_status not in RETRYABLE_STATUS:
@@ -126,13 +153,17 @@ class HttpFetcher:
 
         for attempt in range(1, self._max_attempts + 1):
             await self._limiter.acquire()
+            self.stats.requests += 1
+            self.stats.retries += int(attempt > 1)
             try:
                 response = await self._client.get(url, params=params)
             except httpx.HTTPError as exc:
+                self.stats.transport_errors += 1
                 last_error = f"{type(exc).__name__}: {exc}"
                 status = 0
             else:
                 status = response.status_code
+                self.stats.rate_limited += int(status == 429)
                 if response.is_success:
                     try:
                         return FetchResult(url, status, response.json(), attempt)
@@ -146,6 +177,7 @@ class HttpFetcher:
                     last_error = f"HTTP {status}"
                     retry_after = _parse_retry_after(response)
                     if retry_after is not None and attempt < self._max_attempts:
+                        self.stats.honoured_retry_after += 1
                         log.warning("HTTP %s sur %s, attente %.1fs", status, url, retry_after)
                         await asyncio.sleep(retry_after)
                         continue
