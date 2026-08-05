@@ -1,0 +1,53 @@
+# Déploiement serveur.
+#
+# Le poste de dev n'utilise pas ce fichier : en local, Postgres est le serveur
+# déjà installé sur la machine et le code tourne sur le Python de
+# `sourcing/vendor`. Ici, tout est conteneurisé.
+#
+# Variables attendues dans un `.env` à côté de ce fichier (voir .env.example).
+
+name: fivorites-v2
+
+services:
+  postgres:
+    # 16 pour coller à la version du poste de dev : un écart de version majeure
+    # entre dev et serveur est le genre de détail qui ne se voit qu'en
+    # production.
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fivorites_v2}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD doit être défini dans .env}
+      POSTGRES_DB: ${POSTGRES_DB:-fivorites_v2}
+    ports:
+      # 5433 côté hôte : ne heurte pas un Postgres déjà installé sur la machine.
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fivorites_v2} -d ${POSTGRES_DB:-fivorites_v2}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  sourcing:
+    build:
+      context: ./sourcing
+    image: fivorites-v2/sourcing:latest
+    # Pipeline par lots, pas service permanent : on ne veut pas qu'un
+    # `compose up` lance une collecte. Il s'invoque à la demande —
+    #   docker compose run --rm sourcing db migrate
+    #   docker compose run --rm sourcing tmdb fetch --id 1399
+    profiles: ["cli"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fivorites_v2}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fivorites_v2}
+      DB_SCHEMA: ${DB_SCHEMA:-sourcing}
+      TMDB_BEARER: ${TMDB_BEARER:-}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      TMDB_RATE_LIMIT: ${TMDB_RATE_LIMIT:-20}
+
+volumes:
+  pgdata:
