@@ -2,3 +2,21 @@
 !README.md
 !doc/
 !doc/**
+
+# Tout est centralisé ici : ~/.gitignore_global exclut les fichiers nommés
+# `.gitignore`, donc un .gitignore par sous-dossier ne serait jamais versionné.
+
+# --- sourcing/ (Python) ---
+# La toolchain vendorisée n'est pas versionnée : elle pèse ~100 Mo et se
+# réinstalle à l'identique avec `make bootstrap` (version figée dans
+# .python-version, dépendances figées dans uv.lock).
+sourcing/vendor/
+sourcing/.venv/
+sourcing/.pytest_cache/
+sourcing/.ruff_cache/
+sourcing/.env
+**/__pycache__/
+*.py[cod]
+
+# --- données locales ---
+sourcing/data/
