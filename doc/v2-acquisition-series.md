@@ -43,7 +43,7 @@ décision non rejouable du projet.
 | **Catalogue V1** | **Table rase.** On re-collecte tout depuis TMDB sur l'architecture cible. La V1 n'est plus une dépendance du chantier : ni son catalogue, ni son pipeline, ni son schéma. Le seul actif à ne pas perdre reste les fives utilisateurs (§5.3 du doc de sourcing), qui se raccorderont plus tard par `id_tmdb`. |
 | **Périmètre** | Non décidé — **mesuré** au lot 5. L'échantillon stratifié donne la courbe « matière disponible × popularité » ; le seuil se lit dessus. |
 | **Langage** | Python 3.12, **vendorisé** dans `sourcing/vendor/python`. Aucune dépendance à un Python système : le Makefile n'appelle jamais `uv run`, et un garde-fou échoue si la venv dérive. |
-| **Exécution** | Deux cibles distinctes. **Poste de dev** : Python de `vendor/`, Postgres de la machine, pas de Docker. **Serveur** : tout conteneurisé, `Dockerfile` + `docker-compose.yml`. |
+| **Exécution** | **Postgres tourne toujours sur l'hôte, jamais en conteneur** — poste de dev comme serveur. Seule l'application est conteneurisée, et seulement sur le serveur : en local elle tourne sur le Python de `vendor/`. Mise en place serveur : [`serveur-debian11.md`](serveur-debian11.md). |
 | **Base** | Postgres local de la machine, rôle et base `fivorites_v2`. **Une seule base pour tout le projet, un schéma par domaine.** **Pas de Docker.** |
 | **Licence TMDB** | À lever avant le grand run, pas avant le prototype. Explorer 300 séries ne pose aucun problème d'usage ; construire un produit commercial dessus, si. À traiter en parallèle. |
 

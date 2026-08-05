@@ -27,7 +27,7 @@ DB_PORT  ?= 5432
 PSQL     := psql -h $(DB_HOST) -p $(DB_PORT) -U postgres -d postgres
 
 .PHONY: bootstrap sync guard doctor test lint fmt db-create db-drop migrate \
-        docker-build docker-up docker-migrate docker-down clean
+        docker-build docker-create docker-migrate docker-doctor docker-down clean
 
 ## Installe le CPython vendorisé, la venv et les dépendances.
 bootstrap:
@@ -97,11 +97,16 @@ COMPOSE := docker compose -f $(CURDIR)/../docker-compose.yml
 docker-build:
 	$(COMPOSE) build sourcing
 
-docker-up:
-	$(COMPOSE) up -d --wait postgres
+## Crée le conteneur et le réseau sans rien lancer. À faire avant de configurer
+## Postgres : c'est ce qui fait apparaître 172.28.0.1 sur l'hôte.
+docker-create:
+	$(COMPOSE) --profile cli create sourcing
 
 docker-migrate:
 	$(COMPOSE) run --rm sourcing db migrate
+
+docker-doctor:
+	$(COMPOSE) run --rm sourcing doctor
 
 docker-down:
 	$(COMPOSE) down

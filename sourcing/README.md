@@ -95,13 +95,17 @@ make test                                    # 21 tests, dont 7 de bout en bout 
 
 ## Déploiement serveur (Docker)
 
-Le serveur ne connaît ni `vendor/` ni le Postgres de la machine : tout est
-conteneurisé, décrit par [`Dockerfile`](Dockerfile) et le
-[`docker-compose.yml`](../docker-compose.yml) à la racine du dépôt.
+**Seule l'application est conteneurisée. Postgres tourne sur l'hôte**, installé
+par apt — comme en local, mais sur le serveur. Le conteneur le joint par la
+passerelle du réseau Docker, dont le sous-réseau est figé dans le compose pour
+que l'adresse de l'hôte (`172.28.0.1`) ne change pas au fil des recréations.
+
+La procédure complète, une fois pour toutes :
+**[`doc/serveur-debian11.md`](../doc/serveur-debian11.md)**.
+
+Au quotidien, une fois le serveur en place :
 
 ```bash
-cp .env.example .env          # à la racine du dépôt : POSTGRES_PASSWORD, TMDB_BEARER
-docker compose up -d --wait postgres
 docker compose run --rm sourcing db migrate
 docker compose run --rm sourcing tmdb fetch --id 1399
 ```

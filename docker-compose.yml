@@ -1,35 +1,19 @@
 # Déploiement serveur.
 #
-# Le poste de dev n'utilise pas ce fichier : en local, Postgres est le serveur
-# déjà installé sur la machine et le code tourne sur le Python de
-# `sourcing/vendor`. Ici, tout est conteneurisé.
+# Postgres n'est PAS conteneurisé : il tourne sur l'hôte, installé par apt (voir
+# doc/serveur-debian11.md). Seule l'application est en conteneur, et elle joint
+# la base par la passerelle du réseau Docker.
+#
+# Le sous-réseau est figé volontairement. Sans ça, Docker en choisit un au
+# hasard à la création du réseau, l'adresse de la passerelle change, et il faut
+# reprendre `listen_addresses` et `pg_hba.conf` à chaque fois. Ici l'adresse est
+# connue à l'avance : la configuration Postgres peut être écrite une fois.
 #
 # Variables attendues dans un `.env` à côté de ce fichier (voir .env.example).
 
 name: fivorites-v2
 
 services:
-  postgres:
-    # 16 pour coller à la version du poste de dev : un écart de version majeure
-    # entre dev et serveur est le genre de détail qui ne se voit qu'en
-    # production.
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-fivorites_v2}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD doit être défini dans .env}
-      POSTGRES_DB: ${POSTGRES_DB:-fivorites_v2}
-    ports:
-      # 5433 côté hôte : ne heurte pas un Postgres déjà installé sur la machine.
-      - "${POSTGRES_PORT:-5433}:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fivorites_v2} -d ${POSTGRES_DB:-fivorites_v2}"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
   sourcing:
     build:
       context: ./sourcing
@@ -39,15 +23,18 @@ services:
     #   docker compose run --rm sourcing db migrate
     #   docker compose run --rm sourcing tmdb fetch --id 1399
     profiles: ["cli"]
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fivorites_v2}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fivorites_v2}
+      DATABASE_URL: postgresql://${DB_USER:-fivorites_v2}:${DB_PASSWORD:?DB_PASSWORD doit être défini dans .env}@${DB_HOST:-172.28.0.1}:${DB_PORT:-5432}/${DB_NAME:-fivorites_v2}
       DB_SCHEMA: ${DB_SCHEMA:-sourcing}
       TMDB_BEARER: ${TMDB_BEARER:-}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       TMDB_RATE_LIMIT: ${TMDB_RATE_LIMIT:-20}
 
-volumes:
-  pgdata:
+networks:
+  default:
+    ipam:
+      config:
+        # 172.28.0.1 est l'hôte vu depuis les conteneurs. C'est cette adresse
+        # que Postgres doit écouter et que pg_hba.conf doit autoriser.
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
