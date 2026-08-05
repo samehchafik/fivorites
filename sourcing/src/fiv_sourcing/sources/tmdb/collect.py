@@ -1,7 +1,12 @@
-"""Collecte d'une série TMDB : la fiche, puis chaque saison en deux langues.
+"""Collecte d'une série TMDB : la fiche, puis chaque saison dans chaque langue.
 
-Aucune interprétation ici. Le seul champ du payload que ce module lit est la
-liste des saisons — parce qu'il faut bien savoir quoi télécharger ensuite.
+Une réponse HTTP = une ligne de `raw_source`. C'est l'invariant de la couche de
+collecte, et c'est ce qui permet à chaque saison d'avoir sa propre fraîcheur,
+son propre statut et sa propre empreinte. Le regroupement des saisons sous une
+série est le travail de la dérivation, pas celui-ci.
+
+Aucune interprétation ici non plus. Le seul champ du payload que ce module lit
+est la liste des saisons — parce qu'il faut bien savoir quoi télécharger.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ import psycopg
 
 from fiv_sourcing import store
 from fiv_sourcing.http import FetchResult
-from fiv_sourcing.sources.tmdb.client import SEASON_LANGUAGES, TmdbClient
+from fiv_sourcing.sources.tmdb.client import TmdbClient
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +79,9 @@ async def collect_series(
         return wrote, None if res.ok else (res.error or f"HTTP {res.status}")
 
     tasks = [
-        one_season(number, language) for number in season_numbers for language in SEASON_LANGUAGES
+        one_season(number, language)
+        for number in season_numbers
+        for language in client.season_languages
     ]
     for wrote, error in await asyncio.gather(*tasks):
         report.requests += 1

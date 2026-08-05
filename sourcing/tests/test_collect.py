@@ -40,15 +40,37 @@ async def test_collecte_ecrit_la_serie_et_ses_saisons(conn, settings: Settings):
     async with fetcher:
         report = await collect_series(conn, TmdbClient(fetcher, settings), 1399)
 
+    langues = len(settings.season_languages)
+    attendu = 1 + 2 * langues  # 1 fiche série + 2 saisons × N langues
+
     assert report.ok
     assert report.seasons_seen == 2
-    # 1 fiche série + 2 saisons × 2 langues
-    assert report.requests == 5
-    assert report.rows_written == 5
+    assert report.requests == attendu
+    assert report.rows_written == attendu
 
     async with conn.cursor() as cur:
         await cur.execute("select kind, count(*) from raw_source group by kind order by kind")
-        assert await cur.fetchall() == [("tv", 1), ("tv_season", 4)]
+        assert await cur.fetchall() == [("tv", 1), ("tv_season", 2 * langues)]
+
+
+@respx.mock
+async def test_chaque_saison_est_collectee_dans_chaque_langue(conn, settings: Settings):
+    """Le `language=` de TMDB traduit aussi les synopsis d'épisode — c'est la
+    raison d'être d'un appel par langue plutôt qu'un seul avec `translations`."""
+    _mock_tmdb()
+    fetcher = build_fetcher(settings)
+    async with fetcher:
+        await collect_series(conn, TmdbClient(fetcher, settings), 1399)
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select lang, count(*) from raw_source where kind = 'tv_season' "
+            "group by lang order by lang"
+        )
+        par_langue = dict(await cur.fetchall())
+
+    assert set(par_langue) == set(settings.season_languages)
+    assert set(par_langue.values()) == {2}, "deux saisons pour chaque langue"
 
 
 @respx.mock
@@ -62,13 +84,15 @@ async def test_rejouer_a_l_identique_n_ecrit_rien(conn, settings: Settings):
         first = await collect_series(conn, client, 1399)
         second = await collect_series(conn, client, 1399)
 
-    assert first.rows_written == 5
+    attendu = 1 + 2 * len(settings.season_languages)
+
+    assert first.rows_written == attendu
     assert second.rows_written == 0
-    assert second.requests == 5  # on a bien redemandé, on n'a juste rien réécrit
+    assert second.requests == attendu  # on a redemandé, on n'a juste rien réécrit
 
     async with conn.cursor() as cur:
         await cur.execute("select count(*) from raw_source")
-        assert (await cur.fetchone())[0] == 5
+        assert (await cur.fetchone())[0] == attendu
 
 
 @respx.mock

@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     # une fois qu'on a mesuré les 429 réellement observés (lot 6).
     tmdb_rate_limit: float = 20.0
 
+    # Langues demandées pour chaque saison — un appel par langue, parce que
+    # c'est le seul moyen d'obtenir les synopsis *d'épisode* traduits, qui sont
+    # la matière de notation. La fiche de série, elle, ne coûte qu'un appel :
+    # `translations` y est déjà dans l'append_to_response.
+    #
+    # Chaque langue ajoutée multiplie le coût des saisons. Liste en clair,
+    # séparée par des virgules, pour qu'on puisse la restreindre par
+    # environnement sans toucher au code.
+    tmdb_season_languages: str = "fr-FR,en-US,es-ES,ar-SA,tr-TR"
+
     http_timeout: float = 30.0
     http_max_attempts: int = 5
     http_user_agent: str = "fivorites-sourcing/0.1 (+https://fivorites.com)"
@@ -50,6 +60,10 @@ class Settings(BaseSettings):
     @property
     def has_tmdb_credentials(self) -> bool:
         return bool(self.tmdb_bearer or self.tmdb_api_key)
+
+    @property
+    def season_languages(self) -> tuple[str, ...]:
+        return tuple(code.strip() for code in self.tmdb_season_languages.split(",") if code.strip())
 
 
 @lru_cache

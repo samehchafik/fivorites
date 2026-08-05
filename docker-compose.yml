@@ -29,6 +29,7 @@ services:
       TMDB_BEARER: ${TMDB_BEARER:-}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       TMDB_RATE_LIMIT: ${TMDB_RATE_LIMIT:-20}
+      TMDB_SEASON_LANGUAGES: ${TMDB_SEASON_LANGUAGES:-fr-FR,en-US,es-ES,ar-SA,tr-TR}
 
 networks:
   default:

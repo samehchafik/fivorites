@@ -45,15 +45,23 @@ SERIES_APPEND = (
 
 SEASON_APPEND = ("credits", "external_ids", "images", "videos")
 
-# Deux langues par saison, comme en V1 : c'est l'appariement titre+synopsis
-# d'épisode en fr et en qui constitue la matière de notation (§5.1 du doc).
-SEASON_LANGUAGES = ("fr-FR", "en-US")
-
 
 class TmdbClient:
     def __init__(self, fetcher: HttpFetcher, settings: Settings) -> None:
         self._fetcher = fetcher
         self._settings = settings
+
+    @property
+    def season_languages(self) -> tuple[str, ...]:
+        """Langues à demander pour chaque saison.
+
+        Un appel par langue, et c'est le poste de coût dominant de la collecte.
+        La raison : `language=` traduit aussi les `overview` de chaque épisode,
+        alors que l'endpoint `translations` d'une saison ne porte que sur la
+        saison elle-même. Or ce sont les synopsis d'épisode qui constituent la
+        matière de notation (§5.1 du doc de sourcing).
+        """
+        return self._settings.season_languages
 
     @staticmethod
     def auth_headers(settings: Settings) -> dict[str, str]:
