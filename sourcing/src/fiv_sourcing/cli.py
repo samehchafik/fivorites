@@ -196,6 +196,45 @@ def tmdb_export(
     typer.echo(f"mises à jour : {report.updated:>9,}".replace(",", " "))
 
 
+@tmdb_app.command("changes")
+def tmdb_changes(
+    days: Annotated[int, typer.Option("--days", help="Fenêtre en jours. TMDB plafonne à 14.")] = 1,
+) -> None:
+    """Marque les séries que TMDB signale comme modifiées.
+
+    Ne collecte rien : pose une marque que `backfill` transformera en
+    recollecte. Si cette commande échoue à mi-parcours, ce qu'elle a déjà
+    marqué reste acquis.
+    """
+    from fiv_sourcing.sources.tmdb.changes import ChangesReport, refresh_changes
+    from fiv_sourcing.sources.tmdb.client import TmdbClient, build_fetcher
+
+    settings = get_settings()
+    if not settings.has_tmdb_credentials:
+        typer.echo("Aucun identifiant TMDB. Renseigner TMDB_BEARER ou TMDB_API_KEY dans .env")
+        raise typer.Exit(2)
+
+    async def run() -> ChangesReport:
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            fetcher = build_fetcher(settings)
+            async with fetcher:
+                return await refresh_changes(conn, TmdbClient(fetcher, settings), days=days)
+
+    report = _run_db(run)
+
+    typer.echo(f"fenêtre        : {report.start} → {report.end} ({report.pages} page(s))")
+    typer.echo(f"modifiées      : {report.ids_seen}")
+    typer.echo(f"marquées       : {report.marked}")
+    if report.unknown:
+        typer.echo(f"inconnues      : {report.unknown}  (pas encore dans le catalogue)")
+        typer.echo("                 → `tmdb export` les fera entrer")
+    if report.truncated:
+        typer.echo("")
+        typer.echo("Réponse tronquée : trop de pages. Réduire --days.")
+    typer.echo("")
+    typer.echo("`tmdb backfill` recollectera les séries marquées.")
+
+
 @tmdb_app.command("backfill")
 def tmdb_backfill(
     limit: Annotated[

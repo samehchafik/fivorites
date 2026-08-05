@@ -67,11 +67,14 @@ async def pending_ids(
     limit: int | None = None,
     order: str = "id",
 ) -> list[int]:
-    """Séries du catalogue jamais collectées avec succès.
+    """Séries à collecter, pour trois raisons distinctes.
 
-    `refresh_after` élargit la sélection à celles dont la dernière collecte
-    réussie remonte à plus de N jours — c'est ce qui rend la commande rejouable
-    en entretien, et pas seulement en premier remplissage.
+    1. **jamais collectées** — nouveautés apportées par l'export quotidien ;
+    2. **signalées modifiées** par `/tv/changes` depuis notre dernière réussite ;
+    3. **trop anciennes**, si `refresh_after` est donné.
+
+    La deuxième est ce qui rend l'entretien peu coûteux : au lieu de tout
+    recollecter périodiquement, on ne reprend que ce que TMDB dit avoir bougé.
     """
     if order not in ORDERS:
         raise ValueError(f"tri inconnu : {order} (attendu : {', '.join(ORDERS)})")
@@ -84,6 +87,7 @@ async def pending_ids(
             left join fetch_state f
                    on f.source = 'tmdb' and f.kind = 'tv' and f.source_id = c.id::text
             where f.last_success_at is null
+               or (c.changed_at is not null and c.changed_at > f.last_success_at)
                or (%(refresh_after)s::int is not null
                    and f.last_success_at < now()
                                          - make_interval(days => %(refresh_after)s::int))

@@ -102,11 +102,19 @@ class TmdbClient:
             ),
         )
 
-    async def changes(self, start_date: str, page: int = 1) -> FetchResult:
-        """Ids de séries modifiées depuis `start_date` (AAAA-MM-JJ)."""
+    async def changes(
+        self, start_date: str, page: int = 1, end_date: str | None = None
+    ) -> FetchResult:
+        """Ids de séries modifiées sur une fenêtre (dates en AAAA-MM-JJ).
+
+        TMDB plafonne la fenêtre à 14 jours ; au-delà, la réponse est
+        silencieusement tronquée.
+        """
+        params: dict[str, Any] = {"start_date": start_date, "page": page}
+        if end_date:
+            params["end_date"] = end_date
         return await self._fetcher.get_json(
-            f"{self._settings.tmdb_base_url}/tv/changes",
-            self._params({"start_date": start_date, "page": page}),
+            f"{self._settings.tmdb_base_url}/tv/changes", self._params(params)
         )
 
     async def configuration(self) -> FetchResult:
