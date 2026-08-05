@@ -63,6 +63,17 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 USER fivorites
 
+# Test de fumée : importe tout le paquet et vérifie que la CLI démarre.
+#
+# Sans ça, un module oublié dans un commit — le cas classique du `git commit -a`
+# qui ignore les fichiers non suivis — produit une image qui se construit sans
+# broncher et casse au premier lancement, après déploiement. Ici le build échoue
+# tout de suite, sur la machine qui a construit.
+RUN python -c "import pkgutil, importlib, fiv_sourcing; \
+      [importlib.import_module(m.name) \
+       for m in pkgutil.walk_packages(fiv_sourcing.__path__, 'fiv_sourcing.')]" \
+    && fiv-sourcing --help > /dev/null
+
 # `doctor` par défaut : lancer l'image sans argument dit si la configuration
 # tient debout, plutôt que d'échouer sur une commande métier.
 ENTRYPOINT ["fiv-sourcing"]
