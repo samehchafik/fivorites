@@ -48,9 +48,36 @@ Ces 26 séries appariées par titre comprennent **19 séries de la strate par
 décile qui n'ont aucun item Wikidata** — 12,7 % de la strate. C'est le gain de
 raccordement le plus net mesuré jusqu'ici, et il ne coûte ni clé ni quota.
 
-L'appariement par titre retient un score TVmaze ≥ 0,9. En deçà, l'homonymie
-l'emporte trop souvent ; mieux vaut compter un échec qu'écrire un faux
-raccordement dans `series_source`.
+### L'appariement par titre, mesuré contre une vérité terrain
+
+Les 64 séries qui portent à la fois `P4983` et `P8600` dans Wikidata sont des
+paires TMDB↔TVmaze déjà vérifiées par des humains. En rejouant la recherche par
+titre sur ces 64 paires
+([`tools/mesure_appariement_tvmaze.py`](../tools/mesure_appariement_tvmaze.py)) :
+
+| Signal | Résultat |
+|---|---|
+| Top 1 correct, titre seul | **58 / 64** (90,6 %) |
+| …que le seuil « score ≥ 0,9 » accepte | 35 / 58 — il en **rejette 23 de bons** |
+| Faux positif passant le seuil | 1 (*Teen Wolf* → l'homonyme) |
+| `externals.imdb` présent sur le top 1 | 51 |
+| …confirme le bon appariement | 50 / 51 |
+| …**oppose son veto au seul faux positif** | 1 / 1 |
+
+Le seuil de score initial (≥ 0,9) est donc doublement mauvais : trop strict — il
+jette 23 bons appariements sur 58 — et insuffisant, puisque le seul homonyme le
+franchit (deux séries s'appellent *Teen Wolf* ; aucun score textuel ne les
+départagera jamais).
+
+Le bon protocole se lit dans le tableau : **titre pour chercher, `imdb_id` pour
+décider**. La réponse de recherche TVmaze embarque `externals.imdb`
+gratuitement ; l'égalité avec l'`imdb_id` de TMDB (`external_ids`, collecté dans
+chaque fiche) confirme 50 cas sur 51 et rejette l'unique erreur. Quand
+l'identifiant manque d'un des deux côtés (13 cas sur 64), on départage par les
+signaux secondaires : année de première diffusion, pays, et recouvrement des
+personnes — créateurs et distribution, que TVmaze expose et que TMDB fournit via
+`aggregate_credits`. Ce dernier signal n'a pas pu être mesuré ici : il exige les
+fiches TMDB, et `raw_source` est vide tant que le jeton n'est pas réparé.
 
 ### Par décile : tout s'effondre après le troisième
 
@@ -174,7 +201,10 @@ simple des trois après CC0.
 
 Dans `series_source` : `source = 'tvmaze'`, `resolved_by` valant `p8600`, `imdb`
 ou `title`, `content` recevant les résumés d'épisode **quand ils existent**, et
-les faits partant vers la couche 1 au lot 4.
+les faits partant vers la couche 1 au lot 4. Le protocole d'appariement est
+celui mesuré au volet 1 : titre pour chercher, égalité `imdb_id` pour décider,
+personnes et année en départage quand l'identifiant manque — pas de seuil de
+score.
 
 ### 2. Wikidata pour les faits
 
@@ -209,9 +239,10 @@ connaissance de cause, pas un accident.
   fiable (alphabet distinct) ; le turc, détecté par `[ğışĞİŞ]`, rate les titres
   sans ces lettres — *Kara Sevda*, *Ezel*. La strate turque est un sous-ensemble
   biaisé vers les titres qui les contiennent.
-- **L'appariement TVmaze par titre au seuil 0,9** n'a pas été vérifié à la main.
-  Il peut manquer des séries et, plus grave, en apparier de mauvaises. À
-  contrôler sur un échantillon avant d'écrire dans `series_source`.
+- **L'appariement par titre a été validé contre 64 paires** (volet 1) — mais la
+  vérité terrain vient de Wikidata, donc de séries plutôt bien documentées.
+  Sa précision sur le fond de catalogue, où les homonymes sont moins départagés,
+  reste à démontrer.
 - **`title.akas` n'a pas été mesuré** — les titres alternatifs sont donc une
   promesse non vérifiée, volontairement, tant que la licence n'est pas levée.
 - Un seul point de mesure dans le temps.
