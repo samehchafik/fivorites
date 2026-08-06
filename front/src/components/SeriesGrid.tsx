@@ -57,6 +57,12 @@ function directionsFor(sort: string): { value: string; label: string }[] {
   ]
 }
 
+const labelOf = (value: string) =>
+  CARD_SORTS.find((entry) => entry.value === value)?.label ?? value
+
+const directionLabel = (sort: string, order: string) =>
+  directionsFor(sort).find((entry) => entry.value === order)?.label ?? order
+
 export interface GridState {
   search: string
   sort: string
@@ -240,12 +246,29 @@ export function SeriesGrid({
       )}
 
       <Group justify="space-between">
+        {/* Le tri appliqué, écrit. Deux sélecteurs plus haut disent déjà ce
+            qu'ils valent, mais rien ne montrait le résultat de leur
+            combinaison — et un tri qu'on croit avoir choisi sans l'avoir fait
+            ressemble en tout point à un tri cassé. */}
         <Text size="sm" c="dimmed">
-          {data
-            ? `${formatNumber(data.total)} série(s) collectée(s)${
-                projection?.lastAt ? ` · brut le plus récent ${formatDate(projection.lastAt)}` : ''
-              }`
-            : '—'}
+          {data ? `${formatNumber(data.total)} série(s) collectée(s)` : '—'}
+          {' · tri : '}
+          <Text span fw={600}>
+            {labelOf(state.sort)}
+          </Text>
+          {` (${directionLabel(state.sort, state.order)})`}
+          {state.sort2 ? (
+            <>
+              {', puis '}
+              <Text span fw={600}>
+                {labelOf(state.sort2)}
+              </Text>
+              {` (${directionLabel(state.sort2, state.order2)})`}
+            </>
+          ) : (
+            ' · aucun départage'
+          )}
+          {projection?.lastAt ? ` · brut le plus récent ${formatDate(projection.lastAt)}` : ''}
         </Text>
         <Pagination
           value={page}
