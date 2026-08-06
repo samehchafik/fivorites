@@ -33,7 +33,7 @@ packages = ["src/fiv_sourcing"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-q"
-markers = ["integration: nécessite Postgres (make db-up)"]
+markers = ["integration: nécessite Postgres (make db-create)"]
 
 [tool.ruff]
 line-length = 100

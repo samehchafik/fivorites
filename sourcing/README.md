@@ -88,10 +88,25 @@ cp .env.example .env   # puis renseigner TMDB_BEARER (token v4, préférable)
 
 ```bash
 make doctor                                  # interpréteur, base, migrations, schéma, identifiants
-.venv/bin/fiv-sourcing tmdb fetch --id 1399
-.venv/bin/fiv-sourcing tmdb stats            # ce qu'il y a en base
-make test                                    # 21 tests, dont 7 de bout en bout sur Postgres
+make test                                    # 80 tests, dont 34 de bout en bout sur Postgres
 ```
+
+Puis la ligne de commande, dans l'ordre où on s'en sert :
+
+```bash
+.venv/bin/fiv-sourcing tmdb export           # charge la liste de toutes les séries TMDB
+.venv/bin/fiv-sourcing tmdb catalog          # volumétrie et déciles de popularité
+.venv/bin/fiv-sourcing tmdb fetch --id 1399  # une série
+.venv/bin/fiv-sourcing tmdb backfill         # tout le catalogue, reprenable
+.venv/bin/fiv-sourcing tmdb changes          # marque ce qui a bougé chez TMDB
+.venv/bin/fiv-sourcing tmdb stats            # ce qu'il y a en base, et la projection de volume
+```
+
+`export` ne demande aucune clé — c'est un fichier public, hors quota. `backfill`
+prend `--limit`, `--concurrency`, `--order` (`id` par défaut, `random` pour
+estimer une durée, `popularity`), `--refresh-after` et `--dry-run`. Il reprend là
+où la passe précédente s'est arrêtée, et `changes` ne collecte rien : il pose une
+marque que `backfill` transforme en recollecte.
 
 ## Déploiement serveur (Docker)
 
@@ -134,7 +149,10 @@ donc le fichier reste tel quel pour le poste local.
 | [`store.py`](src/fiv_sourcing/store.py) | écriture de `raw_source` et `fetch_state` |
 | [`db.py`](src/fiv_sourcing/db.py) | connexion, `search_path`, migrations |
 | [`sources/tmdb/client.py`](src/fiv_sourcing/sources/tmdb/client.py) | endpoints et `append_to_response` |
-| [`sources/tmdb/collect.py`](src/fiv_sourcing/sources/tmdb/collect.py) | une série = la fiche + chaque saison en deux langues |
+| [`sources/tmdb/collect.py`](src/fiv_sourcing/sources/tmdb/collect.py) | une série = la fiche + chaque saison dans chaque langue |
+| [`sources/tmdb/export.py`](src/fiv_sourcing/sources/tmdb/export.py) | l'export quotidien → `tmdb_catalog` |
+| [`sources/tmdb/backfill.py`](src/fiv_sourcing/sources/tmdb/backfill.py) | la collecte de masse : sélection, reprise, progression |
+| [`sources/tmdb/changes.py`](src/fiv_sourcing/sources/tmdb/changes.py) | `/tv/changes` — ce que TMDB signale comme modifié |
 | [`migrations/`](migrations) | le schéma, en SQL numéroté |
 | [`Makefile`](Makefile) | le point d'entrée unique en local — c'est lui qui tient la vendorisation |
 | [`Dockerfile`](Dockerfile) | l'image du serveur |
@@ -156,7 +174,7 @@ l'emplacement doit être sans ambiguïté. [`test_schema.py`](tests/test_schema.
 garde le tout : une migration future qui créerait une table dans `public` par
 distraction fait échouer les tests.
 
-## Les deux tables
+## Les trois tables
 
 `raw_source` est append-only et dédupliqué par empreinte : rejouer une collecte
 sur une source inchangée n'écrit rien. `fetch_state` porte la fraîcheur par
@@ -164,8 +182,13 @@ objet — `last_fetched_at` (quand on a regardé) distinct de `last_changed_at`
 (quand ça a bougé). À elles deux elles remplacent les trois fichiers JSON sur
 disque qui portaient tout l'incrémental de la V1.
 
+`tmdb_catalog` n'est pas du brut mais un **inventaire** : une ligne par série
+connue de TMDB, alimentée par l'export quotidien. C'est elle qui dit ce qu'il
+reste à collecter, ce qui a disparu de TMDB (`exported_on` qui décroche) et ce
+qui a été signalé comme modifié (`changed_at`).
+
 ## Reste à faire
 
-Lot 2 (échantillon stratifié de 300 séries depuis l'export quotidien TMDB), lot 3
-(Wikidata P915/P840 et Wikipédia), lot 4 (dérivation de la couche faits), lot 5
-(rapport de couverture). Voir [`doc/v2-acquisition-series.md`](../doc/v2-acquisition-series.md).
+Lot 3 (Wikidata P915/P840 et Wikipédia), lot 4 (dérivation de la couche faits),
+lot 5 (rapport de couverture), et les priorités de rafraîchissement du lot 6.
+Voir [`doc/v2-acquisition-series.md`](../doc/v2-acquisition-series.md).

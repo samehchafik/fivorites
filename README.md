@@ -34,4 +34,19 @@ Les données sont organisées en trois couches :
 
 ## État
 
-Projet en cours de démarrage.
+L'acquisition des séries est en place : le catalogue TMDB est inventorié
+(228 454 séries) et la collecte de masse tourne. Les couches 2 et 3 — les axes
+et les facettes — restent à construire.
+
+| Répertoire | Rôle |
+|---|---|
+| [`sourcing/`](sourcing) | la collecte : TMDB aujourd'hui, Wikidata et Wikipédia ensuite |
+| [`admin/`](admin) | le front d'administration — ce qui est collecté, ce qui reste à faire |
+| [`front/`](front) | les sources React de ce front |
+| `www/` | le résultat du build, versionné : déployer le front, c'est `git pull` |
+
+| Document | Rôle |
+|---|---|
+| [`doc/v2-acquisition-series.md`](doc/v2-acquisition-series.md) | le plan d'acquisition, les décisions et les lots |
+| [`doc/serveur-debian11.md`](doc/serveur-debian11.md) | la mise en place du serveur, une fois pour toutes |
+| [`doc/etude-couverture-marche-arabe.md`](doc/etude-couverture-marche-arabe.md) | ce que valent les catalogues arabe, golfe et turc |

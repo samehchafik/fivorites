@@ -211,7 +211,7 @@ sudo docker compose run --rm sourcing doctor
 ✓  identifiants TMDB  token v4
 ✓  base               PostgreSQL 16.x
 ✓  migrations         à jour
-✓  schéma             sourcing — 2 table(s)
+✓  schéma             sourcing — 3 table(s)
 ```
 
 Si la ligne `base` échoue, le message dit lequel des deux cas s'applique :
@@ -231,12 +231,43 @@ sudo docker compose run --rm --entrypoint python sourcing -c 'import socket; soc
 
 ## 6. Utilisation courante
 
+D'abord l'inventaire — un fichier public, aucune clé, aucun quota consommé :
+
+```bash
+sudo docker compose run --rm sourcing tmdb export
+```
+
+```bash
+sudo docker compose run --rm sourcing tmdb catalog
+```
+
+Puis la collecte. `backfill` prend tout le catalogue et reprend là où la passe
+précédente s'est arrêtée ; `--dry-run` compte le reste à faire sans rien
+télécharger, `--limit` borne une passe d'essai :
+
+```bash
+sudo docker compose run --rm sourcing tmdb backfill --dry-run
+```
+
+```bash
+sudo docker compose run --rm sourcing tmdb backfill --limit 200
+```
+
+Une série seule, et ce qu'il y a en base :
+
 ```bash
 sudo docker compose run --rm sourcing tmdb fetch --id 1399
 ```
 
 ```bash
 sudo docker compose run --rm sourcing tmdb stats
+```
+
+Enfin le rattrapage : `tmdb changes` marque les séries que TMDB signale comme
+modifiées, et le `backfill` suivant les recollecte.
+
+```bash
+sudo docker compose run --rm sourcing tmdb changes --days 1
 ```
 
 Il n'y a pas de `docker compose up` : le sourcing est un pipeline par lots, pas

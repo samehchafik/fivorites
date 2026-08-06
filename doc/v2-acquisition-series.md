@@ -4,7 +4,8 @@
 > collecter et pourquoi. Ce document-ci décrit *comment*, dans quel ordre, et ce
 > qui a déjà été décidé.
 >
-> État : lot 1 livré. Lots 2 à 6 à faire.
+> État : lots 1 et 2 livrés — le catalogue complet est inventorié et la collecte
+> de masse tourne. Lots 3 à 5 à faire ; du lot 6, `/tv/changes` est déjà là.
 
 ---
 
@@ -24,11 +25,18 @@ noter, on ne sait ni quel périmètre viser, ni si Wikipédia est optionnel ou
 indispensable, ni combien coûtera la notation. Le premier livrable de fond est
 donc un **rapport de couverture**, pas un catalogue.
 
-**Le coût réel n'est pas TMDB, c'est la notation.** 17 requêtes HTTP par série
-sur 250 000 séries, c'est quelques jours de machine et zéro euro. Six axes par
-LLM sur 250 000 séries, c'est un budget. La sélection du périmètre est donc une
-décision d'acquisition à part entière — la V1 n'avait aucun filtre qualité
-sérieux (« pas adulte » et « au moins une affiche »).
+**Le coût réel n'est pas TMDB, c'est la notation.** Un appel pour la fiche, plus
+un appel par saison et par langue — soit une quarantaine de requêtes pour une
+série de huit saisons en cinq langues. Sur les 228 454 séries du catalogue,
+l'ordre de grandeur est de 2 millions de requêtes : une trentaine d'heures de
+machine et zéro euro. Six axes par LLM sur 228 454 séries, c'est un budget.
+
+D'où la forme qu'a prise la sélection, une fois le lot 2 mesuré : **aucun filtre
+à l'acquisition, le périmètre se tranche en aval** (§3). La V1 filtrait à
+l'entrée sur des critères qui n'en étaient pas (« pas adulte » et « au moins une
+affiche ») ; filtrer sur `popularity` aurait été pire — la mesure du lot 2
+montre que ça sous-représenterait d'un facteur six les catalogues en écriture
+arabe.
 
 **Le brut ne protège que de la dérivation.** Conserver le JSON permet de réviser
 un axe ou d'ajouter une facette sans réseau. Mais ajouter un sous-appel à
@@ -41,7 +49,9 @@ décision non rejouable du projet.
 | Sujet | Décision |
 |---|---|
 | **Catalogue V1** | **Table rase.** On re-collecte tout depuis TMDB sur l'architecture cible. La V1 n'est plus une dépendance du chantier : ni son catalogue, ni son pipeline, ni son schéma. Le seul actif à ne pas perdre reste les fives utilisateurs (§5.3 du doc de sourcing), qui se raccorderont plus tard par `id_tmdb`. |
-| **Périmètre** | Non décidé — **mesuré** au lot 5. L'échantillon stratifié donne la courbe « matière disponible × popularité » ; le seuil se lit dessus. |
+| **Filtrage à l'acquisition** | **Aucun**, mesure du lot 2 à l'appui. `popularity` est une métrique d'usage du *site* TMDB, dont le public est très majoritairement occidental : un seuil à 5 ne retiendrait que 54 des 5 560 séries en écriture arabe, alors que leur popularité médiane est comparable à celle du reste du catalogue. On collecte tout ; le tri se fait en aval, sur des données complètes. |
+| **Périmètre de notation** | Non décidé — **mesuré** au lot 5. Le rapport de couverture donne la courbe « matière disponible × popularité » ; le seuil se lit dessus. |
+| **Langues des saisons** | fr, en, es, ar, tr — un appel par saison **et par langue**, c'est le poste de coût dominant. La raison : `language=` traduit aussi l'`overview` de chaque épisode, alors que l'endpoint `translations` d'une saison ne porte que sur la saison elle-même. Réglable par `TMDB_SEASON_LANGUAGES` ; à confirmer par une requête avant la passe complète, le facteur est de cinq (§5, lot 2). |
 | **Langage** | Python 3.12, **vendorisé** dans `sourcing/vendor/python`. Aucune dépendance à un Python système : le Makefile n'appelle jamais `uv run`, et un garde-fou échoue si la venv dérive. |
 | **Exécution** | **Postgres tourne toujours sur l'hôte, jamais en conteneur** — poste de dev comme serveur. Seule l'application est conteneurisée, et seulement sur le serveur : en local elle tourne sur le Python de `vendor/`. Mise en place serveur : [`serveur-debian11.md`](serveur-debian11.md). |
 | **Base** | Postgres local de la machine, rôle et base `fivorites_v2`. **Une seule base pour tout le projet, un schéma par domaine.** **Pas de Docker.** |
@@ -61,6 +71,8 @@ base fivorites_v2
 │               fetched_at, http_status, payload, sha)  │
 │    fetch_state(…, last_fetched_at, last_changed_at,   │
 │                priority, attempts, last_error)        │
+│    tmdb_catalog(id, original_name, popularity,        │
+│                exported_on, changed_at)               │
 │    → append-only, jamais retouché, jamais interprété   │
 │  ─────────────────────────────────────────────────────┘
 │              ↓  dérivation hors ligne, rejouable, sans réseau
@@ -81,6 +93,12 @@ public.schema_migrations — l'historique, qui vaut pour la base entière
 Seul `sourcing` existe aujourd'hui ; `catalog` et `scores` arrivent aux lots 4
 et suivants. La connexion pose le `search_path`, donc le code applicatif écrit
 `raw_source` sans préfixe ; les migrations qualifient tout explicitement.
+
+`tmdb_catalog` est à part : ce n'est pas du brut, c'est un **inventaire** — une
+ligne par série connue de TMDB, et non une ligne par téléchargement. Il vient de
+l'export quotidien, un fichier public qui ne consomme aucun appel d'API, et il
+sert de base de sondage : volumétrie réelle, déciles de popularité, et détection
+des séries disparues (`exported_on` qui décroche).
 
 Deux tables portent à elles seules la correction des trois faiblesses de la V1 :
 le brut jeté dans des fichiers jamais relus, l'état incrémental dans trois JSON
@@ -117,17 +135,33 @@ reprise sur erreur, client TMDB, collecte série + saisons, CLI, 18 tests.
 `raw_source` ; relancé, il redemande à TMDB mais n'écrit aucune ligne, tout en
 faisant avancer `last_fetched_at`.
 
-### Lot 2 — Échantillon de 300 séries
+### ✅ Lot 2 — Catalogue et collecte de masse *(livré)*
 
-Télécharger l'export quotidien `tv_series_ids_MM_DD_YYYY.json.gz`. Il contient
-`id`, `original_name` **et `popularity`** pour tout le catalogue : c'est la base
-de sondage, gratuite et sans une seule requête API. Stratifier en déciles de
-log-popularité, 30 séries par décile, plus une liste d'ancrages tenue à la main
-pour la calibration ultérieure des axes.
+L'export quotidien `tv_series_ids_MM_DD_YYYY.json.gz` contient `id`,
+`original_name` **et `popularity`** pour tout le catalogue : base de sondage
+gratuite, sans une seule requête d'API. `tmdb export` la charge dans
+`tmdb_catalog`, `tmdb catalog` en donne la volumétrie et les déciles de
+popularité, `tmdb backfill` collecte l'ensemble en reprenant là où la passe
+précédente s'est arrêtée (`--limit`, `--concurrency`, `--order`,
+`--refresh-after`, `--dry-run`).
 
-À mesurer ici : `/tv/{id}/season/{n}?append_to_response=translations`
-remplacerait-il les deux appels fr/en ? Si oui, le coût saisons est divisé par
-deux sur tout le catalogue. À valider sur 10 séries avant de figer.
+**Ce que la mesure a changé au plan.** L'échantillon stratifié de 300 séries
+devait servir à décider quoi collecter. La répartition par écriture a tranché
+autrement : `popularity` n'est pas un filtre acceptable (§3), donc il n'y a plus
+de sélection à faire à l'acquisition — on prend tout. L'échantillon garde son
+rôle en aval, pour la calibration des axes et le rapport de couverture du
+lot 5.
+
+**Volumétrie mesurée** : 228 454 séries à l'export du 2026-08-05, chargées en
+4 secondes. La falaise de popularité est brutale — le premier décile couvre 406
+à 3,71, les neuf autres se partagent 3,71 à 0.
+
+*Reste ouvert* : `/tv/{id}/season/{n}?append_to_response=translations`
+remplacerait-il les cinq appels par langue ? La réponse attendue est non — cet
+endpoint ne porte que sur la saison, pas sur l'`overview` de chaque épisode —
+mais elle n'a pas été vérifiée par une requête réelle, et le facteur est de
+cinq sur le poste de coût dominant. Une seule requête suffit à trancher, avant
+la passe complète.
 
 ### Lot 3 — Enrichissement externe
 
@@ -159,16 +193,20 @@ et couche 2.
 *Ce que le rapport tranche* : le périmètre, le budget de notation, et le rôle
 de Wikipédia.
 
-### Lot 6 — Passage à l'échelle *(après lecture du rapport)*
+### Lot 6 — Passage à l'échelle *(partiellement livré)*
 
-`/tv/changes` + priorités de rafraîchissement (haute : en production ou
-populaires, quotidien / moyenne : présentes dans des fives, hebdomadaire /
-basse : fond de catalogue, mensuel), parallélisme, reprise sur incident, filtre
-qualité à l'entrée.
+Déjà là, parce que le backfill ne pouvait pas s'en passer : `/tv/changes`
+(`tmdb changes` marque les séries signalées, `backfill` les recollecte), le
+parallélisme et la reprise sur incident.
+
+Reste à faire, après lecture du rapport : les priorités de rafraîchissement
+(haute : en production ou populaires, quotidien / moyenne : présentes dans des
+fives, hebdomadaire / basse : fond de catalogue, mensuel). Le filtre qualité à
+l'entrée, lui, est abandonné — voir §3.
 
 ## 6. Ce qui vient après l'acquisition
 
-Noter les 300 sur les 6 axes, mesurer les corrélations, trancher
+Noter un échantillon d'ancrage sur les 6 axes, mesurer les corrélations, trancher
 *Exigence × Étrangeté*, et valider contre `similar_tmdb_raw` : deux séries que
 TMDB juge similaires doivent être proches dans l'espace à 6 dimensions. C'est un
 jeu d'évaluation gratuit, disponible sans annotation manuelle.
@@ -179,5 +217,10 @@ jeu d'évaluation gratuit, disponible sans annotation manuelle.
 |---|---|
 | [`sourcing/README.md`](../sourcing/README.md) | installation et utilisation |
 | [`sourcing/src/fiv_sourcing/sources/tmdb/client.py`](../sourcing/src/fiv_sourcing/sources/tmdb/client.py) | `append_to_response` — la décision non rejouable |
+| [`sourcing/src/fiv_sourcing/sources/tmdb/export.py`](../sourcing/src/fiv_sourcing/sources/tmdb/export.py) | l'export quotidien → `tmdb_catalog` |
+| [`sourcing/src/fiv_sourcing/sources/tmdb/backfill.py`](../sourcing/src/fiv_sourcing/sources/tmdb/backfill.py) | la collecte de masse, reprenable |
+| [`sourcing/src/fiv_sourcing/sources/tmdb/changes.py`](../sourcing/src/fiv_sourcing/sources/tmdb/changes.py) | `/tv/changes` — ce qui a bougé chez TMDB |
 | [`sourcing/migrations/001_sourcing.sql`](../sourcing/migrations/001_sourcing.sql) | le schéma de collecte |
+| [`sourcing/migrations/002_tmdb_catalog.sql`](../sourcing/migrations/002_tmdb_catalog.sql) | l'inventaire du catalogue |
+| [`sourcing/migrations/003_changes.sql`](../sourcing/migrations/003_changes.sql) | la marque de modification |
 | `v2-sourcing-series.md` (dépôt V1) | l'analyse de l'existant et le modèle en trois couches |

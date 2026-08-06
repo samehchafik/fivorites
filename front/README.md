@@ -27,7 +27,7 @@ front se commite en deux morceaux :
 
 ```bash
 make -C ../admin web-build        # met à jour ../www et incrémente la version
-git add ../www front/package.json src/
+git add ../www package.json src/  # depuis front/ : le build, puis les sources
 ```
 
 Oublier le build, c'est déployer l'ancienne version sans que rien ne le signale.
