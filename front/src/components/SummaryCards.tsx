@@ -1,6 +1,6 @@
 import { Card, Group, Progress, SimpleGrid, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
 
-import { formatDate, formatEta, formatNumber, formatPercent } from '../display'
+import { formatDate, formatEta, formatNumber, formatPercent, ratio } from '../display'
 import type { Summary } from '../types'
 
 /** Les quatre chiffres qui disent où en est la collecte. Le quatrième dépend de
@@ -26,11 +26,11 @@ export function SummaryCards({
 
   const perLang = summary.byLang[lang]
   const catalogue = summary.catalog.total
-  const seenRatio = catalogue ? summary.works.seen / catalogue : null
+  const seenRatio = ratio(summary.works.seen, catalogue)
   // Une couverture en séries, pas en saisons : « combien d'œuvres ai-je dans
   // cette langue », rapporté aux œuvres effectivement collectées. Une
   // proportion de saisons ne se compare à rien de ce qui est affiché autour.
-  const langRatio = summary.works.ok ? (perLang?.worksOk ?? 0) / summary.works.ok : null
+  const langRatio = ratio(perLang?.worksOk ?? 0, summary.works.ok)
 
   const eta = formatEta(summary.works.remaining, summary.works.lastHour)
 
@@ -61,11 +61,16 @@ export function SummaryCards({
         value={formatNumber(summary.works.remaining)}
         hint={eta ?? undefined}
         detail={
-          summary.works.lastHour > 0
-            ? `${formatNumber(summary.works.lastHour)} fiche(s) sur la dernière heure`
-            : 'aucune collecte depuis une heure'
+          !Number.isFinite(summary.works.lastHour)
+            ? 'débit inconnu — API plus ancienne que le front'
+            : summary.works.lastHour > 0
+              ? `${formatNumber(summary.works.lastHour)} fiche(s) sur la dernière heure`
+              : 'aucune collecte depuis une heure'
         }
-        progress={catalogue ? 1 - summary.works.remaining / catalogue : null}
+        progress={(() => {
+          const fait = ratio(summary.works.remaining, catalogue)
+          return fait === null ? null : 1 - fait
+        })()}
         color="grape"
       />
 

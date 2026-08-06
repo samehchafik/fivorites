@@ -57,7 +57,15 @@ const dateFormat = new Intl.DateTimeFormat('fr-FR', {
   timeStyle: 'short',
 })
 
-export const formatNumber = (value: number): string => numberFormat.format(value)
+/** Un nombre, ou un tiret s'il n'y en a pas.
+ *
+ *  Le repli n'est pas de la coquetterie : `www/` se déploie par `git pull` et
+ *  l'API par un `docker build`, donc les deux peuvent être décalés d'une
+ *  version. Un champ que l'API ne renvoie pas encore arrive ici en `undefined`,
+ *  et `Intl.NumberFormat` en fait un « NaN » qu'on lit comme une donnée fausse
+ *  plutôt que comme une donnée absente. */
+export const formatNumber = (value: number | null | undefined): string =>
+  typeof value === 'number' && Number.isFinite(value) ? numberFormat.format(value) : '—'
 
 export const formatDate = (value: string | null | undefined): string =>
   value ? dateFormat.format(new Date(value)) : '—'
@@ -88,12 +96,28 @@ export const POSTER_FALLBACK =
  *
  *  `null` quand rien ne permet de l'estimer : afficher « 0 h » là où l'on ne
  *  sait pas serait un mensonge par arrondi, et « ∞ » n'aide personne. */
-export function formatEta(remaining: number, perHour: number): string | null {
-  if (remaining <= 0) return 'terminé'
-  if (perHour <= 0) return null
+export function formatEta(
+  remaining: number | null | undefined,
+  perHour: number | null | undefined,
+): string | null {
+  // Même raison que `formatNumber` : sans ce garde, deux champs absents
+  // donnaient « ~NaN jours ».
+  if (!Number.isFinite(remaining) || !Number.isFinite(perHour)) return null
+  if (remaining! <= 0) return 'terminé'
+  if (perHour! <= 0) return null
 
-  const hours = remaining / perHour
+  const hours = remaining! / perHour!
   if (hours < 1) return `~${Math.max(1, Math.round(hours * 60))} min`
   if (hours < 48) return `~${Math.round(hours)} h`
   return `~${Math.round(hours / 24)} jours`
+}
+
+/** Une proportion, ou `null` si l'un des deux termes manque.
+ *
+ *  `Progress` reçoit alors `null` et n'affiche pas de barre, au lieu d'une
+ *  largeur `NaN%` que le navigateur interprète comme zéro — indiscernable
+ *  d'un avancement réellement nul. */
+export function ratio(part: number | null | undefined, whole: number | null | undefined) {
+  if (!Number.isFinite(part) || !Number.isFinite(whole) || whole! <= 0) return null
+  return part! / whole!
 }
