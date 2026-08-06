@@ -47,6 +47,7 @@ et les facettes — restent à construire.
 
 | Document | Rôle |
 |---|---|
+| [`doc/architecture-sourcing.md`](doc/architecture-sourcing.md) | **l'architecture cible du sourcing** — les règles, le JSON canonique, le chemin |
 | [`doc/v2-acquisition-series.md`](doc/v2-acquisition-series.md) | le plan d'acquisition, les décisions et les lots |
 | [`doc/serveur-debian11.md`](doc/serveur-debian11.md) | la mise en place du serveur, une fois pour toutes |
 | [`doc/exploitation.md`](doc/exploitation.md) | lancer, surveiller, diagnostiquer — au quotidien |

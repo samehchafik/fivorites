@@ -4,7 +4,8 @@
 > **auto-suffisant** : ouvrir un thread avec ce seul fichier doit suffire à
 > reprendre le travail.
 >
-> Compléments : [`v2-acquisition-series.md`](v2-acquisition-series.md) pour le
+> Compléments : [`architecture-sourcing.md`](architecture-sourcing.md) pour
+> l'architecture cible, [`v2-acquisition-series.md`](v2-acquisition-series.md) pour le
 > plan, [`v2-notation-axes.md`](v2-notation-axes.md) pour la couche 2,
 > [`serveur-debian11.md`](serveur-debian11.md) pour l'installation,
 > [`exploitation.md`](exploitation.md) pour le quotidien,
