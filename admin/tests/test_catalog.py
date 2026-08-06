@@ -368,6 +368,90 @@ async def test_only_with_a_poster(conn: psycopg.AsyncConnection) -> None:
     assert all(row["posterPath"] for row in avec)
 
 
+async def test_only_with_an_overview(conn: psycopg.AsyncConnection) -> None:
+    """La case « avec descriptif ». C'est la matière de la notation : une série
+    sans texte ne servira à rien, quelle que soit son affiche."""
+    await seed(conn)
+    for tv_id, payload, digest in (
+        (7001, '{"name": "Sans texte", "poster_path": "/a.jpg"}', b"\x51"),
+        # Le cas majoritaire en pratique : un synopsis non traduit revient en
+        # chaîne vide, pas en `null`.
+        (7002, '{"name": "Texte vide", "overview": "   ", "poster_path": "/b.jpg"}', b"\x52"),
+    ):
+        await conn.execute(
+            "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+            " values (%s, %s, 1.0, date '2026-08-05')",
+            (tv_id, f"#{tv_id}"),
+        )
+        await conn.execute(
+            """
+            insert into raw_source (source, kind, source_id, lang, http_status,
+                                    payload, payload_sha256)
+            values ('tmdb', 'tv', %s, 'fr-FR', 200, %s::jsonb, %s)
+            """,
+            (str(tv_id), payload, digest),
+        )
+    await refresh_cards(conn)
+
+    _, total_tout = await fetch_cards(conn, CardQuery(lang="fr-FR"))
+    assert total_tout == 4
+
+    avec, total = await fetch_cards(conn, CardQuery(lang="fr-FR", with_overview=True))
+    assert total == 2
+    assert {row["id"] for row in avec} == {1399, 2000}
+
+    # Les deux cases se combinent, elles ne s'excluent pas.
+    _, deux = await fetch_cards(conn, CardQuery(lang="fr-FR", with_overview=True, with_poster=True))
+    assert deux == 2
+
+
+async def test_sorting_by_year_lets_the_second_criterion_work(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Le tri par jour exact ne laisse presque jamais d'égalité à départager,
+    donc le second critère paraît sans effet. À l'année, il en a un."""
+    await seed(conn)
+    for tv_id, date, pop, digest in (
+        # Popularités choisies à contre-courant des dates : sans ça les deux
+        # tris donneraient le même ordre et le test ne prouverait rien.
+        (8001, "2020-01-05", 90.0, b"\x61"),
+        (8002, "2020-11-30", 10.0, b"\x62"),
+        (8003, "2020-06-15", 50.0, b"\x63"),
+    ):
+        await conn.execute(
+            "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+            " values (%s, %s, %s, date '2026-08-05')",
+            (tv_id, f"#{tv_id}", pop),
+        )
+        await conn.execute(
+            """
+            insert into raw_source (source, kind, source_id, lang, http_status,
+                                    payload, payload_sha256)
+            values ('tmdb', 'tv', %s, 'fr-FR', 200,
+                    jsonb_build_object('name', %s::text, 'first_air_date', %s::text), %s)
+            """,
+            (str(tv_id), f"#{tv_id}", date, digest),
+        )
+    await refresh_cards(conn)
+    lot = {8001, 8002, 8003}
+
+    # Par jour : la date décide seule, la popularité n'a aucune égalité à
+    # départager — c'est le comportement qui paraissait cassé.
+    rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR", sort="air_date", sort2="popularity"))
+    assert [r["id"] for r in rows if r["id"] in lot] == [8002, 8003, 8001]
+
+    # Par année : les trois sont à égalité, la popularité tranche — et donne un
+    # ordre différent du précédent, ce qui est tout l'intérêt.
+    rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR", sort="air_year", sort2="popularity"))
+    assert [r["id"] for r in rows if r["id"] in lot] == [8001, 8003, 8002]
+
+    rows, _ = await fetch_cards(
+        conn,
+        CardQuery(lang="fr-FR", sort="air_year", sort2="popularity", descending2=False),
+    )
+    assert [r["id"] for r in rows if r["id"] in lot] == [8002, 8003, 8001]
+
+
 async def test_projection_state_says_when_it_lags(conn: psycopg.AsyncConnection) -> None:
     await seed(conn)
     assert await cards_state(conn) == {

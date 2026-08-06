@@ -38,6 +38,7 @@ async def cards(
     sort2: str | None = Query(default=None),
     order2: str = Query(default="desc", pattern="^(asc|desc)$"),
     withPoster: bool = Query(default=False),
+    withOverview: bool = Query(default=False),
     page: int = Query(default=1, ge=1),
     pageSize: int = Query(default=24, ge=1, le=96),
 ) -> dict[str, Any]:
@@ -56,6 +57,7 @@ async def cards(
             sort2=sort2 or None,
             descending2=order2 == "desc",
             with_poster=withPoster,
+            with_overview=withOverview,
             page=page,
             page_size=pageSize,
         ),

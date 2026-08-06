@@ -51,6 +51,7 @@ const DEFAULT_GRID: GridState = {
   sort2: 'popularity',
   order2: 'desc',
   withPoster: false,
+  withOverview: false,
   pageSize: 24,
 }
 
@@ -107,6 +108,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       grid.sort2,
       grid.order2,
       grid.withPoster,
+      grid.withOverview,
       gridPage,
       grid.pageSize,
     ],
@@ -119,6 +121,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
         sort2: grid.sort2 || undefined,
         order2: grid.order2,
         withPoster: grid.withPoster || undefined,
+        withOverview: grid.withOverview || undefined,
         page: gridPage,
         pageSize: grid.pageSize,
       }),
@@ -184,6 +187,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     grid.sort2,
     grid.order2,
     grid.withPoster,
+    grid.withOverview,
     grid.pageSize,
   ])
 

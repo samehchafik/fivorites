@@ -107,6 +107,8 @@ export interface CardsParams extends Record<string, QueryValue> {
   order2?: 'asc' | 'desc'
   /** Ne garder que les séries ayant une affiche. */
   withPoster?: boolean
+  /** Ne garder que les séries ayant un synopsis. */
+  withOverview?: boolean
   page: number
   pageSize: number
 }

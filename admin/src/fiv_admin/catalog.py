@@ -33,6 +33,12 @@ KIND_SEASON = "tv_season"
 CARD_SORTS: dict[str, sql.SQL] = {
     # Le défaut demandé : de la plus récente à la plus ancienne.
     "air_date": sql.SQL("v.first_air_date"),
+    # L'année seule, et c'est le seul tri qui rende un second critère utile.
+    # Sur le jour exact, deux séries ont rarement la même date : le critère de
+    # départage n'a alors rien à départager, et paraît ne pas fonctionner. À
+    # l'année, les égalités sont massives, et « les plus récentes, et à année
+    # égale les plus populaires » devient un classement lisible.
+    "air_year": sql.SQL("extract(year from v.first_air_date)"),
     "name": sql.SQL("coalesce(v.name, v.original_name)"),
     "popularity": sql.SQL("c.popularity"),
     "fetched": sql.SQL("v.fetched_at"),
@@ -48,6 +54,7 @@ CAST_LIMIT = 30
 # Les colonnes du SELECT final, où `page` a perdu les préfixes de tables.
 PAGE_SORTS: dict[str, sql.SQL] = {
     "air_date": sql.SQL("p.first_air_date"),
+    "air_year": sql.SQL("extract(year from p.first_air_date)"),
     "name": sql.SQL("coalesce(p.name, p.original_name)"),
     "popularity": sql.SQL("p.popularity"),
     "fetched": sql.SQL("p.fetched_at"),
@@ -70,6 +77,10 @@ class CardQuery:
     # défaut de la grille : TMDB n'en a pas pour tout le monde, et le fond de
     # catalogue en est largement dépourvu.
     with_poster: bool = False
+    # N'afficher que ce qui a un synopsis. C'est la matière de la notation :
+    # une série sans texte ne servira à rien au lot 5, quelle que soit son
+    # affiche.
+    with_overview: bool = False
     page: int = 1
     page_size: int = 24
 
@@ -137,6 +148,12 @@ async def fetch_cards(
             # vide : les deux veulent dire « pas d'affiche », et n'en traiter
             # qu'un laisserait passer des vignettes trouées.
             sql.SQL("nullif(v.poster_path, '') is not null") if q.with_poster else sql.SQL("true"),
+            # Même précaution que pour l'affiche, et elle sert plus souvent
+            # encore : un `overview` non traduit revient en chaîne vide, pas en
+            # `null`. Tester `is not null` seul ne filtrerait presque rien.
+            sql.SQL("nullif(btrim(v.overview), '') is not null")
+            if q.with_overview
+            else sql.SQL("true"),
         ]
     )
 

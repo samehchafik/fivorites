@@ -21,6 +21,10 @@ import { SeriesCard } from './SeriesCard'
 
 export const CARD_SORTS: { value: string; label: string }[] = [
   { value: 'air_date', label: 'Date de diffusion' },
+  // Distinct du précédent, et c'est le seul qui rende un second critère
+  // utile : deux séries partagent rarement le jour exact, très souvent
+  // l'année.
+  { value: 'air_year', label: 'Année de diffusion' },
   { value: 'name', label: 'Titre' },
   { value: 'popularity', label: 'Popularité' },
   { value: 'fetched', label: 'Dernière collecte' },
@@ -33,6 +37,12 @@ function directionsFor(sort: string): { value: string; label: string }[] {
     return [
       { value: 'asc', label: 'de A à Z' },
       { value: 'desc', label: 'de Z à A' },
+    ]
+  }
+  if (sort === 'air_year') {
+    return [
+      { value: 'desc', label: 'de la plus récente' },
+      { value: 'asc', label: 'de la plus ancienne' },
     ]
   }
   if (sort === 'popularity') {
@@ -56,6 +66,8 @@ export interface GridState {
   order2: 'asc' | 'desc'
   /** Ne lister que ce qui a une affiche. */
   withPoster: boolean
+  /** Ne lister que ce qui a un synopsis. */
+  withOverview: boolean
   pageSize: number
 }
 
@@ -157,11 +169,19 @@ export function SeriesGrid({
               est largement dépourvu. La case sert à regarder la partie
               présentable du catalogue sans changer ce qu'il contient. */}
           <Checkbox
-            label="Avec affiche seulement"
+            label="Avec affiche"
             checked={state.withPoster}
-            onChange={(event) =>
-              onState({ ...state, withPoster: event.currentTarget.checked })
-            }
+            onChange={(event) => onState({ ...state, withPoster: event.currentTarget.checked })}
+            mb={6}
+          />
+
+          {/* Le synopsis est la matière de la notation : une série sans texte
+              ne servira à rien au lot 5, si belle que soit son affiche. Les
+              deux cases se combinent. */}
+          <Checkbox
+            label="Avec descriptif"
+            checked={state.withOverview}
+            onChange={(event) => onState({ ...state, withOverview: event.currentTarget.checked })}
             mb={6}
           />
         </Group>
