@@ -50,12 +50,19 @@ class Settings(BaseSettings):
     # environnement sans toucher au code.
     tmdb_season_languages: str = "fr-FR,en-US,es-ES,ar-SA,tr-TR"
 
-    # Débit vers les sources tierces — Wikidata, Wikipédia, TVmaze. Distinct de
-    # celui de TMDB, et volontairement bas : ce sont des services gratuits et
-    # partagés, dont le service SPARQL de Wikidata. Y appliquer les 20 req/s
-    # d'une API commerciale serait un abus, et le meilleur moyen de se faire
-    # bannir au milieu d'une passe.
-    enrich_rate_limit: float = 2.0
+    # Débit vers Wikimedia — SPARQL, `wbgetentities`, extraits d'articles. Ce
+    # sont des services gratuits et partagés : on reste raisonnable, mais leur
+    # infrastructure encaisse sans peine quelques requêtes par seconde.
+    enrich_rate_limit: float = 5.0
+
+    # TVmaze à part, parce que sa limite est **documentée** : « at least 20 calls
+    # every 10 seconds per IP ». La dépasser n'est pas une question de politesse
+    # mais de blocage au milieu d'une passe de plusieurs dizaines d'heures.
+    #
+    # C'est la raison d'être du limiteur par hôte : TVmaze pèse environ 40 % des
+    # requêtes de l'enrichissement, donc un plafond global de 5 lui en enverrait
+    # 2/s — pile à sa limite — et tout global au-delà la dépasserait.
+    tvmaze_rate_limit: float = 2.0
 
     http_timeout: float = 30.0
     http_max_attempts: int = 5

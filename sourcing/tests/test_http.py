@@ -86,3 +86,54 @@ async def test_limiteur_desactive_quand_rate_nul():
     debut = time.perf_counter()
     await asyncio.gather(*(limiter.acquire() for _ in range(100)))
     assert time.perf_counter() - debut < 0.05
+
+
+@respx.mock
+async def test_chaque_hote_a_son_propre_plafond(monkeypatch):
+    """Les services d'une même passe n'ont pas la même tolérance. TVmaze
+    documente « at least 20 calls every 10 seconds » ; Wikimedia encaisse bien
+    plus. Sous un plafond commun, soit on dépasse le plus fragile, soit on
+    impose son rythme à tous."""
+    attentes: list[float] = []
+
+    async def note(delay: float) -> None:
+        attentes.append(delay)
+
+    monkeypatch.setattr("fiv_sourcing.http.asyncio.sleep", note)
+    respx.get(url__startswith="https://api.tvmaze.com/").mock(httpx.Response(200, json={}))
+    respx.get(url__startswith="https://fr.wikipedia.org/").mock(httpx.Response(200, json={}))
+
+    fetcher = HttpFetcher(rate_limit=100, rate_limits={"api.tvmaze.com": 1})
+    try:
+        # Deux appels sur chaque hôte : le second attend selon le plafond de
+        # *son* hôte, pas selon un compteur partagé.
+        await fetcher.get_json("https://fr.wikipedia.org/w/api.php")
+        await fetcher.get_json("https://fr.wikipedia.org/w/api.php")
+        rapide = list(attentes)
+
+        attentes.clear()
+        await fetcher.get_json("https://api.tvmaze.com/shows/1")
+        await fetcher.get_json("https://api.tvmaze.com/shows/2")
+        lent = list(attentes)
+    finally:
+        await fetcher.aclose()
+
+    assert max(rapide, default=0) < 0.05, "Wikimedia ne doit pas subir le plafond de TVmaze"
+    assert max(lent) > 0.5, "TVmaze doit garder son propre plafond"
+
+
+@respx.mock
+async def test_un_hote_sans_plafond_propre_retombe_sur_le_general(monkeypatch):
+    async def sans_attente(delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("fiv_sourcing.http.asyncio.sleep", sans_attente)
+    respx.get(url__startswith="https://query.wikidata.org/").mock(httpx.Response(200, json={}))
+
+    fetcher = HttpFetcher(rate_limit=0, rate_limits={"api.tvmaze.com": 1})
+    try:
+        result = await fetcher.get_json("https://query.wikidata.org/sparql")
+    finally:
+        await fetcher.aclose()
+
+    assert result.ok

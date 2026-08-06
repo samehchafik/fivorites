@@ -74,15 +74,21 @@ def build_clients(fetcher: HttpFetcher) -> Clients:
 
 
 def build_fetcher(settings: Settings) -> HttpFetcher:
-    """Un client distinct de celui de TMDB.
+    """Un client distinct de celui de TMDB, et un débit par hôte.
 
     Deux raisons de ne pas réutiliser l'autre : il porte l'en-tête
-    d'authentification TMDB, qu'on n'envoie pas à Wikimedia ni à TVmaze ; et le
-    débit n'est pas le même — 20 req/s conviennent à une API commerciale, pas au
-    service SPARQL de Wikidata, qui est gratuit et partagé.
+    d'authentification TMDB, qu'on n'envoie ni à Wikimedia ni à TVmaze ; et le
+    débit n'est pas le même — 20 req/s conviennent à une API commerciale, pas à
+    des services gratuits et partagés.
+
+    Le débit est ensuite **par hôte** et non global, parce que les trois n'ont
+    pas la même tolérance. TVmaze documente « at least 20 calls every 10 seconds
+    per IP » et pèse environ 40 % des requêtes : sous un plafond commun, soit on
+    le dépasse, soit on impose son rythme à Wikimedia qui encaisse bien plus.
     """
     return HttpFetcher(
         rate_limit=settings.enrich_rate_limit,
+        rate_limits={"api.tvmaze.com": settings.tvmaze_rate_limit},
         timeout=settings.http_timeout,
         max_attempts=settings.http_max_attempts,
         user_agent=settings.http_user_agent,

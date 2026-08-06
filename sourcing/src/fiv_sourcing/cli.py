@@ -254,7 +254,7 @@ def enrich(
 
             fetcher = build_fetcher(settings)
             async with fetcher:
-                return await enrich_all(
+                resultat = await enrich_all(
                     conn,
                     build_clients(fetcher),
                     selection,
@@ -263,9 +263,13 @@ def enrich(
                     stop=stop,
                     on_progress=show,
                 )
+                stats.append(fetcher.stats)
+                return resultat
 
     typer.echo(f"langues : {', '.join(langues)}")
-    typer.echo(f"débit   : {settings.enrich_rate_limit} requête/s (ENRICH_RATE_LIMIT)")
+    typer.echo(f"débit   : {settings.enrich_rate_limit} req/s Wikimedia (ENRICH_RATE_LIMIT)")
+    typer.echo(f"          {settings.tvmaze_rate_limit} req/s TVmaze (TVMAZE_RATE_LIMIT)")
+    stats: list[FetcherStats] = []
 
     if ids:
         raise typer.Exit(1 if _run_db(une_par_une) == len(ids) else 0)
@@ -286,6 +290,12 @@ def enrich(
     typer.echo(f"lignes brutes : {report.rows_written}")
     if report.errors:
         typer.echo(f"erreurs       : {report.errors}")
+
+    # Même raisonnement que pour TMDB : le plafond se règle sur ce qu'une passe
+    # réelle a déclenché, pas sur une valeur choisie a priori.
+    if stats:
+        _bilan_debit(stats[0], settings.enrich_rate_limit, variable="ENRICH_RATE_LIMIT")
+
     if report.interrupted:
         typer.echo("")
         typer.echo("Interrompu. Relancer la même commande reprend où on s'est arrêté.")
@@ -479,12 +489,15 @@ def tmdb_backfill(
         raise typer.Exit(130)
 
 
-def _bilan_debit(stats: FetcherStats, rate_limit: float) -> None:
-    """Ce que la passe apprend sur le plafond réellement toléré par TMDB.
+def _bilan_debit(
+    stats: FetcherStats, rate_limit: float, *, variable: str = "TMDB_RATE_LIMIT"
+) -> None:
+    """Ce que la passe apprend sur le plafond réellement toléré.
 
-    Leur limite dure a été supprimée en 2019 et ce qui subsiste n'est pas
-    documenté : plutôt que de régler le débit sur une valeur trouvée dans un
-    forum, on regarde combien de 429 une passe réelle a déclenchés.
+    Pour TMDB, leur limite dure a été supprimée en 2019 et ce qui subsiste n'est
+    pas documenté. Pour les sources tierces, seule TVmaze annonce un chiffre.
+    Dans les deux cas, plutôt que de régler le débit sur une valeur trouvée dans
+    un forum, on regarde combien de 429 une passe réelle a déclenchés.
     """
     typer.echo("")
     typer.echo(f"requêtes HTTP : {stats.requests}  (dont {stats.retries} reprise(s))")
@@ -495,12 +508,12 @@ def _bilan_debit(stats: FetcherStats, rate_limit: float) -> None:
     if not stats.rate_limited:
         typer.echo(
             f"              → aucun bridage à {rate_limit} req/s. "
-            "Monter TMDB_RATE_LIMIT accélérerait la passe."
+            f"Monter {variable} accélérerait la passe."
         )
     elif stats.rate_limited_ratio > 0.01:
         typer.echo(
             f"              → {stats.rate_limited_ratio:.1%} des requêtes bridées. "
-            "Baisser TMDB_RATE_LIMIT : les reprises coûtent plus qu'elles ne rapportent."
+            f"Baisser {variable} : les reprises coûtent plus qu'elles ne rapportent."
         )
     else:
         typer.echo("              → bridage marginal, le débit actuel est proche du plafond.")

@@ -13,6 +13,7 @@ import logging
 import random
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -91,6 +92,7 @@ class HttpFetcher:
         self,
         *,
         rate_limit: float,
+        rate_limits: dict[str, float] | None = None,
         timeout: float = 30.0,
         max_attempts: int = 5,
         user_agent: str = "fivorites-sourcing/0.1",
@@ -98,6 +100,14 @@ class HttpFetcher:
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._limiter = RateLimiter(rate_limit)
+        # Un limiteur par hôte quand plusieurs services sont interrogés dans la
+        # même passe. Un plafond global les traiterait à égalité alors qu'ils
+        # n'ont ni la même tolérance ni le même contrat : TVmaze documente
+        # « at least 20 calls every 10 seconds », Wikimedia encaisse bien plus.
+        # Avec un seul compteur, c'est le plus fragile qui impose son rythme à
+        # tous — et on le dépasse quand même, puisque sa part du trafic n'est
+        # pas connue à l'avance.
+        self._limiters = {host: RateLimiter(rate) for host, rate in (rate_limits or {}).items()}
         self._max_attempts = max(1, max_attempts)
         self.rate_limit = rate_limit
         self.stats = FetcherStats()
@@ -118,6 +128,10 @@ class HttpFetcher:
         if self._owns_client:
             await self._client.aclose()
 
+    def _limiter_for(self, url: str) -> RateLimiter:
+        """Le limiteur de l'hôte visé, ou le plafond général à défaut."""
+        return self._limiters.get(urlsplit(url).hostname or "", self._limiter)
+
     async def get_bytes(self, url: str, timeout: float | None = None) -> tuple[int, bytes]:
         """Télécharge un fichier. Renvoie (statut HTTP, contenu).
 
@@ -128,7 +142,7 @@ class HttpFetcher:
         """
         last_status = 0
         for attempt in range(1, self._max_attempts + 1):
-            await self._limiter.acquire()
+            await self._limiter_for(url).acquire()
             self.stats.requests += 1
             self.stats.retries += int(attempt > 1)
             try:
@@ -152,7 +166,7 @@ class HttpFetcher:
         status = 0
 
         for attempt in range(1, self._max_attempts + 1):
-            await self._limiter.acquire()
+            await self._limiter_for(url).acquire()
             self.stats.requests += 1
             self.stats.retries += int(attempt > 1)
             try:
