@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from fiv_sourcing.sources.tmdb.export import ExportReport
 
 from fiv_sourcing.config import VENDOR_DIR, Settings, get_settings
-from fiv_sourcing.db import MigrationsNotFound, connect, migrate, ping
+from fiv_sourcing.db import MigrationsNotFound, connect, migrate, pending_migrations, ping
 from fiv_sourcing.http import FetcherStats
 from fiv_sourcing.redact import SecretFilter, fingerprint, redact_dsn
 
@@ -244,6 +244,7 @@ def enrich(
 
     async def en_masse() -> EnrichAllReport:
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            await _exiger_le_schema_a_jour(conn, settings)
             selection = await pending_ids(
                 conn, refresh_after=refresh_after, limit=limit, order=order
             )
@@ -473,6 +474,7 @@ def tmdb_backfill(
 
     async def run() -> BackfillReport:
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            await _exiger_le_schema_a_jour(conn, settings)
             ids = await pending_ids(conn, refresh_after=refresh_after, limit=limit, order=order)
             if dry_run or not ids:
                 return BackfillReport(selected=len(ids))
@@ -689,6 +691,26 @@ def _octets(taille: float) -> str:
             return f"{taille:.1f} {unite}"
         taille /= 1024
     return f"{taille:.1f} To"
+
+
+async def _exiger_le_schema_a_jour(conn: psycopg.AsyncConnection, settings: Settings) -> None:
+    """Refuse de démarrer une passe sur un schéma en retard.
+
+    Le cas s'est produit trois fois de suite sur le serveur, sous trois formes :
+    migration jamais copiée dans l'image, commande absente, colonne manquante.
+    La dernière se manifestait par `column c.first_air_date does not exist` au
+    milieu d'une trace psycopg — un message qui dit ce qui a cassé mais pas quoi
+    faire. Une passe dure des heures : elle doit échouer sur la première seconde
+    et dire la commande à lancer.
+    """
+    attente = await pending_migrations(conn, settings.migrations_dir)
+    if not attente:
+        return
+    typer.echo(f"ERREUR : {len(attente)} migration(s) en attente : {', '.join(attente)}")
+    typer.echo("        → `db migrate` d'abord.")
+    typer.echo("          En conteneur, reconstruire l'image avant : les migrations")
+    typer.echo("          y sont copiées, un `git pull` seul ne les y met pas.")
+    raise typer.Exit(1)
 
 
 async def _db_status(dsn: str, schema: str, migrations_dir: Path) -> tuple[str, int, int]:

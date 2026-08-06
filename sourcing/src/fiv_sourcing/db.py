@@ -50,6 +50,29 @@ class MigrationsNotFound(RuntimeError):
     """Le répertoire de migrations est absent ou vide."""
 
 
+async def pending_migrations(conn: psycopg.AsyncConnection, migrations_dir: Path) -> list[str]:
+    """Migrations présentes sur disque et pas encore appliquées.
+
+    Sert de garde-fou aux commandes de traitement par lots. Sans lui, une
+    migration oubliée se manifeste par une trace psycopg au milieu d'une passe —
+    `column c.first_air_date does not exist` — qui ne dit pas quoi faire. Le cas
+    est fréquent sur le serveur, où le code arrive par `git pull` et les
+    migrations par une reconstruction d'image : les deux peuvent diverger.
+    """
+    if not migrations_dir.is_dir():
+        raise MigrationsNotFound(f"répertoire de migrations introuvable : {migrations_dir}")
+
+    async with conn.cursor() as cur:
+        await cur.execute("select to_regclass('public.schema_migrations') is not null")
+        row = await cur.fetchone()
+        applied: set[str] = set()
+        if row and row[0]:
+            await cur.execute("select version from public.schema_migrations")
+            applied = {r[0] for r in await cur.fetchall()}
+
+    return sorted(p.stem for p in migrations_dir.glob("*.sql") if p.stem not in applied)
+
+
 async def migrate(conn: psycopg.AsyncConnection, migrations_dir: Path) -> list[str]:
     """Applique les migrations manquantes, dans l'ordre du nom de fichier.
 
