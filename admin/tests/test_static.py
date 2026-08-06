@@ -94,7 +94,7 @@ def test_without_a_build_the_page_says_what_is_missing(tmp_path: Path) -> None:
     response = client_for(tmp_path / "jamais-construit").get("/")
 
     assert response.status_code == 503
-    assert "www-build" in response.text
+    assert "git pull" in response.text
 
 
 def test_an_empty_directory_is_not_a_front(tmp_path: Path) -> None:
@@ -112,7 +112,7 @@ def test_an_empty_directory_is_not_a_front(tmp_path: Path) -> None:
 
     assert response.status_code == 503
     assert "index.html" in response.text
-    assert "www-build" in response.text
+    assert "git pull" in response.text
 
 
 def test_any_path_says_the_same_thing_when_there_is_no_front(tmp_path: Path) -> None:

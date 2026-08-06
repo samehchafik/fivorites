@@ -97,30 +97,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # Construit ./www à partir des sources de ./front.
-  #
-  #   docker compose run --rm www-build
-  #
-  # ⚠️ **Ce n'est pas le chemin normal.** ./www est versionné : le front est
-  # construit sur le poste de dev, commité, et arrive sur le serveur par
-  # `git pull`. Ce service est là pour le dépannage — et il tourne en root, donc
-  # il laisse ./www inécrivable pour le compte qui fait les `git pull`. Après
-  # usage :  sudo chown -R "$USER" www
-  #
-  # Le profil `build` l'écarte de `compose up` — c'est une tâche, pas un service.
-  www-build:
-    image: node:22-bookworm-slim
-    profiles: ["build"]
-    working_dir: /srv/front
-    volumes:
-      # Les sources en lecture-écriture : npm y installe node_modules.
-      - ./front:/srv/front
-      # La cible, forcément en écriture : c'est ce service qui la produit.
-      - ./www:/srv/www
-    # `npm ci` plutôt que `install` : les versions sont celles du lock, à
-    # l'octet près, et non « ce que le registre propose aujourd'hui ».
-    command: sh -c "npm ci --no-audit --no-fund && npm run build"
-
 networks:
   default:
     ipam:

@@ -325,14 +325,33 @@ trois fichiers, toujours les mêmes :
 ls www www/assets
 ```
 
-⚠️ **Ne pas lancer `www-build` sur le serveur.** Ce service existe pour le
-dépannage, mais il tourne en root : il laisse `www/` inécrivable pour votre
-compte, et le `git pull` suivant échoue sur
-`cannot create directory at 'www/assets': Permission denied`. Si c'est déjà
-arrivé, ou si Docker a créé `www/` avant le premier `git pull` :
+**Rien à construire sur le serveur**, et il n'existe aucun service pour le
+faire : `www/` est versionné, le build se fait sur le poste de dev et se
+commite. Si `www/` a été créé par Docker avant le premier `git pull`, il
+appartient à root et bloque la mise à jour :
 
 ```bash
 sudo rm -rf www && git pull
+```
+
+### Le dépôt du serveur ne doit jamais avoir de modification locale
+
+C'est une copie de déploiement, pas un plan de travail. Un `git pull` qui
+échoue en cours de route — droits, disque plein — laisse des fichiers à moitié
+écrits que git compte ensuite comme des « modifications locales », et le pull
+suivant refuse de démarrer. Rien n'a été modifié : la copie est simplement
+restée entre deux états.
+
+La remise à plat, qui **écrase tout ce qui est local** :
+
+```bash
+sudo chown -R "$USER" ~/fivorites && git fetch origin && git reset --hard origin/main
+```
+
+Pour voir ce qui diffère avant de l'écraser, si le doute existe :
+
+```bash
+git status --short && git diff --stat
 ```
 
 Un compte — le mot de passe est demandé à l'invite, jamais passé en argument,

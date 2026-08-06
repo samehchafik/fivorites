@@ -145,6 +145,10 @@ docker compose run --rm -it admin user add sameh
 docker compose up -d admin                   # service permanent, port 8182
 ```
 
+Le dépôt du serveur est une copie de déploiement : il ne doit jamais porter de
+modification locale, sans quoi le `git pull` suivant refuse de démarrer. La
+remise à plat est `git fetch origin && git reset --hard origin/main`.
+
 Trois points de conception, tous vérifiables dans le compose :
 
 * **L'image ne contient que l'API.** `www/` est un volume monté en lecture
@@ -153,10 +157,10 @@ Trois points de conception, tous vérifiables dans le compose :
   et il ne contient que le résultat du build : un répertoire servi en HTTP n'a
   à contenir ni code source, ni `package.json`, ni `node_modules`.
 * **Node ne tourne pas en production**, et n'a même pas besoin d'y être
-  installé : le build est fait sur le poste et commité. Le service `www-build`
-  reste disponible en dépannage — c'est une tâche (profil `build`), pas un
-  service — mais il écrit en root, donc il faut réparer les droits de `www/`
-  après usage, sinon le `git pull` suivant échoue.
+  installé : le build est fait sur le poste et commité. Il n'existe aucun
+  service pour construire sur le serveur — celui qui existait écrivait dans des
+  fichiers suivis (les droits de `www/`, la version dans `package.json`) et
+  cassait le `git pull` suivant à chaque usage.
 * **Le port est publié sur `0.0.0.0`**, réglable par `ADMIN_BIND`. Tant qu'il
   n'y a pas de TLS devant, le mot de passe de connexion et le cookie de session
   circulent en clair. Avec un reverse proxy TLS : `ADMIN_BIND=127.0.0.1` et

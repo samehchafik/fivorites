@@ -158,10 +158,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         @app.get("/{full_path:path}", include_in_schema=False)
         async def missing_front(full_path: str) -> Response:
             return PlainTextResponse(
-                f"Rien à servir : pas d'index.html dans {settings.web_dist}.\n"
-                "Le front se construit depuis les sources de front/.\n\n"
-                "Sur le serveur :  docker compose run --rm www-build\n"
-                "En local      :  make -C admin web-build\n"
+                f"Rien à servir : pas d'index.html dans {settings.web_dist}.\n\n"
+                "Le contenu de www/ est versionné : sur le serveur il arrive par\n"
+                "  git pull\n"
+                "et se construit sur le poste de dev par\n"
+                "  make -C admin web-build\n"
                 "\nL'API, elle, répond : /api/health\n",
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )

@@ -96,15 +96,18 @@ En développement, Vite relaie `/api` vers l'API : **une seule origine** vue du
 navigateur, donc le cookie de session reste propriétaire et il n'y a rien à
 configurer en CORS.
 
-Il existe bien un service `www-build` (un conteneur Node jetable) pour
-construire sur le serveur, mais **ce n'est plus le chemin normal** depuis que
-`www/` est versionné — et il tourne en root, donc il laisse derrière lui des
-fichiers que le `git pull` suivant ne peut plus écrire. À réserver au dépannage,
-en réparant les droits ensuite :
+**Il n'y a pas de build sur le serveur**, et pas de service pour le faire : le
+déploiement se réduit à `git pull`. Un conteneur Node monté sur `front/` a été
+essayé puis retiré, pour deux raisons qui tiennent toutes deux au fait qu'il
+écrit dans des fichiers suivis :
 
-```bash
-sudo chown -R "$USER" www
-```
+* il tourne en root, donc il laisse `www/` inécrivable pour le compte qui fait
+  les `git pull`, qui échouent ensuite sur `Permission denied` ;
+* `vite build` incrémente `package.json`, donc le dépôt du serveur se retrouve
+  avec une modification locale, et le `git pull` suivant refuse de démarrer.
+
+Les deux sont sans objet quand le build a lieu ici et que le serveur ne fait que
+lire.
 
 ## Les écrans
 
