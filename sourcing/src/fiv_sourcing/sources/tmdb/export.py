@@ -26,6 +26,42 @@ log = logging.getLogger(__name__)
 
 EXPORT_BASE = "http://files.tmdb.org/p/exports"
 
+# Recopie la date de première diffusion du brut vers l'inventaire.
+#
+# Le garde-fou par expression régulière n'est pas de la superstition : TMDB
+# renvoie parfois une chaîne vide, et un cast qui échoue sur **une** ligne
+# annulerait la mise à jour des 148 000 autres. `case` écarte ce qui n'est pas
+# une date ISO au lieu de faire tomber la transaction.
+MAJ_DATES = """
+update tmdb_catalog c
+set first_air_date = d.date_diffusion
+from (
+    select distinct on (source_id)
+           source_id::int as id,
+           case when payload ->> 'first_air_date' ~ '^\\d{4}-\\d{2}-\\d{2}$'
+                then (payload ->> 'first_air_date')::date
+           end as date_diffusion
+    from raw_source
+    where source = 'tmdb' and kind = 'tv'
+      and http_status between 200 and 299
+    order by source_id, fetched_at desc
+) d
+where c.id = d.id
+  and c.first_air_date is distinct from d.date_diffusion
+"""
+
+
+async def refresh_air_dates(conn) -> int:
+    """Remplit `tmdb_catalog.first_air_date` depuis `raw_source`.
+
+    Idempotent, sans réseau, et à relancer après chaque passe de collecte : une
+    série fraîchement collectée n'a sa date ici qu'après ce passage.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(MAJ_DATES)
+        return cur.rowcount
+
+
 # L'export du jour n'est publié qu'en milieu de matinée UTC. Plutôt que
 # d'échouer si on demande trop tôt, on remonte de quelques jours : un catalogue
 # vieux de 48 h reste une base de sondage parfaitement valable.

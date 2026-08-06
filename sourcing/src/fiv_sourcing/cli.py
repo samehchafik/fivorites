@@ -174,7 +174,10 @@ def enrich(
     ] = 4,
     order: Annotated[
         str,
-        typer.Option("--order", help="id (neutre, défaut), random (pour estimer) ou popularity."),
+        typer.Option(
+            "--order",
+            help="id (défaut), recent (année puis popularité), popularity, random.",
+        ),
     ] = "id",
     refresh_after: Annotated[
         int | None,
@@ -337,6 +340,38 @@ def tmdb_export(
     typer.echo(f"séries lues  : {report.series_read:>9,}".replace(",", " "))
     typer.echo(f"nouvelles    : {report.inserted:>9,}".replace(",", " "))
     typer.echo(f"mises à jour : {report.updated:>9,}".replace(",", " "))
+
+
+@tmdb_app.command("dates")
+def tmdb_dates() -> None:
+    """Recopie les dates de diffusion du brut vers l'inventaire.
+
+    Sans réseau. C'est ce qui alimente `--order recent` : la date vit dans le
+    payload de la fiche, et trier 228 000 séries dessus décompresserait toute la
+    table à chaque passe. À relancer après chaque collecte — une série
+    fraîchement téléchargée n'a sa date ici qu'après ce passage.
+    """
+    from fiv_sourcing.sources.tmdb.export import refresh_air_dates
+
+    settings = get_settings()
+
+    async def run() -> tuple[int, int, int]:
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            majs = await refresh_air_dates(conn)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "select count(*) filter (where first_air_date is not null), count(*) "
+                    "from tmdb_catalog"
+                )
+                datees, total = await cur.fetchone()
+            return majs, datees, total
+
+    majs, datees, total = _run_db(run)
+    espace = lambda n: f"{n:,}".replace(",", " ")  # noqa: E731
+    typer.echo(f"mises à jour : {espace(majs)}")
+    typer.echo(f"datées       : {espace(datees)} / {espace(total)}")
+    if datees < total:
+        typer.echo(f"               {espace(total - datees)} sans date — pas encore collectées")
 
 
 @tmdb_app.command("changes")

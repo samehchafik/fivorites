@@ -304,6 +304,14 @@ ORDERS = {
     "id": "c.id",
     "random": "random()",
     "popularity": "c.popularity desc, c.id",
+    # « Les plus récentes, et à date égale les plus populaires. » La popularité
+    # seule ne le remplace pas : une série de 2015 très consultée passerait
+    # avant une nouveauté, ce qui est l'inverse de l'intention.
+    #
+    # `nulls last` met en fin de file les séries non encore collectées, qui
+    # n'ont pas de date — et qui sont aussi celles où l'enrichissement a le
+    # moins de prise, faute d'`imdb_id` pour confirmer l'appariement TVmaze.
+    "recent": "c.first_air_date desc nulls last, c.popularity desc, c.id",
 }
 
 

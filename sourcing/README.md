@@ -88,7 +88,7 @@ cp .env.example .env   # puis renseigner TMDB_BEARER (token v4, préférable)
 
 ```bash
 make doctor                                  # interpréteur, base, migrations, schéma, identifiants
-make test                                    # 111 tests, dont 53 de bout en bout sur Postgres
+make test                                    # 116 tests, dont 58 de bout en bout sur Postgres
 ```
 
 Puis la ligne de commande, dans l'ordre où on s'en sert :
@@ -98,6 +98,7 @@ Puis la ligne de commande, dans l'ordre où on s'en sert :
 .venv/bin/fiv-sourcing tmdb catalog          # volumétrie et déciles de popularité
 .venv/bin/fiv-sourcing tmdb fetch --id 1399  # une série
 .venv/bin/fiv-sourcing tmdb backfill         # tout le catalogue, reprenable
+.venv/bin/fiv-sourcing tmdb dates            # recopie les dates du brut vers l'inventaire
 .venv/bin/fiv-sourcing tmdb changes          # marque ce qui a bougé chez TMDB
 .venv/bin/fiv-sourcing tmdb stats            # ce qu'il y a en base, et la projection de volume
 
@@ -121,6 +122,19 @@ Sans `--id`, il traite **tout ce qui n'a pas encore de complément** et reprend 
 où la passe précédente s'est arrêtée. Il accepte les mêmes options que
 `backfill` : `--limit`, `--concurrency`, `--order`, `--refresh-after`,
 `--dry-run`.
+
+`--order recent` trie par **année de diffusion décroissante puis popularité** —
+ce que la popularité seule ne fait pas, puisqu'une série de 2015 très consultée
+passerait avant une nouveauté. Il demande que `tmdb dates` ait tourné : la date
+vit dans le payload de la fiche, et trier 228 000 séries dessus décompresserait
+toute la table. Les séries non encore collectées, qui n'ont pas de date,
+partent en fin de file — ce sont aussi celles où l'enrichissement a le moins de
+prise, faute d'`imdb_id` pour confirmer l'appariement TVmaze.
+
+Le débit est **par hôte** : `ENRICH_RATE_LIMIT` (5 par défaut) vaut pour
+Wikimedia, `TVMAZE_RATE_LIMIT` (2) pour TVmaze, dont la limite est documentée —
+« at least 20 calls every 10 seconds per IP ». Un plafond commun ne pourrait pas
+respecter l'un sans brider l'autre.
 
 Ce qui rend cette passe tenable, c'est le **regroupement des résolutions** : une
 requête SPARQL pour cent séries au lieu d'une chacune. Le catalogue entier coûte
