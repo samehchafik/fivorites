@@ -328,6 +328,32 @@ async def fetch_work(
                            coalesce(r.payload -> 'translations' -> 'translations', '[]'::jsonb)
                        ) t
                    ), '[]'::jsonb) as translations,
+                   -- Le titre et le synopsis dans la langue demandée.
+                   --
+                   -- La fiche n'est téléchargée qu'une fois, en `fr-FR` : sans
+                   -- cette extraction, changer de langue ne changeait rien au
+                   -- texte affiché. Les traductions sont pourtant là — c'est
+                   -- `append_to_response=translations` qui les apporte — mais
+                   -- personne ne les lisait.
+                   --
+                   -- L'ordre départage les variantes régionales d'une même
+                   -- langue : `ar-SA` d'abord, puis n'importe quel `ar`. TMDB
+                   -- en renvoie plusieurs (ar-AE, ar-SA…) et prendre la
+                   -- première venue donnerait un résultat instable d'une
+                   -- collecte à l'autre.
+                   coalesce((
+                       select jsonb_build_object(
+                           'name', t -> 'data' ->> 'name',
+                           'overview', t -> 'data' ->> 'overview',
+                           'tagline', t -> 'data' ->> 'tagline'
+                       )
+                       from jsonb_array_elements(
+                           coalesce(r.payload -> 'translations' -> 'translations', '[]'::jsonb)
+                       ) t
+                       where t ->> 'iso_639_1' = %(lang2)s
+                       order by (t ->> 'iso_3166_1' = %(region)s) desc
+                       limit 1
+                   ), '{}'::jsonb) as traduction,
                    -- La disponibilité en streaming, pour le pays de la langue
                    -- choisie seulement. Le brut en porte une centaine ; les
                    -- envoyer tous ferait transiter un catalogue mondial pour
@@ -356,6 +382,8 @@ async def fetch_work(
                 "kind": KIND_SERIES,
                 "id": str(work_id),
                 "country": country_of(lang) or "",
+                "lang2": lang.split("-")[0],
+                "region": country_of(lang) or "",
                 "backdrops": f"$.images.backdrops[0 to {GALLERY_LIMIT - 1}]",
                 "posters": f"$.images.posters[0 to {GALLERY_LIMIT - 1}]",
                 "agg_cast": f"$.aggregate_credits.cast[0 to {CAST_LIMIT - 1}]",
@@ -411,12 +439,28 @@ async def fetch_work(
         for season in head["seasons"]
     ]
 
+    # Le texte traduit s'il existe, le français sinon — et l'on dit lequel.
+    # Afficher un synopsis français en prétendant montrer l'arabe induirait en
+    # erreur sur ce qui est réellement collecté, ce que ce tableau de bord a
+    # précisément pour rôle de mesurer.
+    traduit: dict[str, Any] = head["traduction"] or {}
+    nom = (traduit.get("name") or "").strip() or None
+    synopsis = (traduit.get("overview") or "").strip() or None
+    accroche = (traduit.get("tagline") or "").strip() or None
+
     return {
         "id": work_id,
-        "name": head["name"] or head["original_name"],
+        "name": nom or head["name"] or head["original_name"],
         "originalName": head["original_name"],
-        "tagline": head["tagline"] or None,
-        "overview": head["overview"],
+        "tagline": accroche or head["tagline"] or None,
+        "overview": synopsis or head["overview"],
+        # Ce que la langue choisie a réellement apporté. Le front s'en sert pour
+        # signaler un repli plutôt que de le laisser passer inaperçu.
+        "translated": {
+            "lang": lang,
+            "name": nom is not None,
+            "overview": synopsis is not None,
+        },
         "posterPath": head["poster_path"],
         "backdropPath": head["backdrop_path"],
         "homepage": head["homepage"] or None,

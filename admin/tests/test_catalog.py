@@ -84,7 +84,31 @@ SERIES_1399 = {
             for index in range(40)
         ]
     },
-    "translations": {"translations": [{"iso_639_1": "fr"}, {"iso_639_1": "ar"}]},
+    "translations": {
+        "translations": [
+            {"iso_639_1": "fr", "iso_3166_1": "FR", "data": {}},
+            # Deux variantes d'arabe : la requête doit préférer celle dont la
+            # région correspond à la langue choisie (ar-SA), pas la première
+            # venue — sinon le résultat change d'une collecte à l'autre.
+            {
+                "iso_639_1": "ar",
+                "iso_3166_1": "AE",
+                "data": {"name": "عنوان إماراتي", "overview": "ملخص إماراتي"},
+            },
+            {
+                "iso_639_1": "ar",
+                "iso_3166_1": "SA",
+                "data": {
+                    "name": "لعبة العروش",
+                    "overview": "تسع عائلات نبيلة تتصارع على ويستروس.",
+                    "tagline": "الشتاء قادم",
+                },
+            },
+            # Le turc n'a qu'un titre : le synopsis doit se replier sur le
+            # français, et le dire.
+            {"iso_639_1": "tr", "iso_3166_1": "TR", "data": {"name": "Taht Oyunları"}},
+        ]
+    },
     # La forme exacte de TMDB : un dictionnaire par pays, des rubriques par
     # mode d'accès, et un `display_priority` qui donne l'ordre d'affichage.
     "watch/providers": {
@@ -494,6 +518,57 @@ async def test_work_detail_flattens_the_payload(conn: psycopg.AsyncConnection) -
     assert work["createdBy"] == ["David Benioff"]
     assert work["externalIds"]["wikidata_id"] == "Q23572"
     assert work["catalog"]["popularity"] == 400.0
+
+
+async def test_the_fiche_is_shown_in_the_chosen_language(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """La fiche n'est téléchargée qu'en `fr-FR`, mais ses traductions voyagent
+    dans le même payload. Sans les lire, changer de langue ne changeait rien au
+    texte affiché."""
+    await seed(conn)
+
+    arabe = await fetch_work(conn, 1399, "ar-SA")
+    assert arabe is not None
+    assert arabe["name"] == "لعبة العروش"
+    assert arabe["overview"].startswith("تسع عائلات")
+    assert arabe["tagline"] == "الشتاء قادم"
+    assert arabe["translated"] == {"lang": "ar-SA", "name": True, "overview": True}
+
+    francais = await fetch_work(conn, 1399, "fr-FR")
+    assert francais is not None
+    assert francais["name"] == "Le Trône de fer"
+
+
+async def test_a_missing_translation_falls_back_and_says_so(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Afficher un synopsis français en prétendant montrer le turc induirait en
+    erreur sur ce qui est réellement collecté — ce que ce tableau de bord a
+    précisément pour rôle de mesurer."""
+    await seed(conn)
+    turc = await fetch_work(conn, 1399, "tr-TR")
+
+    assert turc is not None
+    assert turc["name"] == "Taht Oyunları"  # traduit
+    assert turc["overview"].startswith("Neuf familles")  # replié sur le français
+    assert turc["translated"] == {"lang": "tr-TR", "name": True, "overview": False}
+
+    # Une langue absente des traductions : tout se replie.
+    espagnol = await fetch_work(conn, 1399, "es-ES")
+    assert espagnol is not None
+    assert espagnol["name"] == "Le Trône de fer"
+    assert espagnol["translated"] == {"lang": "es-ES", "name": False, "overview": False}
+
+
+async def test_the_regional_variant_decides(conn: psycopg.AsyncConnection) -> None:
+    """TMDB renvoie plusieurs variantes d'une même langue (ar-AE, ar-SA). Prendre
+    la première venue donnerait un résultat instable d'une collecte à l'autre."""
+    await seed(conn)
+    saoudien = await fetch_work(conn, 1399, "ar-SA")
+
+    assert saoudien is not None
+    assert saoudien["name"] == "لعبة العروش", "la variante SA doit primer sur AE"
 
 
 async def test_gallery_and_cast_are_truncated_in_sql(conn: psycopg.AsyncConnection) -> None:

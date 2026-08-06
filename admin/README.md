@@ -49,10 +49,21 @@ Il change trois choses :
 * le compteur de couverture de chaque carte et de chaque ligne ;
 * **le pays** dont on affiche les plateformes de streaming ;
 * la colonne « couverture » et les filtres « présente / absente de la langue » ;
-* **les synopsis d'épisode** dans la fiche d'une série — le seul endroit où la
+* **le titre, l'accroche et le synopsis** de la fiche d'une série ;
+* **les synopsis d'épisode** dans cette même fiche — le seul endroit où la
   langue change la matière affichée et pas seulement un chiffre. Ces synopsis
   n'existent que parce que la collecte a redemandé la saison entière dans cette
   langue ; l'endpoint `translations` de TMDB ne couvre pas les épisodes.
+
+La fiche d'une série n'est téléchargée **qu'une fois, en `fr-FR`**. Ses
+traductions voyagent pourtant dans le même payload — c'est
+`append_to_response=translations` qui les apporte — et c'est d'elles que vient
+le texte traduit. Quand celle de la langue choisie manque, le français est
+affiché et la fiche le dit : laisser croire à une collecte complète serait le
+contraire de ce que ce tableau de bord mesure.
+
+Les **vignettes de la grille**, elles, restent en français : elles viennent de
+la projection `admin.tv_card`, qui ne stocke que le titre de la fiche.
 
 Au clic sur une carte : la fiche complète — **où regarder la série**, un
 accordéon par saison (épisodes chargés à l'ouverture du volet), la galerie de
@@ -93,7 +104,12 @@ Puis la base — celle de `sourcing`, qui doit être migrée d'abord :
 ```bash
 make -C ../sourcing db-create migrate   # si ce n'est pas déjà fait
 make migrate                            # crée le schéma admin
+make db-create                          # la base de test, propre à l'admin
 ```
+
+`make db-create` crée `fivorites_v2_admin_test`, distincte de la base de test de
+`sourcing`. Les deux suites tronquent les mêmes tables : les faire cohabiter
+revient à les faire échouer l'une l'autre dès qu'elles tournent en même temps.
 
 Enfin la configuration et un compte :
 
@@ -112,7 +128,7 @@ make dev          # l'API (8182) et Vite (5173) côte à côte → http://localh
 make api          # l'API seule, rechargement à chaud
 make web-build    # construit ../front dans ../www
 make serve        # l'API sert le front → http://127.0.0.1:8182
-make test         # 82 tests
+make test         # 88 tests
 make lint         # ruff + tsc
 ```
 

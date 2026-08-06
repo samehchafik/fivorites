@@ -159,6 +159,22 @@ export function SeriesModal({
                   {data.overview || 'Pas de synopsis dans le brut collecté.'}
                 </Text>
 
+                {/* La fiche n'est téléchargée qu'en français ; seules ses
+                    traductions varient. Quand celle de la langue choisie
+                    manque, le texte affiché est le français — le dire vaut
+                    mieux que de laisser croire à une collecte complète, ce que
+                    ce tableau de bord a précisément pour rôle de mesurer. */}
+                {(!data.translated.name || !data.translated.overview) &&
+                  data.translated.lang !== 'fr-FR' && (
+                    <Text size="xs" c="dimmed">
+                      {data.translated.name || data.translated.overview
+                        ? `Traduction partielle en ${langLabel} — ${
+                            data.translated.name ? 'le synopsis' : 'le titre'
+                          } est affiché en français.`
+                        : `Aucune traduction en ${langLabel} : titre et synopsis sont affichés en français.`}
+                    </Text>
+                  )}
+
                 <Group gap="lg">
                   <Anchor
                     href={`https://www.themoviedb.org/tv/${data.id}`}

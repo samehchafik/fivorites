@@ -23,9 +23,18 @@ import pytest_asyncio
 from fiv_admin.config import PROJECT_ROOT, Settings
 from fiv_admin.db import migrate
 
+# Une base à l'administration seule, distincte de `fivorites_v2_test` où
+# `sourcing` fait tourner la sienne.
+#
+# Elles la partageaient, et ça a fini par se voir : deux suites lancées en
+# parallèle se tronquent mutuellement les tables entre deux assertions, et une
+# base réinitialisée d'un côté fait disparaître de `schema_migrations` les
+# migrations de l'autre — qui tente alors de recréer des tables existantes.
+# Le schéma de `sourcing` est reconstruit ici depuis ses propres migrations :
+# rien n'est perdu, seule l'isolation est gagnée.
 TEST_DSN = os.environ.get(
     "ADMIN_TEST_DATABASE_URL",
-    "postgresql://fivorites_v2@localhost:5432/fivorites_v2_test",
+    "postgresql://fivorites_v2@localhost:5432/fivorites_v2_admin_test",
 )
 
 SOURCING_MIGRATIONS = PROJECT_ROOT.parent / "sourcing" / "migrations"

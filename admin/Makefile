@@ -48,8 +48,11 @@ NODE_SUMS := https://nodejs.org/dist/v$(NODE_VERSION)/SHASUMS256.txt
 
 NPM := PATH="$(NODE_BIN):$$PATH" $(NODE_BIN)/npm
 
+DB_TEST ?= fivorites_v2_admin_test
+PSQL    := psql -h localhost -p 5432 -U postgres -d postgres
+
 .PHONY: bootstrap bootstrap-python bootstrap-node sync guard doctor test lint fmt \
-        migrate serve api web web-build dev clean
+        db-create migrate serve api web web-build dev clean
 
 ## Installe les deux toolchains et les dépendances.
 bootstrap: bootstrap-python bootstrap-node
@@ -103,6 +106,16 @@ doctor: guard
 
 migrate: guard
 	$(BIN)/fiv-admin db migrate
+
+## Crée la base de test propre à l'administration. Idempotent.
+##
+## Distincte de `fivorites_v2_test`, où `sourcing` fait tourner la sienne : les
+## deux suites tronquent les mêmes tables, et les faire cohabiter revient à les
+## faire échouer l'une l'autre dès qu'elles tournent en même temps.
+db-create:
+	@$(PSQL) -tAc "select 1 from pg_database where datname = '$(DB_TEST)'" | grep -q 1 \
+	  && echo "base $(DB_TEST) déjà présente" \
+	  || $(PSQL) -c "create database $(DB_TEST) owner fivorites_v2"
 
 test: guard
 	$(BIN)/pytest

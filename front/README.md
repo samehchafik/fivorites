@@ -109,12 +109,13 @@ essayé puis retiré, pour deux raisons qui tiennent toutes deux au fait qu'il
 Les deux sont sans objet quand le build a lieu ici et que le serveur ne fait que
 lire.
 
-## L'URL porte la fiche ouverte et les filtres
+## L'URL porte la fiche ouverte, la langue et les filtres
 
 ```
 ?id=1399                            ouvre la fiche de la série 1399
+?lang=ar-SA                         choisit la langue
 ?filtre=image,description           coche les deux cases et applique les filtres
-?id=1399&filtre=description         les deux
+?id=1399&lang=ar-SA&filtre=image    les trois
 ```
 
 L'URL est **la source au chargement**, puis l'état la réécrit : la barre

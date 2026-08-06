@@ -1,12 +1,13 @@
 /**
  * L'état partageable, porté par l'URL.
  *
- * Deux choses seulement y figurent, parce que ce sont les deux qu'on a besoin
- * d'envoyer à quelqu'un : la fiche ouverte et les filtres actifs.
+ * Trois choses y figurent, parce que ce sont celles qu'on a besoin d'envoyer à
+ * quelqu'un : la fiche ouverte, les filtres actifs, et la langue.
  *
  *     ?id=1399
  *     ?filtre=image,description
- *     ?id=1399&filtre=description
+ *     ?lang=ar-SA
+ *     ?id=1399&lang=ar-SA&filtre=description
  *
  * Le sens de la lecture compte : **l'URL est la source**, l'état de
  * l'application en découle au chargement, puis la réécrit. Une URL collée dans
@@ -32,9 +33,16 @@ const FILTRES = {
 export interface UrlState {
   /** La fiche à ouvrir, ou null. */
   id: number | null
+  /** La langue choisie, ou null pour garder celle par défaut. */
+  lang: string | null
   withPoster: boolean
   withOverview: boolean
 }
+
+// Un code BCP-47 avec sa région : `fr-FR`, `ar-SA`. La forme est vérifiée ici,
+// l'appartenance à la liste des langues connues ne peut l'être qu'une fois
+// `meta` chargée — d'où le repli côté application plutôt qu'ici.
+const CODE_LANGUE = /^[a-z]{2}-[A-Z]{2}$/
 
 export function readUrl(search = window.location.search): UrlState {
   const params = new URLSearchParams(search)
@@ -50,8 +58,11 @@ export function readUrl(search = window.location.search): UrlState {
     .map((nom) => nom.trim())
     .filter(Boolean)
 
+  const lang = params.get('lang')
+
   return {
     id: Number.isInteger(id) && id > 0 ? id : null,
+    lang: lang !== null && CODE_LANGUE.test(lang) ? lang : null,
     withPoster: actifs.includes('image'),
     withOverview: actifs.includes('description'),
   }
@@ -59,12 +70,18 @@ export function readUrl(search = window.location.search): UrlState {
 
 export function writeUrl(state: UrlState, replace = true): void {
   // On repart des paramètres existants : ceux qu'on ne connaît pas — un
-  // `?utm_source`, un futur `?lang` — n'ont pas à disparaître parce qu'on a
+  // `?utm_source`, un futur `?tri` — n'ont pas à disparaître parce qu'on a
   // coché une case.
   const params = new URLSearchParams(window.location.search)
 
   if (state.id !== null) params.set('id', String(state.id))
   else params.delete('id')
+
+  // La langue est toujours écrite, même quand c'est celle par défaut : une URL
+  // partagée doit ouvrir la même vue chez l'autre, y compris si son défaut
+  // venait à changer.
+  if (state.lang !== null) params.set('lang', state.lang)
+  else params.delete('lang')
 
   const filtres = (Object.keys(FILTRES) as (keyof typeof FILTRES)[]).filter(
     (nom) => state[FILTRES[nom]],

@@ -76,18 +76,18 @@ const DEFAULT_GRID: GridState = {
 export function Dashboard({ account, onSignedOut }: { account: Account; onSignedOut: () => void }) {
   const client = useQueryClient()
 
+  // L'URL est la source au chargement : `?id=1399&lang=ar-SA&filtre=image`
+  // ouvre la fiche, choisit la langue et coche la case. Lu une seule fois —
+  // ensuite c'est l'état qui réécrit l'URL, et l'inverse bouclerait.
+  const [depuisUrl] = useState(readUrl)
+
   const [view, setView] = useState<'cards' | 'table'>('cards')
   const [media, setMedia] = useState('tv')
-  const [lang, setLang] = useState('fr-FR')
+  const [lang, setLang] = useState(depuisUrl.lang ?? 'fr-FR')
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [tablePage, setTablePage] = useState(1)
   const [drawerId, setDrawerId] = useState<number | null>(null)
-
-  // L'URL est la source au chargement : `?id=1399&filtre=image,description`
-  // ouvre la fiche 1399 et coche les deux cases. Lu une seule fois — ensuite
-  // c'est l'état qui réécrit l'URL, et l'inverse boucherait.
-  const [depuisUrl] = useState(readUrl)
 
   const [grid, setGrid] = useState<GridState>({
     ...DEFAULT_GRID,
@@ -104,8 +104,13 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   // … et l'état la réécrit, pour que la barre d'adresse soit toujours
   // copiable-collable telle quelle.
   useEffect(() => {
-    writeUrl({ id: modalId, withPoster: grid.withPoster, withOverview: grid.withOverview })
-  }, [modalId, grid.withPoster, grid.withOverview])
+    writeUrl({
+      id: modalId,
+      lang,
+      withPoster: grid.withPoster,
+      withOverview: grid.withOverview,
+    })
+  }, [modalId, lang, grid.withPoster, grid.withOverview])
 
   const meta = useQuery<Meta>({ queryKey: ['meta'], queryFn: api.meta, staleTime: 5 * 60_000 })
   const available = meta.data?.media.find((entry) => entry.key === media)

@@ -237,6 +237,9 @@ export interface Work {
   translations: string[]
   gallery: { backdrops: string[]; posters: string[] }
   cast: CastMember[]
+  /** Ce que la langue choisie a réellement apporté : la fiche n'est
+   *  téléchargée qu'en `fr-FR`, seules ses traductions varient. */
+  translated: { lang: string; name: boolean; overview: boolean }
   watch: Watch
   seasons: SeasonSummary[]
   raw: { fetchedAt: string; httpStatus: number }
