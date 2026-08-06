@@ -189,3 +189,53 @@ async def test_un_lot_en_echec_n_interrompt_pas_la_passe(conn, settings: Setting
     assert report.done == 2
     assert report.errors == 2
     assert report.resolved == 0
+
+
+async def test_l_ordre_recent_prime_sur_la_popularite(conn):
+    """La popularité seule ne trie pas par récence : la série de 2015 est la
+    plus consultée, mais c'est la nouveauté qu'on veut traiter d'abord."""
+    await _catalogue(conn, 1, 2, 3)
+    async with conn.cursor() as cur:
+        await cur.execute("update tmdb_catalog set popularity = 100 where id = 1")
+        for identifiant, jour in ((1, "2015-01-01"), (2, "2020-01-01"), (3, "2026-01-01")):
+            await cur.execute(
+                "update tmdb_catalog set first_air_date = %s where id = %s", (jour, identifiant)
+            )
+
+    assert await pending_ids(conn, order="recent") == [3, 2, 1]
+    assert await pending_ids(conn, order="popularity") == [1, 2, 3]
+
+
+async def test_les_series_sans_date_passent_en_dernier(conn):
+    """Ce sont celles qui ne sont pas encore collectées — donc aussi celles où
+    l'enrichissement a le moins de prise, faute d'`imdb_id`."""
+    await _catalogue(conn, 1, 2, 3)
+    async with conn.cursor() as cur:
+        await cur.execute("update tmdb_catalog set first_air_date = '2020-01-01' where id = 2")
+
+    assert (await pending_ids(conn, order="recent"))[0] == 2
+
+
+async def test_les_dates_se_recopient_depuis_le_brut(conn):
+    """`--order recent` ne vaut que si la colonne est remplie, et elle l'est par
+    dérivation : aucun appel réseau."""
+    from fiv_sourcing.sources.tmdb.export import refresh_air_dates
+
+    await _catalogue(conn, 1, 2)
+    async with conn.cursor() as cur:
+        for identifiant, valeur in ((1, "2026-03-01"), (2, "")):
+            await cur.execute(
+                "insert into raw_source (source, kind, source_id, http_status, payload, "
+                "payload_sha256) values ('tmdb', 'tv', %s, 200, "
+                "jsonb_build_object('first_air_date', %s::text), %s)",
+                (str(identifiant), valeur, bytes([identifiant])),
+            )
+
+    assert await refresh_air_dates(conn) == 1
+
+    async with conn.cursor() as cur:
+        await cur.execute("select id, first_air_date from tmdb_catalog order by id")
+        lignes = await cur.fetchall()
+
+    assert lignes[0][1] == date(2026, 3, 1)
+    assert lignes[1][1] is None, "une chaîne vide n'est pas une date, et ne doit pas tout annuler"

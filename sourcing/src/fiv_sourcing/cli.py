@@ -174,7 +174,10 @@ def enrich(
     ] = 4,
     order: Annotated[
         str,
-        typer.Option("--order", help="id (neutre, défaut), random (pour estimer) ou popularity."),
+        typer.Option(
+            "--order",
+            help="id (défaut), recent (année puis popularité), popularity, random.",
+        ),
     ] = "id",
     refresh_after: Annotated[
         int | None,
@@ -254,7 +257,7 @@ def enrich(
 
             fetcher = build_fetcher(settings)
             async with fetcher:
-                return await enrich_all(
+                resultat = await enrich_all(
                     conn,
                     build_clients(fetcher),
                     selection,
@@ -263,9 +266,13 @@ def enrich(
                     stop=stop,
                     on_progress=show,
                 )
+                stats.append(fetcher.stats)
+                return resultat
 
     typer.echo(f"langues : {', '.join(langues)}")
-    typer.echo(f"débit   : {settings.enrich_rate_limit} requête/s (ENRICH_RATE_LIMIT)")
+    typer.echo(f"débit   : {settings.enrich_rate_limit} req/s Wikimedia (ENRICH_RATE_LIMIT)")
+    typer.echo(f"          {settings.tvmaze_rate_limit} req/s TVmaze (TVMAZE_RATE_LIMIT)")
+    stats: list[FetcherStats] = []
 
     if ids:
         raise typer.Exit(1 if _run_db(une_par_une) == len(ids) else 0)
@@ -286,6 +293,12 @@ def enrich(
     typer.echo(f"lignes brutes : {report.rows_written}")
     if report.errors:
         typer.echo(f"erreurs       : {report.errors}")
+
+    # Même raisonnement que pour TMDB : le plafond se règle sur ce qu'une passe
+    # réelle a déclenché, pas sur une valeur choisie a priori.
+    if stats:
+        _bilan_debit(stats[0], settings.enrich_rate_limit, variable="ENRICH_RATE_LIMIT")
+
     if report.interrupted:
         typer.echo("")
         typer.echo("Interrompu. Relancer la même commande reprend où on s'est arrêté.")
@@ -327,6 +340,38 @@ def tmdb_export(
     typer.echo(f"séries lues  : {report.series_read:>9,}".replace(",", " "))
     typer.echo(f"nouvelles    : {report.inserted:>9,}".replace(",", " "))
     typer.echo(f"mises à jour : {report.updated:>9,}".replace(",", " "))
+
+
+@tmdb_app.command("dates")
+def tmdb_dates() -> None:
+    """Recopie les dates de diffusion du brut vers l'inventaire.
+
+    Sans réseau. C'est ce qui alimente `--order recent` : la date vit dans le
+    payload de la fiche, et trier 228 000 séries dessus décompresserait toute la
+    table à chaque passe. À relancer après chaque collecte — une série
+    fraîchement téléchargée n'a sa date ici qu'après ce passage.
+    """
+    from fiv_sourcing.sources.tmdb.export import refresh_air_dates
+
+    settings = get_settings()
+
+    async def run() -> tuple[int, int, int]:
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            majs = await refresh_air_dates(conn)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "select count(*) filter (where first_air_date is not null), count(*) "
+                    "from tmdb_catalog"
+                )
+                datees, total = await cur.fetchone()
+            return majs, datees, total
+
+    majs, datees, total = _run_db(run)
+    espace = lambda n: f"{n:,}".replace(",", " ")  # noqa: E731
+    typer.echo(f"mises à jour : {espace(majs)}")
+    typer.echo(f"datées       : {espace(datees)} / {espace(total)}")
+    if datees < total:
+        typer.echo(f"               {espace(total - datees)} sans date — pas encore collectées")
 
 
 @tmdb_app.command("changes")
@@ -479,12 +524,15 @@ def tmdb_backfill(
         raise typer.Exit(130)
 
 
-def _bilan_debit(stats: FetcherStats, rate_limit: float) -> None:
-    """Ce que la passe apprend sur le plafond réellement toléré par TMDB.
+def _bilan_debit(
+    stats: FetcherStats, rate_limit: float, *, variable: str = "TMDB_RATE_LIMIT"
+) -> None:
+    """Ce que la passe apprend sur le plafond réellement toléré.
 
-    Leur limite dure a été supprimée en 2019 et ce qui subsiste n'est pas
-    documenté : plutôt que de régler le débit sur une valeur trouvée dans un
-    forum, on regarde combien de 429 une passe réelle a déclenchés.
+    Pour TMDB, leur limite dure a été supprimée en 2019 et ce qui subsiste n'est
+    pas documenté. Pour les sources tierces, seule TVmaze annonce un chiffre.
+    Dans les deux cas, plutôt que de régler le débit sur une valeur trouvée dans
+    un forum, on regarde combien de 429 une passe réelle a déclenchés.
     """
     typer.echo("")
     typer.echo(f"requêtes HTTP : {stats.requests}  (dont {stats.retries} reprise(s))")
@@ -495,12 +543,12 @@ def _bilan_debit(stats: FetcherStats, rate_limit: float) -> None:
     if not stats.rate_limited:
         typer.echo(
             f"              → aucun bridage à {rate_limit} req/s. "
-            "Monter TMDB_RATE_LIMIT accélérerait la passe."
+            f"Monter {variable} accélérerait la passe."
         )
     elif stats.rate_limited_ratio > 0.01:
         typer.echo(
             f"              → {stats.rate_limited_ratio:.1%} des requêtes bridées. "
-            "Baisser TMDB_RATE_LIMIT : les reprises coûtent plus qu'elles ne rapportent."
+            f"Baisser {variable} : les reprises coûtent plus qu'elles ne rapportent."
         )
     else:
         typer.echo("              → bridage marginal, le débit actuel est proche du plafond.")

@@ -288,6 +288,13 @@ sudo docker compose run --rm sourcing enrich
 Elle s'interrompt et reprend comme `backfill` : un seul Ctrl-C, ou
 `docker stop`, et relancer la même commande repart d'où l'on s'était arrêté.
 
+Après une collecte, recopiez les dates de diffusion dans l'inventaire — c'est
+ce qui alimente `enrich --order recent`, et ça ne demande aucun réseau :
+
+```bash
+sudo docker compose run --rm sourcing tmdb dates
+```
+
 Enfin le rattrapage : `tmdb changes` marque les séries que TMDB signale comme
 modifiées, et le `backfill` suivant les recollecte.
 

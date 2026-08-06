@@ -74,15 +74,21 @@ def build_clients(fetcher: HttpFetcher) -> Clients:
 
 
 def build_fetcher(settings: Settings) -> HttpFetcher:
-    """Un client distinct de celui de TMDB.
+    """Un client distinct de celui de TMDB, et un débit par hôte.
 
     Deux raisons de ne pas réutiliser l'autre : il porte l'en-tête
-    d'authentification TMDB, qu'on n'envoie pas à Wikimedia ni à TVmaze ; et le
-    débit n'est pas le même — 20 req/s conviennent à une API commerciale, pas au
-    service SPARQL de Wikidata, qui est gratuit et partagé.
+    d'authentification TMDB, qu'on n'envoie ni à Wikimedia ni à TVmaze ; et le
+    débit n'est pas le même — 20 req/s conviennent à une API commerciale, pas à
+    des services gratuits et partagés.
+
+    Le débit est ensuite **par hôte** et non global, parce que les trois n'ont
+    pas la même tolérance. TVmaze documente « at least 20 calls every 10 seconds
+    per IP » et pèse environ 40 % des requêtes : sous un plafond commun, soit on
+    le dépasse, soit on impose son rythme à Wikimedia qui encaisse bien plus.
     """
     return HttpFetcher(
         rate_limit=settings.enrich_rate_limit,
+        rate_limits={"api.tvmaze.com": settings.tvmaze_rate_limit},
         timeout=settings.http_timeout,
         max_attempts=settings.http_max_attempts,
         user_agent=settings.http_user_agent,
@@ -298,6 +304,14 @@ ORDERS = {
     "id": "c.id",
     "random": "random()",
     "popularity": "c.popularity desc, c.id",
+    # « Les plus récentes, et à date égale les plus populaires. » La popularité
+    # seule ne le remplace pas : une série de 2015 très consultée passerait
+    # avant une nouveauté, ce qui est l'inverse de l'intention.
+    #
+    # `nulls last` met en fin de file les séries non encore collectées, qui
+    # n'ont pas de date — et qui sont aussi celles où l'enrichissement a le
+    # moins de prise, faute d'`imdb_id` pour confirmer l'appariement TVmaze.
+    "recent": "c.first_air_date desc nulls last, c.popularity desc, c.id",
 }
 
 
