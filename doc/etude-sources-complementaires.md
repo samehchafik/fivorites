@@ -210,7 +210,7 @@ que TMDB ne donne pas de façon fiable : dates d'épisode à 99,2 %, calendrier,
 diffuseur. Gratuite, sans clé, CC BY-SA avec attribution — la licence la plus
 simple des trois après CC0.
 
-Dans `series_source` : `source = 'tvmaze'`, `resolved_by` valant `p8600`, `imdb`
+Dans `riche_source` : `source = 'tvmaze'`, `resolved_by` valant `p8600`, `imdb`
 ou `title`, `content` recevant les résumés d'épisode **quand ils existent**, et
 les faits partant vers la couche 1 au lot 4. Le protocole d'appariement est
 celui mesuré au volet 1 : titre pour chercher, égalité `imdb_id` pour décider,

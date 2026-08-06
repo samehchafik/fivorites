@@ -1,12 +1,13 @@
-"""Écriture dans `raw_source`, `fetch_state` et `series_source`.
+"""Écriture dans `raw_source`, `fetch_state` et `riche_source`.
 
-`raw_source` est *append-only* : aucune fonction de ce module ne fait d'UPDATE
-dessus. La seule chose qu'on évite, c'est de réécrire un contenu strictement
-identique — d'où l'empreinte.
+`raw_source` est *append-only* et **exclusivement TMDB** : aucune fonction de ce
+module ne fait d'UPDATE dessus, et l'enrichissement n'y écrit jamais. La seule
+chose qu'on évite, c'est de réécrire un contenu strictement identique — d'où
+l'empreinte.
 
-`series_source` est à l'inverse une **dérivation** : une ligne par (série,
-source, langue), remplacée à chaque passe. Le brut reste la source de vérité ;
-cette table-là se reconstruit sans réseau.
+`riche_source` porte l'enrichissement — ce que les sources tierces apportent —
+raccroché à la fiche collectée par `raw_source_id`. Une ligne par (fiche,
+source, langue), remplacée à chaque passe.
 """
 
 from __future__ import annotations
@@ -121,46 +122,74 @@ async def mark_fetch(
         )
 
 
-async def upsert_series_source(
+async def latest_fiche_ids(conn: psycopg.AsyncConnection, ids: list[int]) -> dict[int, int]:
+    """id TMDB → id de la dernière fiche collectée dans `raw_source`.
+
+    C'est la référence de `riche_source` : une série sans fiche n'est pas
+    enrichissable — la collecte d'abord.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select distinct on (source_id) source_id::int, id
+            from raw_source
+            where source = 'tmdb' and kind = 'tv'
+              and source_id = any(%s)
+              and http_status between 200 and 299
+            order by source_id, fetched_at desc
+            """,
+            ([str(i) for i in ids],),
+        )
+        return dict(await cur.fetchall())
+
+
+async def upsert_riche_source(
     conn: psycopg.AsyncConnection,
     *,
-    id_tmdb: int,
+    raw_source_id: int,
+    tv_id: int,
     source: str,
     lang: str = "",
     source_id: str,
     url: str | None = None,
     content: str | None = None,
     media: list[dict[str, Any]] | None = None,
+    facts: dict[str, Any] | None = None,
     resolved_by: str | None = None,
 ) -> None:
-    """Enregistre ce qu'une source tierce apporte sur une série.
+    """Enregistre ce qu'une source tierce apporte sur une fiche collectée.
 
-    Remplace plutôt qu'ajoute : une seconde passe sur le même (série, source,
-    langue) corrige la ligne. C'est la différence assumée avec `raw_source` —
-    ici on veut l'état courant, pas l'historique, qui vit déjà dans le brut.
+    La clé porte la série (`id_tmdb`, source, langue), pas la fiche : après une
+    re-collecte, la fiche a un nouvel id (`raw_source` est append-only), et le
+    ré-enrichissement met simplement `raw_source_id` à jour au lieu de dupliquer
+    la série.
     """
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            insert into series_source (id_tmdb, source, lang, source_id, url,
-                                       content, media, resolved_by, fetched_at)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, now())
+            insert into riche_source (raw_source_id, id_tmdb, source, lang, source_id,
+                                      url, content, media, facts, resolved_by, fetched_at)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
             on conflict (id_tmdb, source, lang) do update set
-                source_id   = excluded.source_id,
-                url         = excluded.url,
-                content     = excluded.content,
-                media       = excluded.media,
-                resolved_by = excluded.resolved_by,
-                fetched_at  = now()
+                raw_source_id = excluded.raw_source_id,
+                source_id     = excluded.source_id,
+                url           = excluded.url,
+                content       = excluded.content,
+                media         = excluded.media,
+                facts         = excluded.facts,
+                resolved_by   = excluded.resolved_by,
+                fetched_at    = now()
             """,
             (
-                id_tmdb,
+                raw_source_id,
+                tv_id,
                 source,
                 lang,
                 source_id,
                 url,
                 content,
                 Jsonb(media or []),
+                Jsonb(facts or {}),
                 resolved_by,
             ),
         )

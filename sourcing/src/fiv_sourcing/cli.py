@@ -189,9 +189,10 @@ def enrich(
 ) -> None:
     """Ajoute les sources tierces : Wikidata, Wikipédia, TVmaze.
 
-    Sans `--id`, traite **toutes les séries encore sans complément** et reprend
-    là où la passe précédente s'est arrêtée. Aucun appel à TMDB, donc **aucun
-    jeton requis** : l'entrée se fait par `P4983`, qui se déduit de l'id.
+    Sans `--id`, traite **toutes les séries collectées encore sans complément**
+    et reprend là où la passe précédente s'est arrêtée. L'enrichissement se
+    raccroche à la fiche collectée (`riche_source.raw_source_id`) : une série
+    doit être passée par `tmdb fetch` ou `tmdb backfill` d'abord.
     """
     from fiv_sourcing.enrich import (
         EnrichAllReport,
@@ -216,7 +217,7 @@ def enrich(
                     marker = "ok " if report.sources else "rien"
                     typer.echo(
                         f"{marker} {tv_id:>8}  {report.requests:>2} requêtes  "
-                        f"{report.rows_written:>2} ligne(s) brute(s)  "
+                        f"{report.rows_written:>2} ligne(s) riche(s)  "
                         f"{report.qid or '—':>10}  {', '.join(report.sources) or 'aucune source'}"
                     )
                     for erreur in report.errors[:3]:
@@ -283,7 +284,8 @@ def enrich(
         typer.echo(f"à enrichir : {report.selected} série(s)")
         return
     if not report.selected:
-        typer.echo("Rien à enrichir. Lancer `tmdb export` si le catalogue est vide.")
+        typer.echo("Rien à enrichir. La sélection ne porte que sur les séries déjà")
+        typer.echo("collectées : `tmdb backfill` d'abord si la collecte n'a pas tourné.")
         return
 
     typer.echo("")
@@ -291,7 +293,7 @@ def enrich(
     typer.echo(f"raccordées    : {report.resolved}  (item Wikidata)")
     typer.echo(f"enrichies     : {report.enriched}  (au moins une source)")
     typer.echo(f"requêtes      : {report.requests}")
-    typer.echo(f"lignes brutes : {report.rows_written}")
+    typer.echo(f"lignes riches : {report.rows_written}")
     if report.errors:
         typer.echo(f"erreurs       : {report.errors}")
 

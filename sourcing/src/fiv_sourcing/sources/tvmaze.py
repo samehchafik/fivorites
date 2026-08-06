@@ -16,7 +16,7 @@ confirme 50 cas sur 51 et oppose son veto à l'unique erreur.
 
 D'où la règle : le titre sert à **chercher**, l'`imdb_id` à **décider**. Sans
 identifiant des deux côtés, on préfère ne rien écrire — une ligne fausse dans
-`series_source` est plus coûteuse qu'une ligne absente, parce qu'elle ne se
+`riche_source` est plus coûteuse qu'une ligne absente, parce qu'elle ne se
 signale pas.
 """
 

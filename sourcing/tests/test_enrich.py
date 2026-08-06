@@ -1,8 +1,8 @@
 """L'enrichissement de bout en bout, réseau simulé.
 
 Nécessite Postgres. Ce qu'on vérifie ici n'est pas le parsing — il a ses tests —
-mais l'enchaînement : ce qui est écrit dans `raw_source`, ce qui atterrit dans
-`series_source`, et surtout **par quelle voie** le raccordement s'est fait.
+mais l'enchaînement : ce qui atterrit dans `riche_source`, par quelle voie le
+raccordement s'est fait, et le fait que `raw_source` reste exclusivement TMDB.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import httpx
 import pytest
 import respx
 
+from fiv_sourcing import store
 from fiv_sourcing.config import Settings
 from fiv_sourcing.enrich import build_clients, build_fetcher, enrich_series
 from fiv_sourcing.sources.tmdb.export import load_catalog
@@ -63,12 +64,26 @@ SHOW = {
 }
 
 
-async def _catalogue(conn) -> None:
+async def _serie_collectee(conn, *, avec_imdb: bool = False) -> int:
+    """L'inventaire + la fiche collectée. Renvoie l'id de la fiche."""
     await load_catalog(
         conn,
         iter([{"id": TV_ID, "original_name": "Game of Thrones", "popularity": 1.0}]),
         date(2026, 8, 6),
     )
+    payload: dict = {"id": TV_ID}
+    if avec_imdb:
+        payload["external_ids"] = {"imdb_id": IMDB}
+    await store.store_raw(
+        conn,
+        source="tmdb",
+        kind="tv",
+        source_id=str(TV_ID),
+        lang="fr-FR",
+        http_status=200,
+        payload=payload,
+    )
+    return (await store.latest_fiche_ids(conn, [TV_ID]))[TV_ID]
 
 
 def _mock(sparql: dict) -> None:
@@ -98,7 +113,7 @@ async def _enrichir(conn, settings: Settings):
 
 @respx.mock
 async def test_une_serie_raccordee_remplit_les_trois_sources(conn, settings: Settings):
-    await _catalogue(conn)
+    fiche = await _serie_collectee(conn)
     _mock(SPARQL_TROUVE)
 
     report = await _enrichir(conn, settings)
@@ -110,63 +125,89 @@ async def test_une_serie_raccordee_remplit_les_trois_sources(conn, settings: Set
 
     async with conn.cursor() as cur:
         await cur.execute(
-            "select source, lang, source_id, resolved_by, content_chars, media_count "
-            "from series_source order by source, lang"
+            "select raw_source_id, id_tmdb, source, lang, source_id, resolved_by, "
+            "content_chars, media_count from riche_source order by source, lang"
         )
         assert await cur.fetchall() == [
-            ("tvmaze", "", "82", "p8600", len("Ned part."), 1),
-            ("wikidata", "", QID, "p4983", 0, 0),
-            ("wikipedia", "en", "Game of Thrones", "sitelink", len("Intrigue en en."), 0),
-            ("wikipedia", "fr", "Le Trône de fer", "sitelink", len("Intrigue en fr."), 0),
+            (fiche, TV_ID, "tvmaze", "", "82", "p8600", len("Ned part."), 1),
+            (fiche, TV_ID, "wikidata", "", QID, "p4983", 0, 0),
+            (fiche, TV_ID, "wikipedia", "en", "Game of Thrones", "sitelink", 15, 0),
+            (fiche, TV_ID, "wikipedia", "fr", "Le Trône de fer", "sitelink", 15, 0),
         ]
 
 
 @respx.mock
-async def test_le_brut_garde_une_ligne_par_reponse(conn, settings: Settings):
-    """L'invariant de la couche de collecte ne change pas parce que la source
-    change : une réponse HTTP, une ligne."""
-    await _catalogue(conn)
+async def test_les_faits_tiers_sont_conserves(conn, settings: Settings):
+    """La réponse SPARQL et la fiche TVmaze ne sont pas gardées en brut : pays,
+    lieux, dates et diffuseur doivent survivre dans `facts`, sinon ils sont
+    perdus pour la couche 1."""
+    await _serie_collectee(conn)
     _mock(SPARQL_TROUVE)
 
     await _enrichir(conn, settings)
 
     async with conn.cursor() as cur:
-        await cur.execute(
-            "select source, kind, count(*) from raw_source group by 1, 2 order by 1, 2"
-        )
-        assert await cur.fetchall() == [
-            ("tvmaze", "show", 1),
-            ("wikidata", "entity", 1),
-            ("wikidata", "lookup", 1),
-            ("wikipedia", "article", 2),
-        ]
+        await cur.execute("select facts from riche_source where source = 'wikidata'")
+        wikidata_facts = (await cur.fetchone())[0]
+        await cur.execute("select facts from riche_source where source = 'tvmaze'")
+        tvmaze_facts = (await cur.fetchone())[0]
+
+    assert wikidata_facts["pays"] == ["US"]
+    assert wikidata_facts["lieux_tournage"] == ["Belfast"]
+    assert tvmaze_facts["diffuseur"] == "HBO"
+    assert tvmaze_facts["premiere"] == "2011-04-17"
+    assert tvmaze_facts["calendrier"] == {"days": ["Sunday"], "time": "21:00"}
 
 
 @respx.mock
-async def test_rejouer_n_ecrit_pas_de_brut_mais_rafraichit_la_derivation(conn, settings: Settings):
-    """`raw_source` déduplique par empreinte ; `series_source` est remplacée.
-    Les deux tables n'ont pas le même contrat, et c'est voulu."""
-    await _catalogue(conn)
+async def test_le_brut_reste_exclusivement_tmdb(conn, settings: Settings):
+    """La frontière de l'architecture : l'enrichissement n'écrit jamais dans
+    `raw_source`. Seul le passage est noté dans `fetch_state`."""
+    await _serie_collectee(conn)
+    _mock(SPARQL_TROUVE)
+
+    await _enrichir(conn, settings)
+
+    async with conn.cursor() as cur:
+        await cur.execute("select distinct source from raw_source")
+        assert await cur.fetchall() == [("tmdb",)]
+        await cur.execute("select source, kind from fetch_state where source <> 'tmdb'")
+        assert await cur.fetchall() == [("wikidata", "lookup")]
+
+
+@respx.mock
+async def test_rejouer_remplace_la_derivation_sans_l_empiler(conn, settings: Settings):
+    await _serie_collectee(conn)
     _mock(SPARQL_TROUVE)
 
     await _enrichir(conn, settings)
     second = await _enrichir(conn, settings)
 
-    assert second.rows_written == 0
     assert set(second.sources) == {"wikidata", "wikipedia/fr", "wikipedia/en", "tvmaze"}
 
     async with conn.cursor() as cur:
-        await cur.execute("select count(*) from series_source")
+        await cur.execute("select count(*) from riche_source")
         assert (await cur.fetchone())[0] == 4
-        await cur.execute("select count(*) from raw_source")
-        assert (await cur.fetchone())[0] == 5
+
+
+@respx.mock
+async def test_une_serie_non_collectee_est_refusee(conn, settings: Settings):
+    """`riche_source` référence la fiche : sans collecte, rien à raccrocher.
+    Le refus doit être un message, pas une violation de contrainte."""
+    await load_catalog(
+        conn, iter([{"id": TV_ID, "original_name": "X", "popularity": 1.0}]), date(2026, 8, 6)
+    )
+
+    report = await _enrichir(conn, settings)
+
+    assert report.sources == []
+    assert report.errors == ["série non collectée — `tmdb fetch` d'abord"]
+    assert report.requests == 0, "aucun appel réseau pour une série non enrichissable"
 
 
 @respx.mock
 async def test_une_serie_inconnue_de_wikidata_n_ecrit_rien(conn, settings: Settings):
-    """Le cas du fond de catalogue — 0 % d'item au dixième décile. La passe doit
-    se terminer proprement, pas échouer."""
-    await _catalogue(conn)
+    await _serie_collectee(conn)
     _mock(SPARQL_VIDE)
 
     report = await _enrichir(conn, settings)
@@ -176,10 +217,10 @@ async def test_une_serie_inconnue_de_wikidata_n_ecrit_rien(conn, settings: Setti
     assert not report.errors
 
     async with conn.cursor() as cur:
-        await cur.execute("select count(*) from series_source")
+        await cur.execute("select count(*) from riche_source")
         assert (await cur.fetchone())[0] == 0
         # La tentative est tracée : on saura qu'on a déjà regardé.
-        await cur.execute("select source, kind from fetch_state")
+        await cur.execute("select source, kind from fetch_state where source = 'wikidata'")
         assert await cur.fetchall() == [("wikidata", "lookup")]
 
 
@@ -187,7 +228,7 @@ async def test_une_serie_inconnue_de_wikidata_n_ecrit_rien(conn, settings: Setti
 async def test_l_appariement_par_titre_exige_l_imdb(conn, settings: Settings):
     """Sans item Wikidata et sans `imdb_id` collecté, la recherche par titre ne
     peut rien confirmer : on n'écrit pas plutôt que d'écrire au hasard."""
-    await _catalogue(conn)
+    await _serie_collectee(conn)
     _mock(SPARQL_VIDE)
     recherche = respx.get(url__startswith="https://api.tvmaze.com/search/shows").mock(
         httpx.Response(200, json=[{"score": 30.0, "show": {"id": 999, "externals": {}}}])
@@ -197,3 +238,21 @@ async def test_l_appariement_par_titre_exige_l_imdb(conn, settings: Settings):
 
     assert report.sources == []
     assert not recherche.called, "sans imdb_id, la recherche est inutile — ne pas la lancer"
+
+
+@respx.mock
+async def test_l_imdb_de_la_fiche_ouvre_tvmaze_sans_item_wikidata(conn, settings: Settings):
+    """Le rattrapage qui reste quand Wikidata ignore la série : l'`imdb_id` de
+    la fiche collectée mène au lookup TVmaze."""
+    await _serie_collectee(conn, avec_imdb=True)
+    _mock(SPARQL_VIDE)
+    respx.get(url__startswith="https://api.tvmaze.com/lookup/shows").mock(
+        httpx.Response(200, json={"id": 82})
+    )
+
+    report = await _enrichir(conn, settings)
+
+    assert report.sources == ["tvmaze"]
+    async with conn.cursor() as cur:
+        await cur.execute("select resolved_by from riche_source where source = 'tvmaze'")
+        assert (await cur.fetchone())[0] == "imdb"

@@ -1,24 +1,25 @@
 """Enrichissement d'une série par les sources tierces — le lot 3.
 
 Wikidata pour les faits et le raccordement, Wikipédia pour la matière textuelle,
-TVmaze pour les dates et le calendrier. Aucun appel à TMDB : cette passe
-s'ajoute à une collecte, elle ne la refait pas.
+TVmaze pour les dates et le calendrier.
 
-**Elle ne dépend pas non plus du jeton TMDB.** L'entrée dans Wikidata se fait
-par `P4983`, qui se déduit de l'id qu'on a déjà dans `tmdb_catalog`. Une série
-jamais collectée peut donc être enrichie — on aura ses faits et son texte, mais
-pas sa fiche. C'est délibéré : ça découple les deux chantiers, et ça permet
-d'avancer pendant qu'un jeton est refusé.
+**La frontière avec la collecte est nette, et c'est une décision d'architecture**
+(2026-08-06) : `raw_source` est exclusivement TMDB. Les réponses des sources
+tierces ne sont pas conservées en brut — ce qu'elles apportent va dans
+`riche_source`, raccrochée à la fiche collectée par `raw_source_id`. Corollaire :
+une série doit être **collectée** avant d'être enrichie, et les faits tiers
+(pays, langue, lieux P915/P840, dates et diffuseur TVmaze) vivent dans
+`riche_source.facts`, leur seul lieu de vie.
 
 L'enchaînement, et ce que chaque étape débloque pour la suivante :
 
-    tmdb_catalog.id ──P4983──> Wikidata ──> QID, imdb_id, id TVmaze, faits
-                                  │
-                                  ├── sitelinks ──> Wikipédia (n langues)
-                                  └── P8600 / imdb_id ──> TVmaze
+    fiche raw_source ──P4983──> Wikidata ──> QID, imdb_id, id TVmaze, faits
+                                   │
+                                   ├── sitelinks ──> Wikipédia (n langues)
+                                   └── P8600 / imdb_id ──> TVmaze
 
-Le brut de chaque réponse va dans `raw_source` — une réponse HTTP, une ligne,
-l'invariant ne change pas. `series_source` en est la dérivation.
+Seul l'état de reprise passe par `fetch_state` — « a-t-on déjà regardé ? » —
+qui est de l'état, pas du brut.
 """
 
 from __future__ import annotations
@@ -38,10 +39,6 @@ from fiv_sourcing.sources import tvmaze, wikidata, wikipedia
 
 log = logging.getLogger(__name__)
 
-# Un 401/403 ne dit rien sur l'œuvre, seulement sur notre configuration —
-# même raisonnement que dans la collecte TMDB.
-NOT_ABOUT_THE_WORK = frozenset({401, 403})
-
 
 @dataclass(slots=True)
 class EnrichReport:
@@ -49,7 +46,7 @@ class EnrichReport:
     qid: str | None = None
     resolved_by: str | None = None
     requests: int = 0
-    rows_written: int = 0  # lignes de raw_source
+    rows_written: int = 0  # lignes de riche_source
     sources: list[str] = field(default_factory=list)  # ce qui a été rempli
     errors: list[str] = field(default_factory=list)
 
@@ -104,11 +101,18 @@ async def enrich_series(
 ) -> EnrichReport:
     report = EnrichReport(tv_id=tv_id)
 
+    fiche_id = (await store.latest_fiche_ids(conn, [tv_id])).get(tv_id)
+    if fiche_id is None:
+        report.errors.append("série non collectée — `tmdb fetch` d'abord")
+        return report
+
     titre = await _titre_du_catalogue(conn, tv_id)
     imdb_connu = await _imdb_depuis_la_collecte(conn, tv_id)
-    faits = await _wikidata(conn, clients, tv_id, imdb_connu, report)
+    faits = await _wikidata(conn, clients, tv_id, fiche_id, imdb_connu, report)
 
-    await _apres_wikidata(conn, clients, tv_id, faits, imdb_connu, titre, languages, report)
+    await _apres_wikidata(
+        conn, clients, tv_id, fiche_id, faits, imdb_connu, titre, languages, report
+    )
     return report
 
 
@@ -116,6 +120,7 @@ async def _apres_wikidata(
     conn: psycopg.AsyncConnection,
     clients: Clients,
     tv_id: int,
+    fiche_id: int,
     faits: dict[str, Any] | None,
     imdb_connu: str | None,
     titre: str | None,
@@ -131,15 +136,15 @@ async def _apres_wikidata(
         # Sans item Wikidata, il reste TVmaze — par l'imdb_id de la collecte, ou
         # par le titre si cet identifiant existe pour départager. Au dixième
         # décile de popularité, rien n'aboutit : c'est mesuré, pas une anomalie.
-        await _tvmaze(conn, clients, tv_id, None, imdb_connu, titre, report)
+        await _tvmaze(conn, clients, tv_id, fiche_id, None, imdb_connu, titre, report)
         return
 
-    articles = await _sitelinks(conn, clients, faits["qid"], report)
+    articles = await _sitelinks(clients, faits["qid"], report)
     imdb = faits.get("imdb") or imdb_connu
 
     await asyncio.gather(
-        _wikipedia(conn, clients, tv_id, articles, languages, report),
-        _tvmaze(conn, clients, tv_id, faits.get("tvmaze"), imdb, titre, report),
+        _wikipedia(conn, clients, tv_id, fiche_id, articles, languages, report),
+        _tvmaze(conn, clients, tv_id, fiche_id, faits.get("tvmaze"), imdb, titre, report),
     )
 
 
@@ -148,6 +153,7 @@ async def _wikidata(
     conn: psycopg.AsyncConnection,
     clients: Clients,
     tv_id: int,
+    fiche_id: int,
     imdb_connu: str | None,
     report: EnrichReport,
 ) -> dict[str, Any] | None:
@@ -163,57 +169,54 @@ async def _wikidata(
         voie = "p345"
         faits = wikidata.lire_lookup(resultat.payload) if resultat.ok else None
 
-    # Même règle qu'en masse : on ne garde le brut que s'il porte quelque chose.
-    # Une réponse SPARQL sans résultat ne dit rien de plus que `fetch_state`.
-    await _persist(
-        conn,
-        wikidata.SOURCE,
-        "lookup",
-        str(tv_id),
-        None,
-        resultat,
-        report,
-        stocker=faits is not None,
-    )
+    await _noter(conn, wikidata.SOURCE, "lookup", str(tv_id), resultat)
     if not resultat.ok:
         report.errors.append(f"wikidata: {resultat.error or resultat.status}")
     if faits is None:
         return None
 
-    await _enregistrer_wikidata(conn, tv_id, faits, voie, report)
+    await _enregistrer_wikidata(conn, tv_id, fiche_id, faits, voie, report)
     return faits
 
 
 async def _enregistrer_wikidata(
     conn: psycopg.AsyncConnection,
     tv_id: int,
+    fiche_id: int,
     faits: dict[str, Any],
     voie: str,
     report: EnrichReport,
 ) -> None:
     report.qid = faits["qid"]
     report.resolved_by = voie
-    await store.upsert_series_source(
+    await store.upsert_riche_source(
         conn,
-        id_tmdb=tv_id,
+        raw_source_id=fiche_id,
+        tv_id=tv_id,
         source=wikidata.SOURCE,
         source_id=faits["qid"],
         url=f"https://www.wikidata.org/wiki/{faits['qid']}",
-        # Wikidata n'apporte pas de texte : ses faits partiront vers la couche 1
-        # au lot 4. Ce qu'on retient ici, c'est le raccordement.
         content=None,
         media=[],
+        # Le seul lieu de vie de ces faits : la réponse SPARQL n'est pas
+        # conservée en brut. La couche 1 (lot 4) les dérivera d'ici.
+        facts={
+            "imdb": faits.get("imdb"),
+            "tvmaze": faits.get("tvmaze"),
+            "pays": faits.get("pays") or [],
+            "langues": faits.get("langues") or [],
+            "lieux_tournage": faits.get("lieux_tournage") or [],
+            "lieux_action": faits.get("lieux_action") or [],
+        },
         resolved_by=voie,
     )
+    report.rows_written += 1
     report.sources.append(wikidata.SOURCE)
 
 
-async def _sitelinks(
-    conn: psycopg.AsyncConnection, clients: Clients, qid: str, report: EnrichReport
-) -> dict[str, str]:
+async def _sitelinks(clients: Clients, qid: str, report: EnrichReport) -> dict[str, str]:
     resultat = await clients.wikidata.entity(qid)
     report.requests += 1
-    await _persist(conn, wikidata.SOURCE, "entity", qid, None, resultat, report)
     if not resultat.ok:
         report.errors.append(f"wikidata/entity: {resultat.error or resultat.status}")
         return {}
@@ -224,6 +227,7 @@ async def _wikipedia(
     conn: psycopg.AsyncConnection,
     clients: Clients,
     tv_id: int,
+    fiche_id: int,
     articles: dict[str, str],
     languages: tuple[str, ...],
     report: EnrichReport,
@@ -234,7 +238,6 @@ async def _wikipedia(
             continue
         resultat = await clients.wikipedia.article(lang, titre)
         report.requests += 1
-        await _persist(conn, wikipedia.SOURCE, "article", titre, lang, resultat, report)
         if not resultat.ok:
             report.errors.append(f"wikipedia/{lang}: {resultat.error or resultat.status}")
             continue
@@ -243,9 +246,10 @@ async def _wikipedia(
         if lu is None:
             continue
         titre_canonique, texte = lu
-        await store.upsert_series_source(
+        await store.upsert_riche_source(
             conn,
-            id_tmdb=tv_id,
+            raw_source_id=fiche_id,
+            tv_id=tv_id,
             source=wikipedia.SOURCE,
             lang=lang,
             source_id=titre_canonique,
@@ -254,6 +258,7 @@ async def _wikipedia(
             media=[],
             resolved_by="sitelink",
         )
+        report.rows_written += 1
         report.sources.append(f"{wikipedia.SOURCE}/{lang}")
 
 
@@ -261,6 +266,7 @@ async def _tvmaze(
     conn: psycopg.AsyncConnection,
     clients: Clients,
     tv_id: int,
+    fiche_id: int,
     tvmaze_id: str | None,
     imdb: str | None,
     titre: str | None,
@@ -276,9 +282,7 @@ async def _tvmaze(
 
     # `imdb` est exigé ici, et pas seulement pour départager : c'est lui qui
     # **décide**. Sans lui, `choisir_par_titre` refusera tous les candidats — la
-    # recherche serait donc une requête sûre d'être inutile. Sur les 60 % du
-    # catalogue sans item Wikidata, ça ferait autant d'appels gratuits à un
-    # service gratuit, pour rien.
+    # recherche serait donc une requête sûre d'être inutile.
     if show_id is None and titre and imdb:
         resultat = await clients.tvmaze.search(titre)
         report.requests += 1
@@ -289,7 +293,6 @@ async def _tvmaze(
 
     resultat = await clients.tvmaze.show(show_id)
     report.requests += 1
-    await _persist(conn, tvmaze.SOURCE, "show", str(show_id), None, resultat, report)
     if not resultat.ok:
         report.errors.append(f"tvmaze: {resultat.error or resultat.status}")
         return
@@ -297,16 +300,31 @@ async def _tvmaze(
     lu = tvmaze.lire_show(resultat.payload)
     if lu is None:
         return
-    await store.upsert_series_source(
+    await store.upsert_riche_source(
         conn,
-        id_tmdb=tv_id,
+        raw_source_id=fiche_id,
+        tv_id=tv_id,
         source=tvmaze.SOURCE,
         source_id=str(lu["id"]),
         url=lu.get("url"),
         content=lu.get("texte"),
         media=tvmaze.images(resultat.payload),
+        # Comme pour Wikidata : la réponse n'est pas gardée en brut, donc ces
+        # faits n'existent qu'ici.
+        facts={
+            "statut": lu.get("statut"),
+            "premiere": lu.get("premiere"),
+            "fin": lu.get("fin"),
+            "diffuseur": lu.get("diffuseur"),
+            "pays": lu.get("pays"),
+            "calendrier": lu.get("calendrier"),
+            "episodes": lu.get("episodes"),
+            "episodes_dates": lu.get("episodes_dates"),
+            "imdb": lu.get("imdb"),
+        },
         resolved_by=voie,
     )
+    report.rows_written += 1
     report.sources.append(tvmaze.SOURCE)
 
 
@@ -318,10 +336,6 @@ ORDERS = {
     # « Les plus récentes, et à date égale les plus populaires. » La popularité
     # seule ne le remplace pas : une série de 2015 très consultée passerait
     # avant une nouveauté, ce qui est l'inverse de l'intention.
-    #
-    # `nulls last` met en fin de file les séries non encore collectées, qui
-    # n'ont pas de date — et qui sont aussi celles où l'enrichissement a le
-    # moins de prise, faute d'`imdb_id` pour confirmer l'appariement TVmaze.
     "recent": "c.first_air_date desc nulls last, c.popularity desc, c.id",
 }
 
@@ -349,15 +363,16 @@ async def pending_ids(
     limit: int | None = None,
     order: str = "id",
 ) -> list[int]:
-    """Séries encore sans complément.
+    """Séries collectées et encore sans complément.
 
-    Le critère est `fetch_state`, **pas** la présence d'une ligne dans
-    `series_source` : la majorité des séries n'a pas d'item Wikidata, donc ne
-    produira jamais de ligne. Se fier à `series_source` ferait retenter
-    indéfiniment tout le fond de catalogue à chaque passe.
+    **Collectées** : `riche_source` référence la fiche de `raw_source`, donc une
+    série sans fiche n'est pas enrichissable — elle entrera dans la sélection
+    une fois la collecte passée.
 
-    `fetch_state` répond à la bonne question — « a-t-on déjà regardé ? » — et
-    c'est exactement ce pour quoi il existe.
+    Le critère de reprise est `fetch_state`, **pas** la présence d'une ligne
+    dans `riche_source` : la majorité des séries n'a pas d'item Wikidata, donc
+    ne produira jamais de ligne. S'y fier ferait retenter indéfiniment tout le
+    fond de catalogue à chaque passe.
     """
     if order not in ORDERS:
         raise ValueError(f"tri inconnu : {order} (attendu : {', '.join(ORDERS)})")
@@ -367,6 +382,10 @@ async def pending_ids(
             f"""
             select c.id
             from tmdb_catalog c
+            join fetch_state collecte
+                   on collecte.source = 'tmdb' and collecte.kind = 'tv'
+                  and collecte.source_id = c.id::text
+                  and collecte.last_success_at is not null
             left join fetch_state f
                    on f.source = 'wikidata' and f.kind = 'lookup'
                   and f.source_id = c.id::text
@@ -393,19 +412,15 @@ async def enrich_all(
     stop: asyncio.Event | None = None,
     on_progress: Callable[[EnrichAllReport], None] | None = None,
 ) -> EnrichAllReport:
-    """Enrichit une liste de séries, par lots.
+    """Enrichit une liste de séries collectées, par lots.
 
     Deux temps, et c'est ce qui rend la passe tenable :
 
     1. **une requête SPARQL pour cent séries** — c'est la seule étape que toutes
-       subissent, et la seule qu'on ne peut pas éviter. Par cent, le catalogue
-       entier coûte 2 300 requêtes au lieu de 228 000 ;
+       subissent. Par cent, le catalogue entier coûte 2 300 requêtes au lieu de
+       228 000 ;
     2. **le détail, uniquement pour celles qui ont un item** — sitelinks,
-       articles, TVmaze. Environ trois séries sur dix, et c'est là que passe
-       l'essentiel du temps.
-
-    Les séries sans item mais dont la collecte TMDB a donné un `imdb_id` passent
-    quand même par TVmaze : c'est le seul rattrapage qui reste, et il fonctionne.
+       articles, TVmaze — ou dont la collecte a donné un `imdb_id`.
     """
     report = EnrichAllReport(selected=len(ids))
 
@@ -413,7 +428,8 @@ async def enrich_all(
         if stop is not None and stop.is_set():
             break
         tranche = ids[depart : depart + lot]
-        faits_par_id = await _resoudre_le_lot(conn, clients, tranche, report)
+        fiches = await store.latest_fiche_ids(conn, tranche)
+        faits_par_id = await _resoudre_le_lot(conn, clients, tranche, fiches, report)
         titres = await _titres_du_catalogue(conn, tranche)
         imdbs = await _imdbs_depuis_la_collecte(conn, tranche)
 
@@ -421,6 +437,7 @@ async def enrich_all(
             conn,
             clients,
             tranche,
+            fiches=fiches,
             faits_par_id=faits_par_id,
             titres=titres,
             imdbs=imdbs,
@@ -442,6 +459,7 @@ async def _traiter_la_tranche(
     clients: Clients,
     tranche: list[int],
     *,
+    fiches: dict[int, int],
     faits_par_id: dict[int, dict[str, Any]],
     titres: dict[int, str],
     imdbs: dict[int, str],
@@ -460,9 +478,10 @@ async def _traiter_la_tranche(
     """
     file: asyncio.Queue[int] = asyncio.Queue()
     for tv_id in tranche:
-        # Sans item et sans imdb_id, il n'y a rien à tenter : la recherche par
-        # titre ne pourrait rien confirmer. Le passage est déjà noté.
-        if tv_id in faits_par_id or imdbs.get(tv_id):
+        # Sans fiche collectée, rien à raccrocher. Sans item et sans imdb_id,
+        # rien à tenter : la recherche par titre ne pourrait rien confirmer.
+        # Le passage est déjà noté dans fetch_state.
+        if tv_id in fiches and (tv_id in faits_par_id or imdbs.get(tv_id)):
             file.put_nowait(tv_id)
         else:
             report.done += 1
@@ -477,14 +496,14 @@ async def _traiter_la_tranche(
             if tv_id in faits_par_id:
                 # La ligne `wikidata` a été écrite à la résolution du lot, donc
                 # hors de ce rapport-ci. Sans ce report, `enriched` compterait
-                # moins de séries qu'il n'y en a dans `series_source` — un écart
-                # qu'on chercherait longtemps.
+                # moins de séries qu'il n'y en a dans `riche_source`.
                 detail.sources.append(wikidata.SOURCE)
             try:
                 await _apres_wikidata(
                     conn,
                     clients,
                     tv_id,
+                    fiches[tv_id],
                     faits_par_id.get(tv_id),
                     imdbs.get(tv_id),
                     titres.get(tv_id),
@@ -510,9 +529,10 @@ async def _resoudre_le_lot(
     conn: psycopg.AsyncConnection,
     clients: Clients,
     ids: list[int],
+    fiches: dict[int, int],
     report: EnrichAllReport,
 ) -> dict[int, dict[str, Any]]:
-    """Une requête, cent séries — puis on redécoupe par série pour le stockage."""
+    """Une requête SPARQL pour cent séries, et le passage noté pour chacune."""
     resultat = await clients.wikidata.by_tmdb_lot(ids)
     report.requests += 1
     if not resultat.ok:
@@ -520,42 +540,25 @@ async def _resoudre_le_lot(
         log.warning("lot wikidata en échec : %s", resultat.error or resultat.status)
         return {}
 
-    lignes = wikidata.lignes_par_id(resultat.payload)
     faits_par_id = wikidata.lire_lookup_lot(resultat.payload)
 
     for tv_id in ids:
-        ligne = lignes.get(tv_id)
-        written = False
-        if ligne is not None:
-            # `enveloppe` réemballe au format d'une réponse mono-série : le lot
-            # est une optimisation de transport, l'unité conservée reste l'objet.
-            #
-            # Rien n'est écrit quand Wikidata ne connaît pas la série — soit 64 %
-            # du catalogue. Un payload vide n'apporterait aucune information que
-            # `fetch_state` ne porte déjà, et ce sont 145 000 lignes de bruit
-            # dans une table qui doit rester lisible.
-            written = await store.store_raw(
-                conn,
-                source=wikidata.SOURCE,
-                kind="lookup",
-                source_id=str(tv_id),
-                lang=None,
-                http_status=resultat.status,
-                payload=wikidata.enveloppe(ligne),
-            )
         await store.mark_fetch(
             conn,
             source=wikidata.SOURCE,
             kind="lookup",
             source_id=str(tv_id),
             http_status=resultat.status,
-            changed=written,
+            changed=tv_id in faits_par_id,
         )
-        report.rows_written += int(written)
 
     for tv_id, faits in faits_par_id.items():
+        fiche_id = fiches.get(tv_id)
+        if fiche_id is None:
+            continue
         detail = EnrichReport(tv_id=tv_id)
-        await _enregistrer_wikidata(conn, tv_id, faits, "p4983", detail)
+        await _enregistrer_wikidata(conn, tv_id, fiche_id, faits, "p4983", detail)
+        report.rows_written += detail.rows_written
     report.resolved += len(faits_par_id)
     return faits_par_id
 
@@ -573,11 +576,7 @@ async def _titres_du_catalogue(conn: psycopg.AsyncConnection, ids: list[int]) ->
 async def _imdbs_depuis_la_collecte(
     conn: psycopg.AsyncConnection, ids: list[int]
 ) -> dict[int, str]:
-    """Les `imdb_id` déjà collectés, en une requête pour tout le lot.
-
-    Vide tant que la collecte TMDB n'a pas tourné — l'enrichissement n'en dépend
-    pas, il en profite quand c'est là.
-    """
+    """Les `imdb_id` des fiches collectées, en une requête pour tout le lot."""
     async with conn.cursor() as cur:
         await cur.execute(
             """
@@ -597,12 +596,6 @@ async def _imdbs_depuis_la_collecte(
 
 # ---------------------------------------------------------------------- outils
 async def _titre_du_catalogue(conn: psycopg.AsyncConnection, tv_id: int) -> str | None:
-    """Le titre original, lu dans l'inventaire.
-
-    Pas dans `raw_source` : l'inventaire est rempli par l'export public, donc il
-    est là même quand rien n'a été collecté. C'est ce qui permet à la recherche
-    TVmaze par titre de fonctionner sans jeton TMDB.
-    """
     async with conn.cursor() as cur:
         await cur.execute("select original_name from tmdb_catalog where id = %s", (tv_id,))
         row = await cur.fetchone()
@@ -610,51 +603,30 @@ async def _titre_du_catalogue(conn: psycopg.AsyncConnection, tv_id: int) -> str 
 
 
 async def _imdb_depuis_la_collecte(conn: psycopg.AsyncConnection, tv_id: int) -> str | None:
-    """L'`imdb_id` que TMDB a donné, s'il a été collecté.
-
-    Facultatif : l'enrichissement fonctionne sans, par `P4983`. Mais quand il
-    est là, il ouvre la seconde entrée Wikidata et surtout il **décide** de
-    l'appariement TVmaze.
-    """
+    """L'`imdb_id` de la fiche collectée. Il ouvre la seconde entrée Wikidata et
+    surtout il **décide** de l'appariement TVmaze."""
     payload = await store.latest_payload(conn, source="tmdb", kind="tv", source_id=str(tv_id))
     return ((payload or {}).get("external_ids") or {}).get("imdb_id") or None
 
 
-async def _persist(
+async def _noter(
     conn: psycopg.AsyncConnection,
     source: str,
     kind: str,
     source_id: str,
-    lang: str | None,
     resultat: FetchResult,
-    report: EnrichReport,
-    *,
-    stocker: bool = True,
 ) -> None:
-    """Une réponse → une ligne de brut, et un passage noté dans `fetch_state`.
+    """Note le passage dans `fetch_state` — et rien d'autre.
 
-    `stocker=False` note le passage sans garder le payload : c'est le cas d'une
-    recherche restée sans résultat, qui n'apprend rien de plus que « on a
-    regardé » — déjà porté par `fetch_state`.
+    Les réponses des sources tierces ne vont pas dans `raw_source`, qui est
+    exclusivement TMDB. Ce qui mérite d'être gardé l'est dans `riche_source`.
     """
-    written = False
-    if stocker and resultat.status not in NOT_ABOUT_THE_WORK:
-        written = await store.store_raw(
-            conn,
-            source=source,
-            kind=kind,
-            source_id=source_id,
-            lang=lang,
-            http_status=resultat.status,
-            payload=resultat.payload,
-        )
     await store.mark_fetch(
         conn,
         source=source,
         kind=kind,
         source_id=source_id,
         http_status=resultat.status,
-        changed=written,
+        changed=resultat.ok,
         error=resultat.error,
     )
-    report.rows_written += int(written)
