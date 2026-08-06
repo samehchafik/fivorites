@@ -329,6 +329,45 @@ async def test_a_second_criterion_identical_to_the_first_is_ignored(
     assert [row["id"] for row in rows] == [1399, 2000]
 
 
+async def test_only_with_a_poster(conn: psycopg.AsyncConnection) -> None:
+    """La case « avec image ». TMDB n'a pas d'affiche pour tout le monde, et le
+    fond de catalogue en est largement dépourvu."""
+    await seed(conn)
+    # Une série sans affiche, et une dont TMDB renvoie une chaîne vide plutôt
+    # que `null` — les deux veulent dire la même chose.
+    for tv_id, payload, digest in (
+        (6001, '{"name": "Sans affiche", "first_air_date": "2019-01-01"}', b"\x41"),
+        (
+            6002,
+            '{"name": "Affiche vide", "poster_path": "", "first_air_date": "2018-01-01"}',
+            b"\x42",
+        ),
+    ):
+        await conn.execute(
+            "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+            " values (%s, %s, 1.0, date '2026-08-05')",
+            (tv_id, f"#{tv_id}"),
+        )
+        await conn.execute(
+            """
+            insert into raw_source (source, kind, source_id, lang, http_status,
+                                    payload, payload_sha256)
+            values ('tmdb', 'tv', %s, 'fr-FR', 200, %s::jsonb, %s)
+            """,
+            (str(tv_id), payload, digest),
+        )
+    await refresh_cards(conn)
+
+    tout, total_tout = await fetch_cards(conn, CardQuery(lang="fr-FR"))
+    assert total_tout == 4
+    assert {6001, 6002} <= {row["id"] for row in tout}
+
+    avec, total_avec = await fetch_cards(conn, CardQuery(lang="fr-FR", with_poster=True))
+    assert total_avec == 2, "le total suit le filtre, sinon la pagination ment"
+    assert {row["id"] for row in avec} == {1399, 2000}
+    assert all(row["posterPath"] for row in avec)
+
+
 async def test_projection_state_says_when_it_lags(conn: psycopg.AsyncConnection) -> None:
     await seed(conn)
     assert await cards_state(conn) == {

@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Center,
+  Checkbox,
   Group,
   Pagination,
   Paper,
@@ -53,6 +54,8 @@ export interface GridState {
   /** Chaîne vide = pas de second critère. */
   sort2: string
   order2: 'asc' | 'desc'
+  /** Ne lister que ce qui a une affiche. */
+  withPoster: boolean
   pageSize: number
 }
 
@@ -147,6 +150,19 @@ export function SeriesGrid({
             onChange={(next) => next && onState({ ...state, pageSize: Number(next) })}
             allowDeselect={false}
             w={100}
+          />
+
+          {/* Une vignette sans visuel n'est pas un défaut de la grille : TMDB
+              n'a pas d'affiche pour tout le monde, et le fond de catalogue en
+              est largement dépourvu. La case sert à regarder la partie
+              présentable du catalogue sans changer ce qu'il contient. */}
+          <Checkbox
+            label="Avec affiche seulement"
+            checked={state.withPoster}
+            onChange={(event) =>
+              onState({ ...state, withPoster: event.currentTarget.checked })
+            }
+            mb={6}
           />
         </Group>
       </Paper>

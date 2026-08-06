@@ -66,6 +66,10 @@ class CardQuery:
     # dans un ordre arbitraire, qui change d'une page à l'autre.
     sort2: str | None = None
     descending2: bool = True
+    # N'afficher que ce qui a une affiche. Une vignette sans visuel n'est pas un
+    # défaut de la grille : TMDB n'en a pas pour tout le monde, et le fond de
+    # catalogue en est largement dépourvu.
+    with_poster: bool = False
     page: int = 1
     page_size: int = 24
 
@@ -129,6 +133,10 @@ async def fetch_cards(
                 " or v.id = %(search_id)s::int)"
             ),
             sql.SQL("(%(min_popularity)s::real is null or c.popularity >= %(min_popularity)s)"),
+            # `nullif` parce que TMDB renvoie tantôt `null`, tantôt une chaîne
+            # vide : les deux veulent dire « pas d'affiche », et n'en traiter
+            # qu'un laisserait passer des vignettes trouées.
+            sql.SQL("nullif(v.poster_path, '') is not null") if q.with_poster else sql.SQL("true"),
         ]
     )
 

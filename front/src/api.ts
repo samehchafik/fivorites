@@ -105,6 +105,8 @@ export interface CardsParams extends Record<string, QueryValue> {
   /** Critère de départage, facultatif. Vide = un seul critère. */
   sort2?: string
   order2?: 'asc' | 'desc'
+  /** Ne garder que les séries ayant une affiche. */
+  withPoster?: boolean
   page: number
   pageSize: number
 }
