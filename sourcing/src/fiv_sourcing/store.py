@@ -178,6 +178,36 @@ async def ensure_oeuvres(
         return dict(await cur.fetchall())
 
 
+async def ensure_oeuvre_par_qid(
+    conn: psycopg.AsyncConnection,
+    qid: str,
+    *,
+    titre: str | None = None,
+    univers: str = "series",
+) -> int:
+    """QID → id d'œuvre, en la créant si besoin — l'entrée du flux hors-TMDB.
+
+    L'œuvre peut déjà exister : soit d'un passage précédent du crawler, soit
+    parce que le flux 1 a attaché ce QID à une série TMDB — auquel cas on la
+    réutilise telle quelle : c'est la réconciliation qui fonctionne dans le bon
+    sens.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into oeuvre (univers, wikidata_qid, titre)
+            values (%s, %s, %s)
+            on conflict do nothing
+            """,
+            (univers, qid, titre),
+        )
+        await cur.execute(
+            "select id from oeuvre where univers = %s and wikidata_qid = %s",
+            (univers, qid),
+        )
+        return (await cur.fetchone())[0]
+
+
 async def attach_identifiers(
     conn: psycopg.AsyncConnection,
     oeuvre_id: int,

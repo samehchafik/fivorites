@@ -27,8 +27,10 @@ from fiv_sourcing.redact import SecretFilter, fingerprint, redact_dsn
 app = typer.Typer(help="Acquisition de données Fivorites V2 — séries", no_args_is_help=True)
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
 tmdb_app = typer.Typer(help="Source TMDB", no_args_is_help=True)
+crawl_app = typer.Typer(help="Le flux hors-TMDB", no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(tmdb_app, name="tmdb")
+app.add_typer(crawl_app, name="crawl")
 
 
 @app.callback()
@@ -302,6 +304,117 @@ def enrich(
     if stats:
         _bilan_debit(stats[0], settings.enrich_rate_limit, variable="ENRICH_RATE_LIMIT")
 
+    if report.interrupted:
+        typer.echo("")
+        typer.echo("Interrompu. Relancer la même commande reprend où on s'est arrêté.")
+
+
+@crawl_app.command("wikidata")
+def crawl_wikidata_cmd(
+    langue: Annotated[
+        str | None,
+        typer.Option("--langue", help="Code de langue originale (P364), ex. ar, tr."),
+    ] = None,
+    avec_imdb: Annotated[
+        bool,
+        typer.Option(
+            "--avec-imdb",
+            help="Inclure les items à imdb_id — probablement des séries TMDB non "
+            "reliées, que le flux 1 rattrape déjà. Risque de doublons, assumé.",
+        ),
+    ] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", help="Nombre d'items à traiter. Défaut : tous.")
+    ] = None,
+    concurrency: Annotated[
+        int, typer.Option("--concurrency", help="Items traités en parallèle.")
+    ] = 4,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Compter le reste à faire, sans rien écrire.")
+    ] = False,
+) -> None:
+    """Les séries qui existent dans Wikidata mais pas dans TMDB.
+
+    Balaye les items « série télévisée » sans identifiant TMDB — par défaut le
+    **noyau dur**, sans imdb_id non plus : injoignable par tout autre chemin.
+    Crée l'œuvre par QID (id_tmdb null), conserve le brut, enrichit via
+    Wikipédia et TVmaze. Reprenable : les items déjà regardés sont sautés.
+    """
+    from fiv_sourcing.crawl import CrawlReport, crawl_wikidata, deja_regardes, sweep
+    from fiv_sourcing.enrich import build_clients, build_fetcher
+
+    settings = get_settings()
+    langues = settings.wikipedia_languages
+
+    started = time.monotonic()
+    last_shown = 0.0
+
+    def show(report: CrawlReport) -> None:
+        nonlocal last_shown
+        now = time.monotonic()
+        if now - last_shown < 10 and report.remaining:
+            return
+        last_shown = now
+        elapsed = now - started
+        rate = report.done / elapsed if elapsed else 0
+        eta = report.remaining / rate if rate else 0
+        typer.echo(
+            f"{report.done:>7}/{report.selected}  "
+            f"{report.enriched} enrichie(s)  {rate:5.2f} item/s  reste {_duree(eta)}"
+        )
+
+    async def run() -> CrawlReport:
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            await _exiger_le_schema_a_jour(conn, settings)
+            report = CrawlReport()
+            fetcher = build_fetcher(settings)
+            async with fetcher:
+                clients = build_clients(fetcher)
+                items = await sweep(
+                    clients, report, langue=langue, avec_imdb=avec_imdb, max_items=None
+                )
+                vus = await deja_regardes(conn, [i["qid"] for i in items])
+                restants = [i for i in items if i["qid"] not in vus]
+                if limit is not None:
+                    restants = restants[:limit]
+                if dry_run:
+                    report.selected = len(restants)
+                    return report
+
+                stop = asyncio.Event()
+                loop = asyncio.get_running_loop()
+                for signame in (signal.SIGINT, signal.SIGTERM):
+                    loop.add_signal_handler(signame, _request_stop, stop)
+
+                return await crawl_wikidata(
+                    conn,
+                    clients,
+                    restants,
+                    languages=langues,
+                    concurrency=concurrency,
+                    stop=stop,
+                    on_progress=show,
+                    report=report,
+                )
+
+    perimetre = f"langue={langue}" if langue else "toutes langues"
+    perimetre += ", avec imdb" if avec_imdb else ", sans imdb (noyau dur)"
+    typer.echo(f"périmètre : items série sans id TMDB — {perimetre}")
+    typer.echo(f"langues d'articles : {', '.join(langues)}")
+
+    report = _run_db(run)
+    if dry_run:
+        typer.echo(f"balayés : {report.swept}  à traiter : {report.selected}")
+        return
+
+    typer.echo("")
+    typer.echo(f"balayés       : {report.swept}")
+    typer.echo(f"traités       : {report.done}/{report.selected}")
+    typer.echo(f"enrichis      : {report.enriched}  (au moins une source)")
+    typer.echo(f"requêtes      : {report.requests}")
+    typer.echo(f"lignes riches : {report.rows_written}")
+    if report.errors:
+        typer.echo(f"erreurs       : {report.errors}")
     if report.interrupted:
         typer.echo("")
         typer.echo("Interrompu. Relancer la même commande reprend où on s'est arrêté.")

@@ -33,7 +33,7 @@ donc le plafond configuré qui borne, pas le réseau ni la base.
 | Serveur Debian 11 | opérationnel |
 | Collecte TMDB | **en cours** — ~148 600 séries collectées, ~79 800 restantes (~11 h) |
 | Enrichissement | opérationnel, et indépendant du jeton |
-| Tests `sourcing` | 132 — 69 unitaires, 63 de bout en bout sur Postgres |
+| Tests `sourcing` | 138 — 69 unitaires, 69 de bout en bout sur Postgres |
 | Tests `admin` | 85 |
 | Code `sourcing` | ~3 100 lignes de source, ~1 900 de tests |
 
@@ -57,6 +57,8 @@ fiv-sourcing tmdb stats                # ce qui est en base + projection de volu
 
 fiv-sourcing enrich --id 1399          # sources tierces sur une série
 fiv-sourcing enrich                    # toutes celles sans complément, reprenable
+
+fiv-sourcing crawl wikidata --langue ar  # les séries hors TMDB (noyau dur), reprenable
 ```
 
 `backfill` et `enrich` acceptent tous deux `--limit`, `--concurrency`,
@@ -424,10 +426,12 @@ Par ordre de ce qui bloque.
    PGDG du runbook n'a pas été utilisé. Rien n'exige aujourd'hui plus que la 13,
    mais l'écart est à résorber avant que la base contienne des données coûteuses.
 8. ⚠️ **`translations` sur les saisons** — cf. §4.1, facteur cinq sur le coût.
-9. ⚠️ **Un test instable, vu une fois.**
-   `test_rejouer_n_ecrit_pas_de_brut_mais_rafraichit_la_derivation` a échoué une
-   fois, puis passé cinq fois de suite, cause non identifiée. Il compte des
-   lignes exactes : si l'instabilité revient, c'est là qu'il faut regarder.
+9. ⚠️ **De l'instabilité inter-tests, vue deux fois.** Une passe complète a
+   échoué une fois sur 7 tests (autour de `test_enrich_all`), puis cinq passes
+   vertes d'affilée sans reproduction ; même signature qu'un échec isolé
+   antérieur. Les suspects comptent des lignes exactes sur la base partagée. Si
+   ça revient, isoler avec `pytest -p no:cacheprovider` et regarder l'ordre
+   d'exécution.
 10. ⚠️ **Marchés visés.** Un catalogue équilibré fr / en / es / ar / tr n'a pas la
     même forme qu'un catalogue francophone avec des ouvertures. N'affecte pas
     l'acquisition (on prend tout), mais déterminera ce qu'est une couverture

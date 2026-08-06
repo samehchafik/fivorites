@@ -126,16 +126,16 @@ async def enrich_series(
 
 @dataclass(slots=True, frozen=True)
 class Cible:
-    """Une série à enrichir : ses trois identités internes.
+    """Une série à enrichir : ses identités internes.
 
-    `oeuvre_id` est le pivot — c'est lui qui attache les lignes entre elles.
-    `tv_id` et `fiche_id` sont l'ancrage TMDB, présent sur ce chemin-ci ;
-    le schéma les accepte nuls pour les œuvres hors TMDB à venir.
+    `oeuvre_id` est le pivot — c'est lui qui attache les lignes entre elles,
+    et le seul champ toujours présent. `tv_id` et `fiche_id` sont l'ancrage
+    TMDB : renseignés sur le flux 1, nuls sur le flux 2 (crawler hors-TMDB).
     """
 
-    tv_id: int
     oeuvre_id: int
-    fiche_id: int
+    tv_id: int | None = None
+    fiche_id: int | None = None
 
 
 async def _apres_wikidata(

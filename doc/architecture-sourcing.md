@@ -139,7 +139,7 @@ tmdb export → tmdb backfill → tmdb dates → enrich
                                               tvmaze             → riche_source
 ```
 
-**Flux 2 — le crawler hors-TMDB** *(à construire)* :
+**Flux 2 — le crawler hors-TMDB** *(livré : `crawl wikidata`)* :
 
 ```
 crawl wikidata
@@ -166,7 +166,7 @@ deux références redondantes. Le chemin, en étapes indépendantes et petites :
 | 1 | ✅ `normalize.py` + `facts` canoniques + test d'uniformité | livré |
 | 2 | ✅ `enrich` réécrit le brut wikidata/wikipédia dans `raw_source` (R1) | livré |
 | 3 | `content` allégé aux sections utiles (§4) | dérivation, rejouable |
-| 4 | `crawl wikidata` — le flux 2 | code + commande |
+| 4 | ✅ `crawl wikidata` — le flux 2 | livré |
 | 5 | retirer `riche_source.id_tmdb` et `raw_source_id` | migration de ménage |
 
 L'ordre est le bon : 1 et 2 rendent le reste rejouable, 5 attend que tout le

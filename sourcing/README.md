@@ -88,7 +88,7 @@ cp .env.example .env   # puis renseigner TMDB_BEARER (token v4, préférable)
 
 ```bash
 make doctor                                  # interpréteur, base, migrations, schéma, identifiants
-make test                                    # 132 tests, dont 63 de bout en bout sur Postgres
+make test                                    # 138 tests, dont 69 de bout en bout sur Postgres
 ```
 
 Puis la ligne de commande, dans l'ordre où on s'en sert :
@@ -104,6 +104,8 @@ Puis la ligne de commande, dans l'ordre où on s'en sert :
 
 .venv/bin/fiv-sourcing enrich --id 1399      # les sources tierces sur une série
 .venv/bin/fiv-sourcing enrich                # toutes celles sans complément
+
+.venv/bin/fiv-sourcing crawl wikidata --langue ar   # les séries hors TMDB
 ```
 
 `export` ne demande aucune clé — c'est un fichier public, hors quota. `backfill`
@@ -145,6 +147,15 @@ prendrait.
 Mesuré sur 60 séries tirées au hasard du catalogue : **36 % ont un item
 Wikidata**, 1,17 requête par série en moyenne, 1,7 série/s. À ce rythme, les
 228 454 séries représentent environ **37 heures** et 267 000 requêtes.
+
+**`crawl wikidata` est le flux inverse** : les séries qui existent dans Wikidata
+mais pas dans TMDB. Par défaut il vise le **noyau dur** — sans identifiant TMDB
+*ni* IMDb, injoignable par tout autre chemin (300 séries de langue arabe,
+vérifié en réel par `--dry-run`). Il crée l'œuvre par QID (`id_tmdb` null),
+conserve le brut, enrichit via Wikipédia et TVmaze, et reprend où il s'est
+arrêté. Les items à `imdb_id` sont exclus par défaut — probablement des séries
+TMDB non reliées, que `enrich` rattrape déjà par `P345` ; `--avec-imdb` lève
+l'exclusion en connaissance de cause.
 
 ## Déploiement serveur (Docker)
 

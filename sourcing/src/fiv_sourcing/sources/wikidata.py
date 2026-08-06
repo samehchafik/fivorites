@@ -84,12 +84,90 @@ GROUP BY ?tmdb ?item ?imdb ?tvmaze
 """
 
 
+# Le lookup d'un item déjà identifié — le flux 2 entre par le QID, pas par un
+# identifiant externe. Même SELECT que LOOKUP : mêmes faits, même parsing.
+LOOKUP_QID = """
+SELECT ?item ?imdb ?tvmaze
+       (GROUP_CONCAT(DISTINCT ?paysCode; separator="|") AS ?pays)
+       (GROUP_CONCAT(DISTINCT ?langueCode; separator="|") AS ?langues)
+       (GROUP_CONCAT(DISTINCT ?tournageNom; separator="|") AS ?tournage)
+       (GROUP_CONCAT(DISTINCT ?actionNom; separator="|") AS ?action)
+WHERE {
+  BIND(wd:%(qid)s AS ?item)
+  OPTIONAL { ?item wdt:P345 ?imdb }
+  OPTIONAL { ?item wdt:P8600 ?tvmaze }
+  OPTIONAL { ?item wdt:P495 ?paysItem . ?paysItem wdt:P297 ?paysCode }
+  OPTIONAL { ?item wdt:P364 ?langueItem . ?langueItem wdt:P218 ?langueCode }
+  OPTIONAL { ?item wdt:P915 ?tournageItem . ?tournageItem rdfs:label ?tournageNom .
+             FILTER(lang(?tournageNom) = "en") }
+  OPTIONAL { ?item wdt:P840 ?actionItem . ?actionItem rdfs:label ?actionNom .
+             FILTER(lang(?actionNom) = "en") }
+}
+GROUP BY ?item ?imdb ?tvmaze
+"""
+
+
+# Le balayage du flux 2 : les items « série télévisée » sans identifiant TMDB.
+#
+# `ORDER BY ?item` n'est pas cosmétique : sans ordre stable, la pagination par
+# OFFSET peut sauter ou répéter des items d'une page à l'autre.
+#
+# `%(filtres)s` reçoit le filtre de langue (P364 → P218) et, par défaut,
+# l'exclusion des items à imdb_id — ceux-là sont très probablement des séries
+# présentes dans TMDB mais non reliées, que le flux 1 rattrape déjà par P345.
+# Les crawler créerait des doublons en masse ; la cible est le noyau dur,
+# injoignable par tout autre chemin (mesuré : 300 des 480 séries de langue
+# arabe).
+SWEEP = """
+SELECT ?item ?itemLabel ?imdb ?tvmaze WHERE {
+  ?item wdt:P31 wd:Q5398426 .
+  FILTER NOT EXISTS { ?item wdt:P4983 [] }
+  OPTIONAL { ?item wdt:P345 ?imdb }
+  OPTIONAL { ?item wdt:P8600 ?tvmaze }
+  %(filtres)s
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en,ar,tr,fr,es". }
+}
+ORDER BY ?item
+LIMIT %(limite)d
+OFFSET %(decalage)d
+"""
+
+
 class WikidataClient:
     def __init__(self, fetcher: HttpFetcher) -> None:
         self._fetcher = fetcher
 
     async def by_tmdb(self, tv_id: int) -> FetchResult:
         return await self._sparql("P4983", str(tv_id))
+
+    async def by_qid(self, qid: str) -> FetchResult:
+        """Les faits d'un item déjà identifié — l'entrée du flux 2."""
+        propre = "".join(c for c in qid if c.isalnum())
+        return await self._fetcher.get_json(
+            SPARQL_URL, {"query": LOOKUP_QID % {"qid": propre}, "format": "json"}
+        )
+
+    async def sweep_sans_tmdb(
+        self,
+        *,
+        langue: str | None = None,
+        avec_imdb: bool = False,
+        limite: int = 2000,
+        decalage: int = 0,
+    ) -> FetchResult:
+        """Une page du balayage des items série sans identifiant TMDB."""
+        filtres = []
+        if not avec_imdb:
+            filtres.append("FILTER NOT EXISTS { ?item wdt:P345 [] }")
+        if langue:
+            propre = "".join(c for c in langue if c.isalpha())[:3]
+            filtres.append(f'?item wdt:P364 ?langueF . ?langueF wdt:P218 "{propre}" .')
+        requete = SWEEP % {
+            "filtres": "\n  ".join(filtres),
+            "limite": limite,
+            "decalage": decalage,
+        }
+        return await self._fetcher.get_json(SPARQL_URL, {"query": requete, "format": "json"})
 
     async def by_tmdb_lot(self, ids: Sequence[int]) -> FetchResult:
         """Résout jusqu'à quelques centaines d'ids en une requête."""
@@ -202,6 +280,27 @@ def lignes_par_id(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
         if brut.isdigit():
             par_id[int(brut)] = ligne
     return par_id
+
+
+def lire_sweep(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Une page de balayage → [{qid, titre, imdb, tvmaze}]."""
+    items = []
+    for ligne in ((payload or {}).get("results") or {}).get("bindings") or []:
+        qid = ligne.get("item", {}).get("value", "").rsplit("/", 1)[-1]
+        if not qid.startswith("Q"):
+            continue
+        titre = ligne.get("itemLabel", {}).get("value", "")
+        items.append(
+            {
+                "qid": qid,
+                # Le label service renvoie le QID quand aucun libellé n'existe :
+                # ce n'est pas un titre, on préfère l'absence.
+                "titre": titre if titre != qid else None,
+                "imdb": ligne.get("imdb", {}).get("value") or None,
+                "tvmaze": ligne.get("tvmaze", {}).get("value") or None,
+            }
+        )
+    return items
 
 
 def lire_sitelinks(payload: dict[str, Any] | None, qid: str) -> dict[str, str]:
