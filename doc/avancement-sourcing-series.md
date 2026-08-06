@@ -21,17 +21,16 @@ Les lots 1 (socle), 2 (catalogue et collecte de masse) et 3 (enrichissement
 externe) sont livrés. Le pipeline sait inventorier tout TMDB, collecter chaque
 série, et l'enrichir par Wikidata, Wikipédia et TVmaze.
 
-**Un seul point bloque toujours** : le jeton TMDB est refusé (HTTP 401), donc
-`raw_source` est vide. Deux choses continuent malgré ça, et c'est délibéré —
-l'export du catalogue et **tout l'enrichissement** ne demandent aucune
-authentification.
+**Le jeton TMDB est réparé et la collecte tourne** (2026-08-06). Mesuré sur le
+serveur : 2,06 séries/s, **zéro échec**, le limiteur saturé à 20 req/s — c'est
+donc le plafond configuré qui borne, pas le réseau ni la base.
 
 | | État |
 |---|---|
 | Poste de dev | opérationnel, catalogue de 228 454 séries chargé |
-| Serveur Debian 11 | image construite, base migrée, jeton TMDB à corriger |
-| Collecte TMDB | **bloquée** par le jeton |
-| Enrichissement | opérationnel, indépendant du jeton |
+| Serveur Debian 11 | opérationnel |
+| Collecte TMDB | **en cours** — ~148 600 séries collectées, ~79 800 restantes (~11 h) |
+| Enrichissement | opérationnel, et indépendant du jeton |
 | Tests `sourcing` | 111 — 58 unitaires, 53 de bout en bout sur Postgres |
 | Tests `admin` | 82 |
 | Code `sourcing` | ~3 100 lignes de source, ~1 900 de tests |
@@ -149,8 +148,14 @@ Par série : 1 appel pour la fiche (avec `translations`, donc toutes les langues
 d'un coup) + 1 appel **par saison et par langue**. Une série de 8 saisons =
 41 requêtes avec les cinq langues.
 
-Sur 228 454 séries, l'ordre de grandeur est de **2 millions de requêtes**, soit
-une trentaine d'heures à 20 req/s. Extrapolation, pas mesure — le jeton bloque.
+**Mesuré sur le serveur** : 2,06 séries/s à `TMDB_RATE_LIMIT=20`, soit environ
+10 requêtes par série en moyenne — la plupart des séries ont peu de saisons. Sur
+228 454 séries, cela fait ~2,2 millions de requêtes et **une trentaine
+d'heures**. L'extrapolation initiale était juste.
+
+Le limiteur est saturé : 2,06 × 10 ≈ 20 req/s. Ce n'est donc ni le réseau ni la
+base qui bornent, mais le plafond configuré — voir la question ouverte sur le
+débit réellement toléré.
 
 ⚠️ **À vérifier avant d'engager la passe complète** : l'endpoint `translations`
 d'une saison suffirait-il à remplacer les cinq appels ? Ma compréhension est
@@ -363,10 +368,10 @@ Utile pour ne pas les réintroduire.
 
 Par ordre de ce qui bloque.
 
-1. 🔴 **Le jeton TMDB est refusé** (HTTP 401). Un token v4 est un JWT : commence
-   par `eyJ`, ~200 caractères, deux points. Une clé v3 (32 hexadécimaux) va dans
-   `TMDB_API_KEY`, pas `TMDB_BEARER`. **Seule la collecte est bloquée** —
-   l'enrichissement tourne sans.
+1. ✅ ~~Le jeton TMDB est refusé~~ — **réparé le 2026-08-06**, la collecte tourne
+   sans un seul échec. Pour mémoire, si le cas revient : un token v4 est un JWT
+   qui commence par `eyJ`, ~200 caractères, deux points ; une clé v3
+   (32 hexadécimaux) va dans `TMDB_API_KEY`, pas `TMDB_BEARER`.
 2. 🔴 **Licence TMDB.** Libre en usage non commercial avec attribution ; un usage
    commercial demande leur accord. Le seul point qui pourrait invalider tout ce
    qui est construit. À lever **avant** la passe complète.
@@ -381,8 +386,12 @@ Par ordre de ce qui bloque.
 5. 🟠 **Volume disque.** Non mesuré. `tmdb backfill --limit 200` puis
    `tmdb stats` donne la projection, à comparer à `df -h`.
 6. 🟠 **Débit toléré par TMDB.** La limite dure a été supprimée en 2019 ; ce qui
-   subsiste n'est pas documenté. Le backfill compte les 429 et conclut. Défaut
-   prudent : 20 req/s.
+   subsiste n'est pas documenté. Défaut prudent : 20 req/s, et le limiteur y est
+   saturé — c'est lui qui borne la passe, pas le réseau. Zéro échec observé sur
+   les premières centaines de séries, donc il y a probablement de la marge : le
+   bilan des 429 en fin de passe le dira. **Le limiteur est par processus** —
+   lancer deux passes double le débit réel vers TMDB, ce qui est arrivé une fois
+   (trois `backfill` simultanés) et ne se voit nulle part.
 7. 🟠 **Écart de version Postgres** : 16 en dev, **13** sur le serveur — le dépôt
    PGDG du runbook n'a pas été utilisé. Rien n'exige aujourd'hui plus que la 13,
    mais l'écart est à résorber avant que la base contienne des données coûteuses.
