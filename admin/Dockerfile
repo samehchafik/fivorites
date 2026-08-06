@@ -3,11 +3,11 @@
 # Image de l'administration, pour le serveur Debian.
 #
 # **Elle ne contient que l'API.** Le front n'y entre pas : ses sources vivent
-# dans `www/` à la racine du dépôt, se construisent dans `www/dist`, et ce
-# répertoire est monté en volume par le compose. Trois raisons :
+# dans `front/`, le build produit `www/` à la racine du dépôt, et c'est ce
+# répertoire-là qui est monté en volume par le compose. Trois raisons :
 #
 #   1. redéployer le front ne demande pas de reconstruire ni de repousser une
-#      image — on reconstruit `www/dist` et on recharge la page ;
+#      image — `www/` est versionné, un `git pull` suffit ;
 #   2. l'image reste une image Python, sans Node ni node_modules ;
 #   3. le partage des requêtes reste net et vérifiable — `/api/*` au code de
 #      cette image, tout le reste au contenu du volume.
@@ -64,7 +64,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     MIGRATIONS_DIR=/app/migrations \
-    WEB_DIST=/srv/www/dist \
+    WEB_DIST=/srv/www \
     HOST=0.0.0.0 \
     PORT=8182
 

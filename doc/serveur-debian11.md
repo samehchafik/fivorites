@@ -410,6 +410,19 @@ sudo docker compose run --rm admin db migrate   # seulement si admin/migrations 
 sudo docker compose up -d admin
 ```
 
+Et côté collecte, si `sourcing/migrations` a bougé :
+
+```bash
+sudo docker compose run --rm sourcing db migrate
+```
+
+`db migrate` n'applique que ce qui manque et le dit ; le relancer sur une base à
+jour ne fait rien. **Il n'y a pas de base de test sur le serveur** : les images
+ne contiennent ni `tests/`, ni `Makefile` — seulement `src`, `migrations` et le
+point d'entrée. Les cibles `make` du dépôt (`test`, `db-create`, `db-drop-test`)
+n'existent que sur le poste de développement, où Postgres et les toolchains sont
+installés sur la machine.
+
 Le front seul ne demande rien de plus que le `git pull` : le conteneur lit
 `www/` à chaque requête, il n'y a même pas à le redémarrer.
 

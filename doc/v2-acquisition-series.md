@@ -202,11 +202,27 @@ Puis Wikidata SPARQL → P915 (lieu de tournage) et P840 (lieu de l'action), et 
 sitelinks → article Wikipédia **dans les cinq langues collectées**, en entier,
 pas le résumé d'intro.
 
+**TVmaze passe devant Wikidata comme porte d'entrée** — 40,0 % contre 38,7 % sur
+un échantillon de 230 séries, et surtout par un autre chemin : la recherche par
+titre y récupère 12,7 % de séries dont Wikidata ignore l'existence. Elle apporte
+aussi ce que TMDB ne garantit pas — 99,2 % des épisodes datés, le calendrier, le
+diffuseur. En revanche une série trouvée sur trois seulement a des résumés
+d'épisode : c'est un raccordeur et une source de faits, pas de la matière de
+notation. Détail dans
+[`etude-sources-complementaires.md`](etude-sources-complementaires.md).
+
 *Ce que le lot ne réparera pas.* Mesuré le 2026-08-06 : Wikidata ne connaît que
 663 séries de langue arabe (plancher — `P364` est souvent absente) contre 4 898
 `original_language=ar` chez TMDB. Aucune stratégie de jointure ne récupère ce qui
-n'est pas écrit. Pour le catalogue arabe et golfe, c'est une source dédiée ou
-rien — voir [`etude-couverture-marche-arabe.md`](etude-couverture-marche-arabe.md).
+n'est pas écrit, et aucune des trois sources étudiées ne débloque ce corpus :
+40 % de raccordement, 7,5 % de résumés d'épisode. Pour le catalogue arabe et
+golfe, c'est une source dédiée ou rien — voir
+[`etude-couverture-marche-arabe.md`](etude-couverture-marche-arabe.md).
+
+*Et le fond de catalogue reste invisible.* Au dixième décile de popularité :
+0 % d'item Wikidata, 6,7 % de série TVmaze. Au-delà du troisième décile,
+l'enrichissement externe cesse d'être une stratégie — c'est une donnée d'entrée
+pour le périmètre du lot 5.
 
 *Livrable* : le **taux de raccrochage réel**, par corpus et par chemin. Combien
 de séries sont raccordées et par quelle entrée, combien ont un lieu, combien ont

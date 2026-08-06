@@ -6,6 +6,12 @@
 # Tout est centralisé ici : ~/.gitignore_global exclut les fichiers nommés
 # `.gitignore`, donc un .gitignore par sous-dossier ne serait jamais versionné.
 
+# --- tools/ : sorties des études ---
+# Les scripts d'étude sont versionnés, leurs sorties non : ce sont des dumps de
+# quelques centaines de séries, refaits à chaque mesure. Ce qui compte et qui se
+# commite, ce sont les conclusions, dans doc/.
+/etude_*.json
+
 # --- sourcing/ (Python) ---
 # La toolchain vendorisée n'est pas versionnée : elle pèse ~100 Mo et se
 # réinstalle à l'identique avec `make bootstrap` (version figée dans
