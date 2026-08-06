@@ -76,9 +76,9 @@ base fivorites_v2
 │                exported_on, changed_at)               │
 │    → append-only, jamais retouché, jamais interprété   │
 │                                                       │
-│    series_source(id_tmdb, source, lang, content,      │
-│                 media, resolved_by, content_chars)    │
-│    → dérivée, reconstructible depuis raw_source       │
+│    riche_source(raw_source_id, id_tmdb, source,       │
+│                 lang, content, media, facts, …)       │
+│    → l'enrichissement, raccroché à la fiche collectée  │
 │  ─────────────────────────────────────────────────────┘
 │              ↓  dérivation hors ligne, rejouable, sans réseau
 ├─ schéma catalog ── COUCHE 1 : FAITS ──────────────────┐
@@ -105,13 +105,12 @@ l'export quotidien, un fichier public qui ne consomme aucun appel d'API, et il
 sert de base de sondage : volumétrie réelle, déciles de popularité, et détection
 des séries disparues (`exported_on` qui décroche).
 
-`series_source` est l'autre exception, dans l'autre sens : c'est de la
-**dérivation**, posée dans `sourcing` parce qu'elle décide de ce qu'il reste à
-aller chercher. Une ligne par (série, source, langue) répond à une question que
-le brut ne sait pas poser — « pour cette série, qu'a-t-on trouvé ailleurs, et
-combien ça pèse ? ». Le payload, lui, continue d'aller dans `raw_source`, et la
-fraîcheur dans `fetch_state`, toutes deux déjà génériques : une source
-`wikipedia` n'y demande aucune colonne nouvelle.
+`riche_source` porte l'enrichissement — ce que les sources tierces apportent.
+**`raw_source` est exclusivement TMDB** (décision du 2026-08-06) : les réponses
+de Wikidata, Wikipédia et TVmaze ne sont pas conservées en brut. Une ligne par
+(série, source, langue), raccrochée à la fiche collectée par `raw_source_id`,
+avec le texte (`content`), les médias, et les faits tiers dans `facts` — leur
+seul lieu de vie. La fraîcheur, elle, reste dans `fetch_state`.
 
 `resolved_by` mérite un mot. Elle enregistre **par quel chemin** le raccordement
 s'est fait — `p4983`, `p345`, `sitelink`, `title`. Sans elle, le taux de
@@ -185,7 +184,7 @@ la passe complète.
 
 ### ✅ Lot 3 — Enrichissement externe *(livré)*
 
-`enrich` enchaîne les trois sources et remplit `series_source` — une série avec
+`enrich` enchaîne les trois sources et remplit `riche_source` — une série avec
 `--id`, tout le reste sans. Il n'appelle pas TMDB et **ne demande aucun jeton** :
 l'entrée se fait par `P4983`, qui se déduit de l'id déjà présent dans
 `tmdb_catalog`. Une série jamais collectée peut donc être enrichie, ce qui permet
@@ -200,8 +199,8 @@ une ligne par série, sans quoi ni la fraîcheur ni l'empreinte ne voudraient pl
 rien dire.
 
 Le critère de reprise est `fetch_state`, pas la présence d'une ligne dans
-`series_source` : la majorité des séries n'a pas d'item Wikidata et n'en
-produira donc jamais. Se fier à `series_source` ferait retenter le fond de
+`riche_source` : la majorité des séries n'a pas d'item Wikidata et n'en
+produira donc jamais. Se fier à `riche_source` ferait retenter le fond de
 catalogue à chaque passe.
 
 *Mesuré sur 60 séries tirées au hasard* : 36 % ont un item Wikidata, 1,17 requête
@@ -211,7 +210,7 @@ cinq langues et les résumés d'épisode TVmaze, **258 000 caractères** de mati
 contre 400 pour l'overview TMDB.
 
 *Livrable restant* : le taux de raccrochage à l'échelle, qui se lira dans
-`series_source.resolved_by` une fois la passe complète faite.
+`riche_source.resolved_by` une fois la passe complète faite.
 
 **Le raccordement, en trois entrées cumulées** — et non une chaîne, parce qu'une
 chaîne casse au premier maillon :
@@ -305,5 +304,5 @@ jeu d'évaluation gratuit, disponible sans annotation manuelle.
 | [`sourcing/migrations/001_sourcing.sql`](../sourcing/migrations/001_sourcing.sql) | le schéma de collecte |
 | [`sourcing/migrations/002_tmdb_catalog.sql`](../sourcing/migrations/002_tmdb_catalog.sql) | l'inventaire du catalogue |
 | [`sourcing/migrations/003_changes.sql`](../sourcing/migrations/003_changes.sql) | la marque de modification |
-| [`sourcing/migrations/004_series_source.sql`](../sourcing/migrations/004_series_source.sql) | l'enrichissement externe, et `resolved_by` |
+| [`sourcing/migrations/006_riche_source.sql`](../sourcing/migrations/006_riche_source.sql) | l'enrichissement, raccroché au brut collecté |
 | `v2-sourcing-series.md` (dépôt V1) | l'analyse de l'existant et le modèle en trois couches |

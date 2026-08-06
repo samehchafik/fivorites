@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from fiv_sourcing.sources.tmdb.export import ExportReport
 
 from fiv_sourcing.config import VENDOR_DIR, Settings, get_settings
-from fiv_sourcing.db import MigrationsNotFound, connect, migrate, ping
+from fiv_sourcing.db import MigrationsNotFound, connect, migrate, pending_migrations, ping
 from fiv_sourcing.http import FetcherStats
 from fiv_sourcing.redact import SecretFilter, fingerprint, redact_dsn
 
@@ -189,9 +189,10 @@ def enrich(
 ) -> None:
     """Ajoute les sources tierces : Wikidata, Wikipédia, TVmaze.
 
-    Sans `--id`, traite **toutes les séries encore sans complément** et reprend
-    là où la passe précédente s'est arrêtée. Aucun appel à TMDB, donc **aucun
-    jeton requis** : l'entrée se fait par `P4983`, qui se déduit de l'id.
+    Sans `--id`, traite **toutes les séries collectées encore sans complément**
+    et reprend là où la passe précédente s'est arrêtée. L'enrichissement se
+    raccroche à la fiche collectée (`riche_source.raw_source_id`) : une série
+    doit être passée par `tmdb fetch` ou `tmdb backfill` d'abord.
     """
     from fiv_sourcing.enrich import (
         EnrichAllReport,
@@ -216,7 +217,7 @@ def enrich(
                     marker = "ok " if report.sources else "rien"
                     typer.echo(
                         f"{marker} {tv_id:>8}  {report.requests:>2} requêtes  "
-                        f"{report.rows_written:>2} ligne(s) brute(s)  "
+                        f"{report.rows_written:>2} ligne(s) riche(s)  "
                         f"{report.qid or '—':>10}  {', '.join(report.sources) or 'aucune source'}"
                     )
                     for erreur in report.errors[:3]:
@@ -244,6 +245,7 @@ def enrich(
 
     async def en_masse() -> EnrichAllReport:
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            await _exiger_le_schema_a_jour(conn, settings)
             selection = await pending_ids(
                 conn, refresh_after=refresh_after, limit=limit, order=order
             )
@@ -282,7 +284,8 @@ def enrich(
         typer.echo(f"à enrichir : {report.selected} série(s)")
         return
     if not report.selected:
-        typer.echo("Rien à enrichir. Lancer `tmdb export` si le catalogue est vide.")
+        typer.echo("Rien à enrichir. La sélection ne porte que sur les séries déjà")
+        typer.echo("collectées : `tmdb backfill` d'abord si la collecte n'a pas tourné.")
         return
 
     typer.echo("")
@@ -290,7 +293,7 @@ def enrich(
     typer.echo(f"raccordées    : {report.resolved}  (item Wikidata)")
     typer.echo(f"enrichies     : {report.enriched}  (au moins une source)")
     typer.echo(f"requêtes      : {report.requests}")
-    typer.echo(f"lignes brutes : {report.rows_written}")
+    typer.echo(f"lignes riches : {report.rows_written}")
     if report.errors:
         typer.echo(f"erreurs       : {report.errors}")
 
@@ -473,6 +476,7 @@ def tmdb_backfill(
 
     async def run() -> BackfillReport:
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            await _exiger_le_schema_a_jour(conn, settings)
             ids = await pending_ids(conn, refresh_after=refresh_after, limit=limit, order=order)
             if dry_run or not ids:
                 return BackfillReport(selected=len(ids))
@@ -689,6 +693,26 @@ def _octets(taille: float) -> str:
             return f"{taille:.1f} {unite}"
         taille /= 1024
     return f"{taille:.1f} To"
+
+
+async def _exiger_le_schema_a_jour(conn: psycopg.AsyncConnection, settings: Settings) -> None:
+    """Refuse de démarrer une passe sur un schéma en retard.
+
+    Le cas s'est produit trois fois de suite sur le serveur, sous trois formes :
+    migration jamais copiée dans l'image, commande absente, colonne manquante.
+    La dernière se manifestait par `column c.first_air_date does not exist` au
+    milieu d'une trace psycopg — un message qui dit ce qui a cassé mais pas quoi
+    faire. Une passe dure des heures : elle doit échouer sur la première seconde
+    et dire la commande à lancer.
+    """
+    attente = await pending_migrations(conn, settings.migrations_dir)
+    if not attente:
+        return
+    typer.echo(f"ERREUR : {len(attente)} migration(s) en attente : {', '.join(attente)}")
+    typer.echo("        → `db migrate` d'abord.")
+    typer.echo("          En conteneur, reconstruire l'image avant : les migrations")
+    typer.echo("          y sont copiées, un `git pull` seul ne les y met pas.")
+    raise typer.Exit(1)
 
 
 async def _db_status(dsn: str, schema: str, migrations_dir: Path) -> tuple[str, int, int]:

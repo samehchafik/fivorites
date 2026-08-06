@@ -161,27 +161,6 @@ def lire_lookup_lot(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]
     return trouves
 
 
-def enveloppe(ligne_brute: dict[str, Any]) -> dict[str, Any]:
-    """Réemballe une ligne d'un lot au format d'une réponse à une seule série.
-
-    Le lot est une optimisation de transport ; l'unité qu'on **conserve** reste
-    l'objet. Sans ce réemballage, `raw_source` porterait une ligne couvrant cent
-    séries, dont ni l'empreinte, ni la fraîcheur, ni le statut ne voudraient
-    plus rien dire pour aucune d'elles.
-    """
-    return {"results": {"bindings": [ligne_brute]}}
-
-
-def lignes_par_id(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
-    """{id TMDB: sa ligne brute}, pour pouvoir en garder le détail par série."""
-    par_id = {}
-    for ligne in ((payload or {}).get("results") or {}).get("bindings") or []:
-        brut = ligne.get("tmdb", {}).get("value", "")
-        if brut.isdigit():
-            par_id[int(brut)] = ligne
-    return par_id
-
-
 def lire_sitelinks(payload: dict[str, Any] | None, qid: str) -> dict[str, str]:
     """{code langue: titre de l'article}, pour les Wikipédias seulement.
 

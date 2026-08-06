@@ -6,7 +6,8 @@
 >
 > Compléments : [`v2-acquisition-series.md`](v2-acquisition-series.md) pour le
 > plan, [`v2-notation-axes.md`](v2-notation-axes.md) pour la couche 2,
-> [`serveur-debian11.md`](serveur-debian11.md) pour le déploiement,
+> [`serveur-debian11.md`](serveur-debian11.md) pour l'installation,
+> [`exploitation.md`](exploitation.md) pour le quotidien,
 > [`sourcing/README.md`](../sourcing/README.md) pour l'usage courant.
 > Les deux études : [couverture du marché arabe](etude-couverture-marche-arabe.md)
 > et [sources complémentaires](etude-sources-complementaires.md).
@@ -31,8 +32,8 @@ donc le plafond configuré qui borne, pas le réseau ni la base.
 | Serveur Debian 11 | opérationnel |
 | Collecte TMDB | **en cours** — ~148 600 séries collectées, ~79 800 restantes (~11 h) |
 | Enrichissement | opérationnel, et indépendant du jeton |
-| Tests `sourcing` | 111 — 58 unitaires, 53 de bout en bout sur Postgres |
-| Tests `admin` | 82 |
+| Tests `sourcing` | 122 — 60 unitaires, 62 de bout en bout sur Postgres |
+| Tests `admin` | 85 |
 | Code `sourcing` | ~3 100 lignes de source, ~1 900 de tests |
 
 ---
@@ -49,6 +50,7 @@ fiv-sourcing tmdb export               # charge la liste de toutes les séries (
 fiv-sourcing tmdb catalog              # volumétrie et déciles de popularité
 fiv-sourcing tmdb fetch --id 1399      # collecte une série
 fiv-sourcing tmdb backfill             # collecte tout le catalogue, reprenable
+fiv-sourcing tmdb dates                # recopie les dates du brut vers l'inventaire
 fiv-sourcing tmdb changes --days 1     # marque ce que TMDB signale comme modifié
 fiv-sourcing tmdb stats                # ce qui est en base + projection de volume
 
@@ -58,7 +60,15 @@ fiv-sourcing enrich                    # toutes celles sans complément, reprena
 
 `backfill` et `enrich` acceptent tous deux `--limit`, `--concurrency`,
 `--order`, `--refresh-after` et `--dry-run`, et s'interrompent proprement sur un
-seul Ctrl-C ou un `docker stop`.
+seul Ctrl-C ou un `docker stop`. Les deux **refusent de démarrer si une migration
+est en attente** : une passe dure des heures, elle doit échouer à la première
+seconde et nommer ce qui manque.
+
+`--order recent` trie par année de diffusion décroissante puis popularité — ce
+que `popularity` seul ne fait pas. Il demande que `tmdb dates` ait tourné.
+
+Le débit de `enrich` est **par hôte** : `ENRICH_RATE_LIMIT` (5) pour Wikimedia,
+`TVMAZE_RATE_LIMIT` (2) pour TVmaze, dont la limite est documentée.
 
 ### 2.2 Le schéma
 
@@ -68,15 +78,17 @@ Une base — `fivorites_v2` — et un schéma par domaine.
 |---|---|
 | `sourcing.raw_source` | le brut, append-only, une ligne par réponse HTTP |
 | `sourcing.fetch_state` | fraîcheur et état par objet ; remplace les 3 fichiers JSON de la V1 |
-| `sourcing.tmdb_catalog` | inventaire du catalogue, issu de l'export quotidien |
-| `sourcing.series_source` | **dérivée** : ce qu'une source tierce apporte, par (série, source, langue) |
+| `sourcing.tmdb_catalog` | inventaire du catalogue, issu de l'export quotidien ; `first_air_date` y est dérivée du brut |
+| `sourcing.riche_source` | l'enrichissement, raccroché à la fiche collectée (`raw_source_id`) — une ligne par (série, source, langue) |
 | `public.schema_migrations` | historique des migrations, valable pour la base entière |
 
-`series_source` porte `content` (le texte à noter), `media`, `url`, deux
-compteurs calculés (`content_chars`, `media_count`) et surtout **`resolved_by`**
-— par quel chemin le raccordement a réussi (`p4983`, `p345`, `p8600`, `imdb`,
-`title`, `sitelink`). Sans cette colonne, le taux de résolution par chemin serait
-une étude à refaire à chaque fois ; avec elle, c'est un `group by`.
+`riche_source` porte `raw_source_id` (la fiche référencée), `id_tmdb`,
+`content` (le texte à noter), `media`, `url`, **`facts`** — le seul lieu de vie
+des faits tiers : pays, langue, lieux P915/P840, dates et diffuseur TVmaze —,
+deux compteurs calculés (`content_chars`, `media_count`) et **`resolved_by`**,
+le chemin qui a raccordé la série (`p4983`, `p345`, `p8600`, `imdb`, `title`,
+`sitelink`). Sans cette colonne, le taux de résolution par chemin serait une
+étude à refaire ; avec elle, c'est un `group by`.
 
 La couche 2 (axes) aura son schéma au lot suivant — ⚠️ son nom n'est pas tranché,
 voir §7.
@@ -91,14 +103,16 @@ imposerait de réécrire toute la série pour rafraîchir une saison, invalidera
 l'empreinte du bloc entier au moindre changement, et rendrait les échecs
 tout-ou-rien.
 
-**Une exception assumée, et une seule : le lot SPARQL.** Une requête Wikidata
-porte cent séries. La réponse est **redécoupée par série avant stockage**, parce
-qu'une ligne de `raw_source` couvrant cent séries n'aurait ni fraîcheur, ni
-statut, ni empreinte qui veuille dire quelque chose pour aucune d'elles. Le lot
-est une optimisation de *transport* ; l'unité conservée reste l'objet.
+**`raw_source` est exclusivement TMDB** (décision du 2026-08-06). Les réponses
+des sources tierces sont de l'enrichissement, pas de la collecte : elles ne sont
+pas conservées en brut. Ce qu'elles apportent va dans `riche_source`, leurs
+faits dans `riche_source.facts`, et seul le passage est noté dans `fetch_state`.
+Contrepartie assumée : changer la façon d'extraire imposera de réinterroger les
+sources. Une série doit être **collectée** avant d'être enrichie — `riche_source`
+référence sa fiche.
 
 **Rejouer une collecte inchangée n'écrit rien.** Déduplication par SHA-256 du
-payload canonicalisé. `series_source`, elle, est **remplacée** à chaque passe :
+payload canonicalisé. `riche_source`, elle, est **remplacée** à chaque passe :
 les deux tables n'ont pas le même contrat, et un test le fige.
 
 **Un 404 se conserve, un 401 non.** Le premier est un fait sur la source — « cet
@@ -107,7 +121,7 @@ configuration ; le stocker polluerait le brut d'autant de lignes que d'ids
 tentés le jour où un jeton expire.
 
 **Ce qui décide de la reprise, c'est `fetch_state`.** Pour l'enrichissement, le
-critère n'est *pas* la présence d'une ligne dans `series_source` : 64 % des
+critère n'est *pas* la présence d'une ligne dans `riche_source` : 64 % des
 séries n'ont pas d'item Wikidata et n'en produiront donc jamais. S'y fier ferait
 retenter tout le fond de catalogue à chaque passe. La question posée est « a-t-on
 déjà regardé ? ».
@@ -418,11 +432,11 @@ Par ordre de ce qui bloque.
 Le lot 5 est celui qui tranche le périmètre et le budget de notation. Il fournit
 aussi le **constructeur de dossier de notation** : la fonction
 `series_id → texte prêt à noter`, interface exacte entre acquisition et couche 2.
-`series_source.content_chars` a été conçue pour qu'il se calcule sans relire un
+`riche_source.content_chars` a été conçue pour qu'il se calcule sans relire un
 seul article.
 
 **Le premier livrable concret qui reste** : lancer `enrich` sur tout le catalogue
-(~37 h) et lire le taux de raccrochage réel dans `series_source.resolved_by`.
+(~37 h) et lire le taux de raccrochage réel dans `riche_source.resolved_by`.
 Ça ne demande pas le jeton TMDB.
 
 ---
@@ -441,7 +455,7 @@ seul article.
 | `7b04797` | IMDb sort du plan |
 | `0e113b9` | l'appariement TVmaze : titre pour chercher, `imdb_id` pour décider |
 | `5511713` | ce qu'apportent Wikidata, TVmaze et IMDb, mesuré |
-| `cf07e04` | la table `series_source` |
+| `cf07e04` | la table d'enrichissement (devenue `riche_source` en 006) |
 | `e0ec248` | remettre la documentation d'accord avec le code |
 | `46aa882` | mesure du plafond de débit TMDB |
 | `c58a307` | catalogue complet et collecte de masse |

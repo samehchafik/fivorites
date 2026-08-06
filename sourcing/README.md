@@ -88,7 +88,7 @@ cp .env.example .env   # puis renseigner TMDB_BEARER (token v4, préférable)
 
 ```bash
 make doctor                                  # interpréteur, base, migrations, schéma, identifiants
-make test                                    # 116 tests, dont 58 de bout en bout sur Postgres
+make test                                    # 122 tests, dont 62 de bout en bout sur Postgres
 ```
 
 Puis la ligne de commande, dans l'ordre où on s'en sert :
@@ -197,7 +197,7 @@ donc le fichier reste tel quel pour le poste local.
 | [`sources/tmdb/export.py`](src/fiv_sourcing/sources/tmdb/export.py) | l'export quotidien → `tmdb_catalog` |
 | [`sources/tmdb/backfill.py`](src/fiv_sourcing/sources/tmdb/backfill.py) | la collecte de masse : sélection, reprise, progression |
 | [`sources/tmdb/changes.py`](src/fiv_sourcing/sources/tmdb/changes.py) | `/tv/changes` — ce que TMDB signale comme modifié |
-| [`enrich.py`](src/fiv_sourcing/enrich.py) | l'enchaînement des sources tierces → `series_source` |
+| [`enrich.py`](src/fiv_sourcing/enrich.py) | l'enchaînement des sources tierces → `riche_source` |
 | [`sources/wikidata.py`](src/fiv_sourcing/sources/wikidata.py) | le raccordement par `P4983`, et les faits |
 | [`sources/wikipedia.py`](src/fiv_sourcing/sources/wikipedia.py) | l'article en entier, pas le résumé d'intro |
 | [`sources/tvmaze.py`](src/fiv_sourcing/sources/tvmaze.py) | dates, épisodes, calendrier — et le protocole d'appariement |
@@ -235,13 +235,14 @@ connue de TMDB, alimentée par l'export quotidien. C'est elle qui dit ce qu'il
 reste à collecter, ce qui a disparu de TMDB (`exported_on` qui décroche) et ce
 qui a été signalé comme modifié (`changed_at`).
 
-`series_source` est **dérivée** : une ligne par (série, source, langue), qui dit
-ce qu'une source tierce apporte — le texte, les médias, et par quel chemin le
-raccordement s'est fait (`resolved_by`). Elle se reconstruit entièrement depuis
-`raw_source`, sans réseau. Deux compteurs calculés, `content_chars` et
-`media_count`, permettent au rapport de couverture de seuiller sans jamais
-relire un article. Alimentée au lot 3 ; la table existe déjà pour que le schéma
-ne bouge plus quand la collecte arrivera.
+`riche_source` porte l'enrichissement, raccroché à la fiche collectée par
+`raw_source_id` : une ligne par (série, source, langue), avec le texte
+(`content`), les médias, les faits tiers (`facts` — pays, langue, lieux,
+dates et diffuseur TVmaze, leur seul lieu de vie) et le chemin du raccordement
+(`resolved_by`). **`raw_source` reste exclusivement TMDB** : les réponses des
+sources tierces ne sont pas conservées en brut. Deux compteurs calculés,
+`content_chars` et `media_count`, permettent au rapport de couverture de
+seuiller sans jamais relire un article.
 
 ## Reste à faire
 
