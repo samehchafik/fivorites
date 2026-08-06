@@ -5,29 +5,36 @@
 > reprendre le travail.
 >
 > Compléments : [`v2-acquisition-series.md`](v2-acquisition-series.md) pour le
-> plan, [`serveur-debian11.md`](serveur-debian11.md) pour le déploiement,
+> plan, [`v2-notation-axes.md`](v2-notation-axes.md) pour la couche 2,
+> [`serveur-debian11.md`](serveur-debian11.md) pour le déploiement,
 > [`sourcing/README.md`](../sourcing/README.md) pour l'usage courant.
+> Les deux études : [couverture du marché arabe](etude-couverture-marche-arabe.md)
+> et [sources complémentaires](etude-sources-complementaires.md).
 >
-> Dernière mise à jour : 2026-08-05.
+> Dernière mise à jour : 2026-08-06.
 
 ---
 
 ## 1. Où on en est
 
-Le lot 1 (socle) et le lot 2 (catalogue et collecte de masse) sont livrés. Le
-pipeline sait télécharger la liste complète des séries TMDB et les collecter
-toutes, avec reprise sur incident.
+Les lots 1 (socle), 2 (catalogue et collecte de masse) et 3 (enrichissement
+externe) sont livrés. Le pipeline sait inventorier tout TMDB, collecter chaque
+série, et l'enrichir par Wikidata, Wikipédia et TVmaze.
 
-**Un seul point bloque** : le jeton TMDB est refusé par l'API (HTTP 401). Rien
-n'a donc encore été collecté sur le serveur. L'export du catalogue, lui,
-fonctionne — il ne demande aucune authentification.
+**Un seul point bloque toujours** : le jeton TMDB est refusé (HTTP 401), donc
+`raw_source` est vide. Deux choses continuent malgré ça, et c'est délibéré —
+l'export du catalogue et **tout l'enrichissement** ne demandent aucune
+authentification.
 
 | | État |
 |---|---|
 | Poste de dev | opérationnel, catalogue de 228 454 séries chargé |
 | Serveur Debian 11 | image construite, base migrée, jeton TMDB à corriger |
-| Tests | 57 — 31 unitaires, 26 de bout en bout sur Postgres |
-| Code | ~2 700 lignes de source, ~1 000 de tests |
+| Collecte TMDB | **bloquée** par le jeton |
+| Enrichissement | opérationnel, indépendant du jeton |
+| Tests `sourcing` | 111 — 58 unitaires, 53 de bout en bout sur Postgres |
+| Tests `admin` | 82 |
+| Code `sourcing` | ~3 100 lignes de source, ~1 900 de tests |
 
 ---
 
@@ -39,15 +46,20 @@ fonctionne — il ne demande aucune authentification.
 fiv-sourcing doctor                    # interpréteur, base, migrations, schéma, jeton TMDB
 fiv-sourcing db migrate                # applique les migrations manquantes
 
-fiv-sourcing tmdb export               # charge la liste de toutes les séries
-fiv-sourcing tmdb catalog              # volumétrie et répartition par popularité
+fiv-sourcing tmdb export               # charge la liste de toutes les séries (public, hors quota)
+fiv-sourcing tmdb catalog              # volumétrie et déciles de popularité
 fiv-sourcing tmdb fetch --id 1399      # collecte une série
 fiv-sourcing tmdb backfill             # collecte tout le catalogue, reprenable
+fiv-sourcing tmdb changes --days 1     # marque ce que TMDB signale comme modifié
 fiv-sourcing tmdb stats                # ce qui est en base + projection de volume
+
+fiv-sourcing enrich --id 1399          # sources tierces sur une série
+fiv-sourcing enrich                    # toutes celles sans complément, reprenable
 ```
 
-`backfill` accepte `--limit`, `--concurrency`, `--order`, `--refresh-after` et
-`--dry-run`.
+`backfill` et `enrich` acceptent tous deux `--limit`, `--concurrency`,
+`--order`, `--refresh-after` et `--dry-run`, et s'interrompent proprement sur un
+seul Ctrl-C ou un `docker stop`.
 
 ### 2.2 Le schéma
 
@@ -58,11 +70,17 @@ Une base — `fivorites_v2` — et un schéma par domaine.
 | `sourcing.raw_source` | le brut, append-only, une ligne par réponse HTTP |
 | `sourcing.fetch_state` | fraîcheur et état par objet ; remplace les 3 fichiers JSON de la V1 |
 | `sourcing.tmdb_catalog` | inventaire du catalogue, issu de l'export quotidien |
+| `sourcing.series_source` | **dérivée** : ce qu'une source tierce apporte, par (série, source, langue) |
 | `public.schema_migrations` | historique des migrations, valable pour la base entière |
 
-`catalog` (faits) et `scores` (axes) viendront aux lots 4 et suivants. La
-connexion pose le `search_path`, donc le code écrit `raw_source` sans préfixe ;
-les migrations qualifient tout explicitement.
+`series_source` porte `content` (le texte à noter), `media`, `url`, deux
+compteurs calculés (`content_chars`, `media_count`) et surtout **`resolved_by`**
+— par quel chemin le raccordement a réussi (`p4983`, `p345`, `p8600`, `imdb`,
+`title`, `sitelink`). Sans cette colonne, le taux de résolution par chemin serait
+une étude à refaire à chaque fois ; avec elle, c'est un `group by`.
+
+La couche 2 (axes) aura son schéma au lot suivant — ⚠️ son nom n'est pas tranché,
+voir §7.
 
 ### 2.3 Les invariants
 
@@ -74,14 +92,26 @@ imposerait de réécrire toute la série pour rafraîchir une saison, invalidera
 l'empreinte du bloc entier au moindre changement, et rendrait les échecs
 tout-ou-rien.
 
+**Une exception assumée, et une seule : le lot SPARQL.** Une requête Wikidata
+porte cent séries. La réponse est **redécoupée par série avant stockage**, parce
+qu'une ligne de `raw_source` couvrant cent séries n'aurait ni fraîcheur, ni
+statut, ni empreinte qui veuille dire quelque chose pour aucune d'elles. Le lot
+est une optimisation de *transport* ; l'unité conservée reste l'objet.
+
 **Rejouer une collecte inchangée n'écrit rien.** Déduplication par SHA-256 du
-payload canonicalisé. C'est ce qui rend un rafraîchissement quotidien du
-catalogue soutenable.
+payload canonicalisé. `series_source`, elle, est **remplacée** à chaque passe :
+les deux tables n'ont pas le même contrat, et un test le fige.
 
 **Un 404 se conserve, un 401 non.** Le premier est un fait sur la source — « cet
 id a disparu de TMDB ». Le second ne dit rien de l'œuvre, seulement de notre
 configuration ; le stocker polluerait le brut d'autant de lignes que d'ids
 tentés le jour où un jeton expire.
+
+**Ce qui décide de la reprise, c'est `fetch_state`.** Pour l'enrichissement, le
+critère n'est *pas* la présence d'une ligne dans `series_source` : 64 % des
+séries n'ont pas d'item Wikidata et n'en produiront donc jamais. S'y fier ferait
+retenter tout le fond de catalogue à chaque passe. La question posée est « a-t-on
+déjà regardé ? ».
 
 ---
 
@@ -92,28 +122,57 @@ tentés le jour où un jeton expire.
 | **Catalogue V1** | table rase | TMDB est re-collectable ; seuls les fives utilisateurs sont irremplaçables |
 | **Filtrage à l'acquisition** | **aucun** | voir §5.2 — `popularity` écarterait les catalogues arabe et turc |
 | **Tri du backfill** | `id` par défaut | trier par popularité serait un jugement implicite |
-| **Langues des saisons** | fr, en, es, ar, tr | un appel par langue : c'est le seul moyen d'obtenir les synopsis d'épisode traduits |
+| **Langues des saisons** | fr, en, es, ar, tr | un appel par langue : seul moyen d'obtenir les synopsis d'épisode traduits |
+| **Sources tierces** | Wikidata + TVmaze, **IMDb écartée** | voir §5.3 et §5.4 |
+| **Entrée dans Wikidata** | `P4983` (id TMDB), `P345` en second | ne suppose aucune collecte préalable |
+| **Appariement TVmaze** | le titre cherche, l'`imdb_id` décide | voir §5.4 — aucun seuil de score |
 | **Python** | 3.12 vendorisé dans `sourcing/vendor` | aucune dépendance à un interpréteur système |
 | **Postgres** | toujours sur l'hôte, jamais en conteneur | dev comme serveur |
 | **Docker** | serveur uniquement, pour l'application | le poste de dev n'en utilise pas |
 
+**Sur IMDb**, la décision mérite d'être écrite en clair parce qu'elle reviendra :
+ni datasets, ni scraping. La licence exclut l'usage commercial et les conditions
+interdisent l'extraction, que l'on republie ou non. Et le renoncement est faible
+— `alternative_titles`, `external_ids` et les votes sont déjà dans le
+`SERIES_APPEND` de TMDB, et la note ne nourrit **aucun** des 6 axes, qui
+décrivent un contenu et non une qualité. En revanche **l'`imdb_id` reste** :
+c'est un identifiant, pas une donnée d'IMDb, et c'est le signal décisif de
+l'appariement TVmaze.
+
 ---
 
-## 4. Coût de la collecte
+## 4. Coût
+
+### 4.1 Collecte TMDB
 
 Par série : 1 appel pour la fiche (avec `translations`, donc toutes les langues
 d'un coup) + 1 appel **par saison et par langue**. Une série de 8 saisons =
 41 requêtes avec les cinq langues.
 
 Sur 228 454 séries, l'ordre de grandeur est de **2 millions de requêtes**, soit
-une trentaine d'heures à 20 req/s. Ce chiffre est une extrapolation, pas une
-mesure — voir §7.
+une trentaine d'heures à 20 req/s. Extrapolation, pas mesure — le jeton bloque.
 
 ⚠️ **À vérifier avant d'engager la passe complète** : l'endpoint `translations`
 d'une saison suffirait-il à remplacer les cinq appels ? Ma compréhension est
 qu'il ne couvre que le nom et le synopsis *de la saison*, pas l'`overview` de
 chaque épisode — mais si je me trompe, le coût des saisons est divisé par cinq.
 Une seule requête suffit à trancher.
+
+### 4.2 Enrichissement — mesuré
+
+Sur 60 séries tirées au hasard du catalogue réel :
+
+| | |
+|---|---|
+| Raccordées (item Wikidata) | 22 / 60 — **36 %** |
+| Requêtes | 70, soit **1,17 par série** |
+| Débit observé | 1,7 série/s à `ENRICH_RATE_LIMIT=2` |
+| **Projection sur 228 454 séries** | **~37 heures**, ~267 000 requêtes |
+
+Ce chiffre ne tient que grâce au **regroupement des résolutions** : une requête
+SPARQL pour cent séries, donc 2 300 requêtes de résolution au lieu de 228 000.
+Adresser 228 000 requêtes au service SPARQL de Wikidata — gratuit et partagé —
+ne se fait pas, indépendamment du temps que ça prendrait.
 
 ---
 
@@ -124,18 +183,6 @@ Une seule requête suffit à trancher.
 **228 454 séries**, export du 2026-08-05, téléchargé et chargé en 4 secondes.
 Le fichier est public : aucune clé, aucun quota consommé.
 
-Répartition par décile de popularité :
-
-| Décile | Séries | Popularité max | min |
-|---|---|---|---|
-| 1 | 22 846 | 406,44 | 3,71 |
-| 2 | 22 846 | 3,71 | 2,28 |
-| … | | | |
-| 10 | 22 845 | 0,23 | 0,00 |
-
-La falaise est brutale : le premier décile couvre 406 → 3,71, les neuf autres se
-partagent 3,71 → 0.
-
 | Popularité ≥ | Séries | Part |
 |---|---|---|
 | 1 | 110 437 | 48 % |
@@ -143,13 +190,15 @@ partagent 3,71 → 0.
 | 10 | 5 059 | 2,2 % |
 | 20 | 1 733 | 0,8 % |
 
+La falaise est brutale : le premier décile couvre 406 → 3,71, les neuf autres se
+partagent 3,71 → 0.
+
 ### 5.2 ⭐ Pourquoi `popularity` ne peut pas servir de filtre
 
-C'est la mesure la plus structurante du projet à ce stade.
+C'est la mesure la plus structurante du projet.
 
-`popularity` est une métrique d'usage **du site TMDB** — vues de fiche, votes,
-watchlist. La base d'utilisateurs de TMDB est très majoritairement occidentale.
-Répartition par système d'écriture du titre original :
+`popularity` est une métrique d'usage **du site TMDB**, dont la base
+d'utilisateurs est très majoritairement occidentale.
 
 | Écriture | Séries | Popularité médiane | % ≥ 5 |
 |---|---|---|---|
@@ -159,33 +208,99 @@ Répartition par système d'écriture du titre original :
 | cyrillique | 4 762 | 1,33 | 3,6 % |
 | indices turcs | 1 540 | 1,83 | 13,3 % |
 
-**Un seuil à 5 retiendrait 54 des 5 560 séries en écriture arabe.** L'écriture
-arabe pèse 2,4 % du catalogue et ne représenterait plus que 0,4 % du corpus —
-une sous-représentation d'un facteur six.
+**Un seuil à 5 retiendrait 54 des 5 560 séries en écriture arabe** — une
+sous-représentation d'un facteur six. Et les médianes sont comparables : ces
+séries ne sont pas « moins populaires », leur distribution n'a simplement pas de
+tête longue sur TMDB. *Al-Ikhtiyar* (الاختيار), l'une des plus grosses
+productions égyptiennes récentes, est à 3,44 — écartée.
 
-Et les médianes sont comparables : ces séries ne sont pas « moins populaires »,
-leur distribution n'a simplement pas de tête longue sur TMDB. Le public arabe
-consulte peu TMDB ; la queue existe, le sommet manque.
+⚠️ **Réserve** : la détection du turc par `[ğışĞİŞ]` rate *Kara Sevda*, *Ezel*.
+Les 1 540 sont un plancher. La détection de l'arabe, elle, est fiable.
 
-Sur des titres nommés, le sommet passe mais le milieu de tableau tombe :
+**Conclusion** : aucun filtre à l'acquisition.
 
-| Titre | Popularité | Seuil ≥ 5 |
-|---|---|---|
-| Muhteşem Yüzyıl | 20,85 | gardée |
-| باب الحارة | 11,39 | gardée |
-| Diriliş: Ertuğrul | 10,12 | gardée |
-| **الاختيار** | **3,44** | **écartée** |
+### 5.3 Ce qu'apportent les sources tierces
 
-*Al-Ikhtiyar*, l'une des plus grosses productions égyptiennes récentes, tombe
-sous le seuil.
+Étude du 2026-08-06 sur 230 séries — 15 par décile, plus les 40 plus populaires
+en écriture arabe et les 40 en écriture turque.
 
-⚠️ **Réserve sur ma propre mesure** : la détection du turc par `[ğışĞİŞ]` ne
-capte que les titres contenant ces lettres — elle rate *Kara Sevda*, *Ezel*. Les
-1 540 sont un plancher et les 13,3 % sont calculés sur un sous-échantillon
-biaisé. La détection de l'écriture arabe, elle, est fiable : alphabet distinct.
+| Indicateur | Part |
+|---|---|
+| Item Wikidata (`P4983`) | 38,7 % |
+| …dont identifiant IMDb | 35,7 % |
+| **Série trouvée sur TVmaze** | **40,0 %** |
+| Note IMDb disponible | 34,3 % (96,3 % des séries raccordées) |
 
-**Conclusion** : aucun filtre à l'acquisition. On prend tout, l'utilisateur
-décidera en aval sur des données complètes.
+**TVmaze trouve plus que Wikidata**, et par un autre chemin : la recherche par
+titre y récupère 19 séries que Wikidata ignore entièrement (12,7 % de la strate
+par décile).
+
+**Mais c'est un raccordeur, pas une source de texte.** Sur les séries trouvées :
+99,2 % des 6 482 épisodes datés, 100 % avec diffuseur et statut, 84,8 % avec
+calendrier — et **35,9 % seulement ont des résumés d'épisode**.
+
+Deux résultats de périmètre :
+
+- **Le fond de catalogue est invisible aux trois sources.** Au dixième décile :
+  0 % d'item Wikidata, 6,7 % de série TVmaze. Au-delà du troisième décile,
+  l'enrichissement externe cesse d'être une stratégie.
+- **Le corpus arabe reste bloqué** : 40 % de raccordement, 7,5 % de résumés
+  d'épisode. Aucune des trois sources ne le débloque — il faudra une source
+  dédiée (elCinema, Shahid, recherche par titre dans Wikipédia arabe) ou rien.
+
+### 5.4 Le protocole d'appariement TVmaze
+
+Mesuré contre une vérité terrain gratuite : les 64 séries qui portent à la fois
+`P4983` et `P8600` dans Wikidata sont des paires TMDB↔TVmaze déjà vérifiées par
+des humains.
+
+| Signal | Résultat |
+|---|---|
+| Top 1 correct, titre seul | 58 / 64 (90,6 %) |
+| …que le seuil « score ≥ 0,9 » accepte | 35 / 58 — il **rejette 23 bons** |
+| Faux positif passant le seuil | 1 (*Teen Wolf* → l'homonyme) |
+| `externals.imdb` confirme le bon | **50 / 51** |
+| …oppose son veto au faux positif | **1 / 1** |
+
+D'où la règle retenue : **le titre sert à chercher, l'`imdb_id` à décider**.
+Aucun seuil de score. Sans identifiant des deux côtés, on n'écrit rien — une
+ligne fausse coûte plus qu'une ligne absente, parce qu'elle ne se signale pas.
+
+### 5.5 `P4983` ne remplace pas `P345`, il s'y ajoute
+
+Contre-mesure utile, parce que l'intuition inverse est tentante :
+
+| Séries | portent un `P4983` **sans** `P345` |
+|---|---|
+| langue arabe | **6** |
+| langue turque | **8** |
+| toutes langues | 5 915 |
+
+Le gain global est réel mais presque entièrement occidental — là où la chaîne
+par IMDb marche déjà à 98 %. Là où elle casse, l'entrée par identifiant TMDB
+rapporte six séries. Les deux se cumulent, elles ne se remplacent pas.
+
+**Le goulot n'est pas l'identifiant, c'est l'item** : Wikidata ne connaît que de
+l'ordre de 663 séries de langue arabe (plancher — `P364` est souvent absente)
+contre 4 898 `original_language=ar` chez TMDB. Aucune jointure ne récupère ce
+qui n'est pas écrit.
+
+### 5.6 Ce qu'une série bien dotée rapporte
+
+*Game of Thrones*, 8 requêtes d'enrichissement :
+
+| Source | Caractères |
+|---|---|
+| Wikipédia es | 77 510 |
+| Wikipédia en | 71 333 |
+| Wikipédia fr | 60 538 |
+| Wikipédia ar | 30 609 |
+| Wikipédia tr | 18 369 |
+| TVmaze (résumés d'épisode) | 11 740 |
+| **Total** | **~258 000** |
+
+Contre 400 caractères pour l'overview TMDB. C'est cet ordre de grandeur qui
+tranchera le périmètre notable au lot 5.
 
 ---
 
@@ -197,42 +312,50 @@ Utile pour ne pas les réintroduire.
 
 - **`append_to_response` demandait `releases` et `lists`** — endpoints *films*,
   demandés sur des séries depuis 2017. Deux sous-requêtes pour rien.
-- **`external_ids` absent** — sans lui, aucun raccordement possible à Wikidata
-  ni Wikipédia, donc aucune couche géographique. Ajouté.
+- **`external_ids` absent** — sans lui, aucun raccordement possible.
 - **`id_tmdb` non stocké** — la ligne était commentée dans le ColumnSet V1.
-  À corriger au lot 4, la colonne devra être unique et indexée.
+  À corriger au lot 4 : unique et indexée.
 
 ### Introduits et corrigés pendant ce chantier
 
 - **uv détruisait la venv vendorisée.** `UV_PYTHON_INSTALL_DIR` n'est pas une
-  clé de `uv.toml` — uv ne la lit que dans l'environnement. Un `uv run` nu
-  recréait la venv sur `~/.local/share/uv`, silencieusement. Trois verrous :
-  le Makefile exporte la variable, aucune cible n'appelle `uv run`, et
-  `make guard` échoue avant d'exécuter quoi que ce soit.
-- **`migrate` réussissait sur un répertoire absent** — « 0 migration appliquée »
-  et code de sortie 0, base vide, rien pour relier les deux. Erreur bruyante
-  désormais.
-- **L'image se construisait avec un module manquant** — la panne n'apparaissait
-  qu'au premier lancement, après déploiement. Test de fumée ajouté au
+  clé de `uv.toml` — uv ne la lit que dans l'environnement. Trois verrous : le
+  Makefile exporte la variable, aucune cible n'appelle `uv run`, `make guard`
+  échoue avant tout.
+- **`migrate` réussissait sur un répertoire absent.** Erreur bruyante désormais.
+- **L'image se construisait avec un module manquant.** Test de fumée au
   `Dockerfile` : tous les modules sont importés au build.
-- **Les tests tournaient sur la base de travail et l'ont vidée** — 228 000
-  séries perdues au premier `make test`. Base `_test` séparée depuis.
-- **`doctor` ne validait pas le jeton TMDB** — il affichait « token v4 » pour
-  toute variable non vide. Il fait maintenant un appel authentifié réel.
-- **Mot de passe en base64 dans une URL de connexion** — les `/` et `+` y sont
+- **Les tests ont vidé la base de travail** — 228 000 séries perdues. Base
+  `_test` séparée depuis.
+- **`doctor` ne validait pas le jeton TMDB.** Il fait un appel réel maintenant.
+- **Mot de passe en base64 dans une URL de connexion** — `/` et `+` y sont
   réservés. Le runbook impose `openssl rand -hex`.
+- ⭐ **Une migration n'arrive pas par `git pull`.** Les `Dockerfile` font
+  `COPY migrations ./migrations` et `MIGRATIONS_DIR` pointe dedans ; aucun volume
+  ne les monte. Sans `docker compose build`, `db migrate` lit les migrations
+  d'avant le pull et répond « base déjà à jour » — le message le plus trompeur
+  possible, puisqu'il est vrai du point de vue du conteneur. **C'est arrivé en
+  vrai** avec `004_series_source.sql`.
+- **`WEB_DIST=/srv/www/dist` périmé** dans l'image admin, reliquat d'avant la
+  séparation `front/` → `www/`. Le compose surchargeait la variable, donc la
+  production marchait et l'image lancée seule non.
+- **Le `worker` de l'enrichissement capturait la tranche par fermeture.** Correct
+  tant qu'on attend avant l'itération suivante, faux dès qu'on enlève l'attente.
+  Extrait en fonction à paramètres.
+- **Le compteur « enrichies » annonçait 16 pour 22 lignes en base** — la ligne
+  `wikidata` s'écrit pendant la résolution du lot, hors du rapport de détail. Un
+  test compare désormais le compteur à ce qu'il y a réellement en base.
+- **Une requête gaspillée par série** : la recherche TVmaze par titre partait
+  même sans `imdb_id`, donc sans aucune chance d'aboutir — sur 64 % du catalogue.
 
 ### Vérifiés plutôt que supposés
 
 - **Connexion psycopg partagée entre tâches concurrentes** : `cursor.execute`
-  prend le verrou de la connexion, les écritures se sérialisent. Une seule
-  connexion est correcte.
-- **Ordre réseau Docker / Postgres** : `172.28.0.1` n'existe sur l'hôte
-  qu'après création du réseau Docker. Le runbook crée le réseau avant de
-  configurer `listen_addresses`.
-- **Pare-feu** : Docker programme FORWARD et NAT, pas INPUT. Un conteneur qui
-  joint l'hôte passe par INPUT, que Docker n'ouvre pas. Signature :
-  `ConnectionTimeout` et non `connection refused`.
+  prend le verrou, les écritures se sérialisent. Une seule connexion suffit.
+- **Ordre réseau Docker / Postgres** : `172.28.0.1` n'existe qu'après création du
+  réseau Docker. Le runbook crée le réseau avant `listen_addresses`.
+- **Pare-feu** : Docker programme FORWARD et NAT, pas INPUT. Signature d'un
+  blocage : `ConnectionTimeout`, pas `connection refused`.
 
 ---
 
@@ -241,25 +364,37 @@ Utile pour ne pas les réintroduire.
 Par ordre de ce qui bloque.
 
 1. 🔴 **Le jeton TMDB est refusé** (HTTP 401). Un token v4 est un JWT : commence
-   par `eyJ`, ~200 caractères, deux points. Une clé v3 (32 caractères
-   hexadécimaux) va dans `TMDB_API_KEY`, pas `TMDB_BEARER`.
-2. 🔴 **Licence TMDB.** L'API est libre en usage non commercial avec attribution ;
-   un usage commercial demande leur accord. C'est le seul point qui pourrait
-   invalider tout ce qui est construit. À lever **avant** la passe complète.
-3. 🟠 **Volume disque.** Non mesuré. `tmdb backfill --limit 200` puis
+   par `eyJ`, ~200 caractères, deux points. Une clé v3 (32 hexadécimaux) va dans
+   `TMDB_API_KEY`, pas `TMDB_BEARER`. **Seule la collecte est bloquée** —
+   l'enrichissement tourne sans.
+2. 🔴 **Licence TMDB.** Libre en usage non commercial avec attribution ; un usage
+   commercial demande leur accord. Le seul point qui pourrait invalider tout ce
+   qui est construit. À lever **avant** la passe complète.
+3. 🟠 **Clé d'API en clair et versionnée** dans
+   [`tools/etude_couverture_ar.py`](../tools/etude_couverture_ar.py) — une clé
+   TMDB V1. Elle est déjà dans l'historique git : la déplacer ne suffit pas, il
+   faut la **révoquer**.
+4. 🟠 **Nom du schéma de la couche 2.** `v2-notation-axes.md` dit `notation` avec
+   `notation.score` ; le diagramme de `v2-acquisition-series.md` dit `scores`
+   avec `series_scores`. Deux noms pour la même chose, et ce nom finira dans une
+   migration.
+5. 🟠 **Volume disque.** Non mesuré. `tmdb backfill --limit 200` puis
    `tmdb stats` donne la projection, à comparer à `df -h`.
-4. 🟠 **Débit toléré par TMDB.** La limite dure a été supprimée en 2019 ; ce qui
+6. 🟠 **Débit toléré par TMDB.** La limite dure a été supprimée en 2019 ; ce qui
    subsiste n'est pas documenté. Le backfill compte les 429 et conclut. Défaut
    prudent : 20 req/s.
-5. 🟠 **Écart de version Postgres** : 16.1 en dev, **13.23** sur le serveur — le
-   dépôt PGDG du runbook n'a pas été utilisé. Rien de ce qui est écrit
-   aujourd'hui n'exige plus que la 13, mais l'écart est à résorber avant que la
-   base contienne des données coûteuses à re-collecter.
-6. ⚠️ **`translations` sur les saisons** — cf. §4, facteur cinq sur le coût.
-7. ⚠️ **Marchés visés.** Un catalogue équilibré fr / en / es / ar / tr n'a pas la
-   même forme qu'un catalogue francophone avec des ouvertures. N'affecte pas
-   l'acquisition (on prend tout), mais déterminera ce qu'on considère comme une
-   couverture suffisante au lot 5.
+7. 🟠 **Écart de version Postgres** : 16 en dev, **13** sur le serveur — le dépôt
+   PGDG du runbook n'a pas été utilisé. Rien n'exige aujourd'hui plus que la 13,
+   mais l'écart est à résorber avant que la base contienne des données coûteuses.
+8. ⚠️ **`translations` sur les saisons** — cf. §4.1, facteur cinq sur le coût.
+9. ⚠️ **Un test instable, vu une fois.**
+   `test_rejouer_n_ecrit_pas_de_brut_mais_rafraichit_la_derivation` a échoué une
+   fois, puis passé cinq fois de suite, cause non identifiée. Il compte des
+   lignes exactes : si l'instabilité revient, c'est là qu'il faut regarder.
+10. ⚠️ **Marchés visés.** Un catalogue équilibré fr / en / es / ar / tr n'a pas la
+    même forme qu'un catalogue francophone avec des ouvertures. N'affecte pas
+    l'acquisition (on prend tout), mais déterminera ce qu'est une couverture
+    suffisante au lot 5.
 
 ---
 
@@ -267,22 +402,57 @@ Par ordre de ce qui bloque.
 
 | Lot | Contenu |
 |---|---|
-| 3 | Wikidata (P915 lieu de tournage, P840 lieu de l'action) et Wikipédia |
-| 4 | Dérivation de la couche 1 : `catalog.series`, `id_tmdb` unique et indexé |
+| 4 | Dérivation de la couche 1 : `catalog.series`, `id_tmdb` unique et indexé, `series_locations`, `series_people` |
 | 5 | **Rapport de couverture** — le vrai livrable : matière textuelle disponible par décile |
-| 6 | Rafraîchissement incrémental via `/tv/changes` et priorités |
+| 6 | Priorités de rafraîchissement (`/tv/changes` est déjà là) |
 
 Le lot 5 est celui qui tranche le périmètre et le budget de notation. Il fournit
 aussi le **constructeur de dossier de notation** : la fonction
 `series_id → texte prêt à noter`, interface exacte entre acquisition et couche 2.
+`series_source.content_chars` a été conçue pour qu'il se calcule sans relire un
+seul article.
+
+**Le premier livrable concret qui reste** : lancer `enrich` sur tout le catalogue
+(~37 h) et lire le taux de raccrochage réel dans `series_source.resolved_by`.
+Ça ne demande pas le jeton TMDB.
 
 ---
 
-## 9. Commits
+## 9. État du dépôt
+
+`main` et `origin/main` sont à `1182025`. La branche
+`claude/documentation-review-5ceea7` porte **un commit de plus**, `c813d45`
+(enrichissement de tout le catalogue), ni mergé ni poussé.
 
 | Hash | Contenu |
 |---|---|
+| `c813d45` | ⚠️ *sur la branche seulement* — enrichir tout le catalogue, cent séries par requête |
+| `81b45dc` | les sources tierces, sans repasser par TMDB (`enrich --id`) |
+| `72aa82a` | une migration n'arrive pas par `git pull`, mais par `docker build` |
+| `7b04797` | IMDb sort du plan |
+| `0e113b9` | l'appariement TVmaze : titre pour chercher, `imdb_id` pour décider |
+| `5511713` | ce qu'apportent Wikidata, TVmaze et IMDb, mesuré |
+| `cf07e04` | la table `series_source` |
+| `e0ec248` | remettre la documentation d'accord avec le code |
 | `46aa882` | mesure du plafond de débit TMDB |
 | `c58a307` | catalogue complet et collecte de masse |
 | `088f30b` | collecte des saisons en cinq langues |
 | `b6027f5` et avant | socle, schéma, déploiement |
+
+### Déployer sur le serveur
+
+L'ordre compte, et le `build` n'est pas optionnel quand une migration est
+arrivée :
+
+```bash
+git pull
+sudo docker compose build sourcing
+sudo docker compose run --rm sourcing db migrate
+sudo docker compose run --rm sourcing doctor        # doit dire « 4 table(s) »
+```
+
+Contrôle si un doute subsiste sur ce que l'image embarque :
+
+```bash
+sudo docker compose run --rm --entrypoint ls sourcing /app/migrations
+```
