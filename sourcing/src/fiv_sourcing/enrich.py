@@ -163,7 +163,18 @@ async def _wikidata(
         voie = "p345"
         faits = wikidata.lire_lookup(resultat.payload) if resultat.ok else None
 
-    await _persist(conn, wikidata.SOURCE, "lookup", str(tv_id), None, resultat, report)
+    # Même règle qu'en masse : on ne garde le brut que s'il porte quelque chose.
+    # Une réponse SPARQL sans résultat ne dit rien de plus que `fetch_state`.
+    await _persist(
+        conn,
+        wikidata.SOURCE,
+        "lookup",
+        str(tv_id),
+        None,
+        resultat,
+        report,
+        stocker=faits is not None,
+    )
     if not resultat.ok:
         report.errors.append(f"wikidata: {resultat.error or resultat.status}")
     if faits is None:
@@ -514,18 +525,24 @@ async def _resoudre_le_lot(
 
     for tv_id in ids:
         ligne = lignes.get(tv_id)
-        # `enveloppe` réemballe au format d'une réponse mono-série : le lot est
-        # une optimisation de transport, l'unité conservée reste l'objet.
-        payload = wikidata.enveloppe(ligne) if ligne else {"results": {"bindings": []}}
-        written = await store.store_raw(
-            conn,
-            source=wikidata.SOURCE,
-            kind="lookup",
-            source_id=str(tv_id),
-            lang=None,
-            http_status=resultat.status,
-            payload=payload,
-        )
+        written = False
+        if ligne is not None:
+            # `enveloppe` réemballe au format d'une réponse mono-série : le lot
+            # est une optimisation de transport, l'unité conservée reste l'objet.
+            #
+            # Rien n'est écrit quand Wikidata ne connaît pas la série — soit 64 %
+            # du catalogue. Un payload vide n'apporterait aucune information que
+            # `fetch_state` ne porte déjà, et ce sont 145 000 lignes de bruit
+            # dans une table qui doit rester lisible.
+            written = await store.store_raw(
+                conn,
+                source=wikidata.SOURCE,
+                kind="lookup",
+                source_id=str(tv_id),
+                lang=None,
+                http_status=resultat.status,
+                payload=wikidata.enveloppe(ligne),
+            )
         await store.mark_fetch(
             conn,
             source=wikidata.SOURCE,
@@ -611,9 +628,17 @@ async def _persist(
     lang: str | None,
     resultat: FetchResult,
     report: EnrichReport,
+    *,
+    stocker: bool = True,
 ) -> None:
+    """Une réponse → une ligne de brut, et un passage noté dans `fetch_state`.
+
+    `stocker=False` note le passage sans garder le payload : c'est le cas d'une
+    recherche restée sans résultat, qui n'apprend rien de plus que « on a
+    regardé » — déjà porté par `fetch_state`.
+    """
     written = False
-    if resultat.status not in NOT_ABOUT_THE_WORK:
+    if stocker and resultat.status not in NOT_ABOUT_THE_WORK:
         written = await store.store_raw(
             conn,
             source=source,

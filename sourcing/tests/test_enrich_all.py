@@ -136,10 +136,13 @@ async def test_chaque_serie_garde_sa_propre_ligne_de_brut(conn, settings: Settin
             "select source_id from raw_source where source = 'wikidata' and kind = 'lookup' "
             "order by source_id"
         )
-        assert [r[0] for r in await cur.fetchall()] == ["1", "2", "3"]
+        # Seule la série 2 a un item : les deux autres n'ont pas de brut à
+        # garder. Un payload vide serait 145 000 lignes de bruit sur le
+        # catalogue entier, sans rien apprendre.
+        assert [r[0] for r in await cur.fetchall()] == ["2"]
 
-        # Y compris celles qui n'ont pas d'item : « on a regardé, il n'y a rien »
-        # est une information qu'on veut garder.
+        # Le passage, lui, est noté pour les trois — c'est ce qui évite de les
+        # retenter indéfiniment.
         await cur.execute(
             "select count(*) from fetch_state where source = 'wikidata' and kind = 'lookup'"
         )

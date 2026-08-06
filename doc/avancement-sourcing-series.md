@@ -101,6 +101,11 @@ imposerait de réécrire toute la série pour rafraîchir une saison, invalidera
 l'empreinte du bloc entier au moindre changement, et rendrait les échecs
 tout-ou-rien.
 
+**On ne garde que le brut qui porte quelque chose.** Une réponse SPARQL sans
+résultat — 64 % du catalogue — n'est pas écrite : elle n'apprendrait rien de
+plus que `fetch_state`, qui note déjà le passage. Garder 145 000 payloads vides
+rendrait la table illisible pour zéro information.
+
 **Une exception assumée, et une seule : le lot SPARQL.** Une requête Wikidata
 porte cent séries. La réponse est **redécoupée par série avant stockage**, parce
 qu'une ligne de `raw_source` couvrant cent séries n'aurait ni fraîcheur, ni
