@@ -183,9 +183,20 @@ mais elle n'a pas été vérifiée par une requête réelle, et le facteur est d
 cinq sur le poste de coût dominant. Une seule requête suffit à trancher, avant
 la passe complète.
 
-### Lot 3 — Enrichissement externe
+### Lot 3 — Enrichissement externe *(livré à l'unité)*
 
-La table d'accueil existe déjà : `series_source` (§4). Reste à l'alimenter.
+`enrich --id 1399` enchaîne les trois sources et remplit `series_source`. Il
+n'appelle pas TMDB et **ne demande aucun jeton** : l'entrée se fait par `P4983`,
+qui se déduit de l'id déjà présent dans `tmdb_catalog`. Une série jamais
+collectée peut donc être enrichie — c'est ce qui permet d'avancer pendant que le
+jeton est refusé.
+
+Vérifié sur *Game of Thrones* : 8 requêtes, l'article Wikipédia des cinq langues
+et les résumés d'épisode TVmaze, soit **258 000 caractères** de matière — contre
+400 pour l'overview TMDB.
+
+Reste à faire : le passage à l'échelle du catalogue (l'équivalent de `backfill`
+pour l'enrichissement) et la mesure du taux de raccrochage réel.
 
 **Le raccordement, en trois entrées cumulées** — et non une chaîne, parce qu'une
 chaîne casse au premier maillon :

@@ -39,6 +39,9 @@ services:
       TMDB_BEARER: ${TMDB_BEARER:-}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       TMDB_RATE_LIMIT: ${TMDB_RATE_LIMIT:-20}
+      # Débit vers Wikidata, Wikipédia et TVmaze — services gratuits et
+      # partagés, d'où un plafond bien plus bas que celui de TMDB.
+      ENRICH_RATE_LIMIT: ${ENRICH_RATE_LIMIT:-2}
       TMDB_SEASON_LANGUAGES: ${TMDB_SEASON_LANGUAGES:-fr-FR,en-US,es-ES,ar-SA,tr-TR}
 
   # --- Administration --------------------------------------------------------

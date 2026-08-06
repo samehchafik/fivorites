@@ -263,6 +263,13 @@ sudo docker compose run --rm sourcing tmdb fetch --id 1399
 sudo docker compose run --rm sourcing tmdb stats
 ```
 
+Les sources tierces s'ajoutent séparément, et **sans jeton TMDB** — l'entrée
+dans Wikidata se fait par l'id qu'on a déjà :
+
+```bash
+sudo docker compose run --rm sourcing enrich --id 1399
+```
+
 Enfin le rattrapage : `tmdb changes` marque les séries que TMDB signale comme
 modifiées, et le `backfill` suivant les recollecte.
 

@@ -88,7 +88,7 @@ cp .env.example .env   # puis renseigner TMDB_BEARER (token v4, préférable)
 
 ```bash
 make doctor                                  # interpréteur, base, migrations, schéma, identifiants
-make test                                    # 86 tests, dont 40 de bout en bout sur Postgres
+make test                                    # 103 tests, dont 45 de bout en bout sur Postgres
 ```
 
 Puis la ligne de commande, dans l'ordre où on s'en sert :
@@ -100,6 +100,8 @@ Puis la ligne de commande, dans l'ordre où on s'en sert :
 .venv/bin/fiv-sourcing tmdb backfill         # tout le catalogue, reprenable
 .venv/bin/fiv-sourcing tmdb changes          # marque ce qui a bougé chez TMDB
 .venv/bin/fiv-sourcing tmdb stats            # ce qu'il y a en base, et la projection de volume
+
+.venv/bin/fiv-sourcing enrich --id 1399      # les sources tierces sur une série
 ```
 
 `export` ne demande aucune clé — c'est un fichier public, hors quota. `backfill`
@@ -107,6 +109,12 @@ prend `--limit`, `--concurrency`, `--order` (`id` par défaut, `random` pour
 estimer une durée, `popularity`), `--refresh-after` et `--dry-run`. Il reprend là
 où la passe précédente s'est arrêtée, et `changes` ne collecte rien : il pose une
 marque que `backfill` transforme en recollecte.
+
+**`enrich` n'appelle pas TMDB et ne demande donc aucun jeton.** Il entre dans
+Wikidata par `P4983`, qui se déduit de l'id qu'on a déjà dans `tmdb_catalog` :
+une série jamais collectée peut être enrichie. Sur *Game of Thrones*, il ramène
+en 8 requêtes l'article Wikipédia des cinq langues et les résumés d'épisode
+TVmaze — 258 000 caractères, là où l'overview TMDB en fait 400.
 
 ## Déploiement serveur (Docker)
 
@@ -159,6 +167,10 @@ donc le fichier reste tel quel pour le poste local.
 | [`sources/tmdb/export.py`](src/fiv_sourcing/sources/tmdb/export.py) | l'export quotidien → `tmdb_catalog` |
 | [`sources/tmdb/backfill.py`](src/fiv_sourcing/sources/tmdb/backfill.py) | la collecte de masse : sélection, reprise, progression |
 | [`sources/tmdb/changes.py`](src/fiv_sourcing/sources/tmdb/changes.py) | `/tv/changes` — ce que TMDB signale comme modifié |
+| [`enrich.py`](src/fiv_sourcing/enrich.py) | l'enchaînement des sources tierces → `series_source` |
+| [`sources/wikidata.py`](src/fiv_sourcing/sources/wikidata.py) | le raccordement par `P4983`, et les faits |
+| [`sources/wikipedia.py`](src/fiv_sourcing/sources/wikipedia.py) | l'article en entier, pas le résumé d'intro |
+| [`sources/tvmaze.py`](src/fiv_sourcing/sources/tvmaze.py) | dates, épisodes, calendrier — et le protocole d'appariement |
 | [`migrations/`](migrations) | le schéma, en SQL numéroté |
 | [`Makefile`](Makefile) | le point d'entrée unique en local — c'est lui qui tient la vendorisation |
 | [`Dockerfile`](Dockerfile) | l'image du serveur |
@@ -203,6 +215,8 @@ ne bouge plus quand la collecte arrivera.
 
 ## Reste à faire
 
-Lot 3 (Wikidata P915/P840 et Wikipédia), lot 4 (dérivation de la couche faits),
-lot 5 (rapport de couverture), et les priorités de rafraîchissement du lot 6.
-Voir [`doc/v2-acquisition-series.md`](../doc/v2-acquisition-series.md).
+Le lot 3 est en place pour une série à la fois (`enrich --id`) ; reste à le
+passer à l'échelle du catalogue et à mesurer le taux de raccrochage réel. Puis
+le lot 4 (dérivation de la couche faits), le lot 5 (rapport de couverture) et
+les priorités de rafraîchissement du lot 6. Voir
+[`doc/v2-acquisition-series.md`](../doc/v2-acquisition-series.md).

@@ -158,6 +158,45 @@ def tmdb_fetch(
     raise typer.Exit(1 if _run_db(run) else 0)
 
 
+@app.command()
+def enrich(
+    ids: Annotated[list[int], typer.Option("--id", help="Id TMDB de la série (répétable)")],
+) -> None:
+    """Ajoute les sources tierces sur une série déjà inventoriée.
+
+    Wikidata (faits et raccordement), Wikipédia (le texte), TVmaze (dates,
+    épisodes, calendrier). Aucun appel à TMDB, donc **aucun jeton requis** :
+    l'entrée se fait par `P4983`, qui se déduit de l'id.
+    """
+    from fiv_sourcing.enrich import build_clients, build_fetcher, enrich_series
+
+    settings = get_settings()
+    langues = settings.wikipedia_languages
+
+    async def run() -> int:
+        echecs = 0
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            fetcher = build_fetcher(settings)
+            async with fetcher:
+                clients = build_clients(fetcher)
+                for tv_id in ids:
+                    report = await enrich_series(conn, clients, tv_id, languages=langues)
+                    marker = "ok " if report.sources else "rien"
+                    typer.echo(
+                        f"{marker} {tv_id:>8}  {report.requests:>2} requêtes  "
+                        f"{report.rows_written:>2} ligne(s) brute(s)  "
+                        f"{report.qid or '—':>10}  {', '.join(report.sources) or 'aucune source'}"
+                    )
+                    for erreur in report.errors[:3]:
+                        typer.echo(f"           {erreur}")
+                    echecs += int(not report.sources)
+        return echecs
+
+    typer.echo(f"langues : {', '.join(langues)}")
+    typer.echo(f"débit   : {settings.enrich_rate_limit} requête/s (ENRICH_RATE_LIMIT)")
+    raise typer.Exit(1 if _run_db(run) == len(ids) else 0)
+
+
 @tmdb_app.command("export")
 def tmdb_export(
     day: Annotated[

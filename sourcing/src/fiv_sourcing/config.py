@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     # environnement sans toucher au code.
     tmdb_season_languages: str = "fr-FR,en-US,es-ES,ar-SA,tr-TR"
 
+    # Débit vers les sources tierces — Wikidata, Wikipédia, TVmaze. Distinct de
+    # celui de TMDB, et volontairement bas : ce sont des services gratuits et
+    # partagés, dont le service SPARQL de Wikidata. Y appliquer les 20 req/s
+    # d'une API commerciale serait un abus, et le meilleur moyen de se faire
+    # bannir au milieu d'une passe.
+    enrich_rate_limit: float = 2.0
+
     http_timeout: float = 30.0
     http_max_attempts: int = 5
     http_user_agent: str = "fivorites-sourcing/0.1 (+https://fivorites.com)"
@@ -64,6 +71,19 @@ class Settings(BaseSettings):
     @property
     def season_languages(self) -> tuple[str, ...]:
         return tuple(code.strip() for code in self.tmdb_season_languages.split(",") if code.strip())
+
+    @property
+    def wikipedia_languages(self) -> tuple[str, ...]:
+        """Les éditions de Wikipédia à lire, déduites des langues de saison.
+
+        `fr-FR` → `fr`. Pas de réglage séparé : deux listes à tenir alignées
+        finiraient par diverger, et on n'a aucune raison de vouloir un article
+        dans une langue dont on ne collecte pas les épisodes.
+        """
+        vues: dict[str, None] = {}
+        for code in self.season_languages:
+            vues.setdefault(code.split("-")[0].lower(), None)
+        return tuple(vues)
 
 
 @lru_cache

@@ -1,8 +1,12 @@
-"""Écriture dans `raw_source` et `fetch_state`.
+"""Écriture dans `raw_source`, `fetch_state` et `series_source`.
 
 `raw_source` est *append-only* : aucune fonction de ce module ne fait d'UPDATE
 dessus. La seule chose qu'on évite, c'est de réécrire un contenu strictement
 identique — d'où l'empreinte.
+
+`series_source` est à l'inverse une **dérivation** : une ligne par (série,
+source, langue), remplacée à chaque passe. Le brut reste la source de vérité ;
+cette table-là se reconstruit sans réseau.
 """
 
 from __future__ import annotations
@@ -114,6 +118,51 @@ async def mark_fetch(
                 "status": http_status,
                 "error": error,
             },
+        )
+
+
+async def upsert_series_source(
+    conn: psycopg.AsyncConnection,
+    *,
+    id_tmdb: int,
+    source: str,
+    lang: str = "",
+    source_id: str,
+    url: str | None = None,
+    content: str | None = None,
+    media: list[dict[str, Any]] | None = None,
+    resolved_by: str | None = None,
+) -> None:
+    """Enregistre ce qu'une source tierce apporte sur une série.
+
+    Remplace plutôt qu'ajoute : une seconde passe sur le même (série, source,
+    langue) corrige la ligne. C'est la différence assumée avec `raw_source` —
+    ici on veut l'état courant, pas l'historique, qui vit déjà dans le brut.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into series_source (id_tmdb, source, lang, source_id, url,
+                                       content, media, resolved_by, fetched_at)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, now())
+            on conflict (id_tmdb, source, lang) do update set
+                source_id   = excluded.source_id,
+                url         = excluded.url,
+                content     = excluded.content,
+                media       = excluded.media,
+                resolved_by = excluded.resolved_by,
+                fetched_at  = now()
+            """,
+            (
+                id_tmdb,
+                source,
+                lang,
+                source_id,
+                url,
+                content,
+                Jsonb(media or []),
+                resolved_by,
+            ),
         )
 
 
