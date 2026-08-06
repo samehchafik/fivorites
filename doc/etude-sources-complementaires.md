@@ -13,11 +13,11 @@
 
 ## Ce qu'on demandait à chacune
 
-| Source | Ce qu'on en attend | Licence |
-|---|---|---|
-| **Wikidata** | pays, langues, relations, identifiants manquants | CC0 |
-| **TVmaze** | dates, épisodes, calendriers de diffusion | CC BY-SA 4.0 |
-| **IMDb Datasets** | notes, titres alternatifs, identifiants | **non commercial** |
+| Source | Ce qu'on en attend | Licence | Suite |
+|---|---|---|---|
+| **Wikidata** | pays, langues, relations, identifiants manquants | CC0 | retenue |
+| **TVmaze** | dates, épisodes, calendriers de diffusion | CC BY-SA 4.0 | retenue |
+| **IMDb Datasets** | notes, titres alternatifs, identifiants | **non commercial** | **écartée** (volet 3) |
 
 ---
 
@@ -143,27 +143,38 @@ matière textuelle mesuré dans l'étude arabophone.
 
 ---
 
-## Volet 3 — IMDb Datasets : le meilleur rendement, la pire licence
+## Volet 3 — IMDb : écartée le 2026-08-06
+
+> **Décision prise.** IMDb sort du plan — ni datasets, ni scraping. La mesure
+> ci-dessous est conservée parce que c'est elle qui a permis de trancher.
 
 `title.ratings.tsv.gz` fait 8 Mo compressés et se charge en entier. Sur les
 230 séries, la note est disponible pour 34,3 % — mais surtout pour **96,3 % des
-séries dont on a résolu l'identifiant IMDb**.
+séries dont on a résolu l'identifiant IMDb**. C'était le rendement le plus élevé
+des trois sources : une fois l'`imdb_id` connu, la note est là quasi
+systématiquement, pour un fichier quotidien et aucune requête par série.
 
-C'est le rendement le plus élevé des trois : une fois l'`imdb_id` connu, la note
-est là quasi systématiquement, pour un fichier téléchargé une fois par jour et
-aucune requête par série.
+Trois raisons de s'en passer quand même.
 
-Deux réserves :
+**La licence interdit l'usage commercial** — « personal and non-commercial use »,
+écrit sans ambiguïté. Et le scraping ne contourne rien : les conditions d'IMDb
+l'interdisent explicitement, et le droit *sui generis* des bases de données
+couvre **l'extraction**, pas seulement la republication. Ne pas publier les
+données n'y change donc rien.
 
-**La note est mince dans la queue.** Médiane de 1 675 votes, mais 7 des
-79 séries notées ont moins de 50 votes. Une note construite sur 5 votes n'est pas
-une note.
+**L'apport marginal est plus mince qu'il n'y paraît.** Les titres alternatifs et
+les identifiants externes sont déjà dans le `SERIES_APPEND` de la collecte TMDB
+(`alternative_titles`, `external_ids`), tout comme les votes. Ce qu'IMDb ajoutait
+réellement, c'était la robustesse de la note — et encore : médiane de 1 675
+votes, mais 7 des 79 séries notées en ont moins de 50. Une note bâtie sur cinq
+votes n'est pas une note.
 
-**La licence interdit l'usage commercial.** C'est écrit sans ambiguïté par IMDb :
-« personal and non-commercial use ». C'est le point à trancher avant d'écrire une
-ligne de code — pas après. Les autres fichiers (`title.akas` pour les titres
-alternatifs, plus de 300 Mo) n'ont pas été mesurés : les mesurer avant d'avoir
-levé la licence serait du travail à jeter.
+**Et la note ne nourrit aucun des 6 axes.** Luminosité, Intensité, Humour,
+Exigence, Étrangeté, Charge sensorielle décrivent un contenu, pas une qualité.
+Le vecteur se construit sur du texte ; c'est là qu'est le manque, pas sur les
+notes.
+
+`title.akas` (plus de 300 Mo) n'a jamais été mesuré et ne le sera pas.
 
 ---
 
@@ -211,12 +222,14 @@ score.
 Pays à 97,8 %, langues à 69,7 %, plus P915/P840 déjà au plan du lot 3. CC0, donc
 aucune exposition. À ne pas utiliser comme entrée unique.
 
-### 3. IMDb en dernier, et seulement après la licence
+### 3. Rien après — et surtout pas IMDb
 
-Rendement le meilleur, exposition la pire. Tant que la question commerciale n'est
-pas tranchée, tout développement dessus est à risque d'être jeté. Si elle se
-lève, `title.ratings` est un fichier quotidien de 8 Mo pour 96 % de couverture —
-c'est-à-dire une demi-journée de travail.
+Écartée (volet 3). Ce qu'elle apportait de réutilisable est déjà collecté par
+TMDB ; ce qu'elle apportait en plus ne nourrit aucun des 6 axes. **Le prochain
+gain n'est pas dans une quatrième source, il est dans le jeton TMDB** : tant
+qu'il est refusé, `raw_source` est vide, donc le signal « personnes » de
+l'appariement, la matière textuelle des fiches et tout le lot 3 restent bloqués
+derrière une variable d'environnement.
 
 ### Ce que l'étude ne résout pas
 

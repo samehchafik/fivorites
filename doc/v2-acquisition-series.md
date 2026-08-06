@@ -55,6 +55,7 @@ décision non rejouable du projet.
 | **Langage** | Python 3.12, **vendorisé** dans `sourcing/vendor/python`. Aucune dépendance à un Python système : le Makefile n'appelle jamais `uv run`, et un garde-fou échoue si la venv dérive. |
 | **Exécution** | **Postgres tourne toujours sur l'hôte, jamais en conteneur** — poste de dev comme serveur. Seule l'application est conteneurisée, et seulement sur le serveur : en local elle tourne sur le Python de `vendor/`. Mise en place serveur : [`serveur-debian11.md`](serveur-debian11.md). |
 | **Base** | Postgres local de la machine, rôle et base `fivorites_v2`. **Une seule base pour tout le projet, un schéma par domaine.** **Pas de Docker.** |
+| **Sources tierces** | **Wikidata et TVmaze retenues, IMDb écartée** (2026-08-06). Wikidata pour les faits (CC0), TVmaze pour le raccordement et les dates (CC BY-SA). IMDb sort du plan sous toutes ses formes — datasets comme scraping : la licence exclut l'usage commercial, ses conditions interdisent l'extraction, et l'apport marginal est déjà couvert par `alternative_titles` et `external_ids` côté TMDB. **L'`imdb_id` reste** : c'est un identifiant, pas une donnée d'IMDb, et il est le signal décisif de l'appariement TVmaze. Mesures : [`etude-sources-complementaires.md`](etude-sources-complementaires.md). |
 | **Licence TMDB** | À lever avant le grand run, pas avant le prototype. Explorer 300 séries ne pose aucun problème d'usage ; construire un produit commercial dessus, si. À traiter en parallèle. |
 
 ## 4. Architecture

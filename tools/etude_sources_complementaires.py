@@ -7,6 +7,10 @@ Ce qu'on cherche à savoir de chacune :
   TVmaze    -> dates, épisodes, calendriers de diffusion
   IMDb      -> notes, titres alternatifs, identifiants
 
+IMDb a été **écartée du plan le 2026-08-06** (licence non commerciale, apport
+marginal déjà couvert par TMDB). Son volet ne tourne plus que sous `--imdb`, et
+seulement pour rejouer la mesure qui a mené à cette décision.
+
 Échantillon : l'export quotidien TMDB, stratifié par décile de popularité.
 C'est un fichier public — aucune clé, aucun quota — donc l'étude tourne sans
 dépendre ni de la base, ni du jeton TMDB (qui est refusé à l'heure où ceci est
@@ -247,9 +251,14 @@ def tvmaze(serie: dict, info_wd: dict) -> dict | None:
 
 # --------------------------------------------------------------------- IMDb
 def notes_imdb() -> dict[str, tuple[float, int]]:
-    """title.ratings — le seul des sept fichiers assez petit pour être chargé
-    tel quel (~8 Mo compressés). title.akas, qui porterait les titres
-    alternatifs, en fait plus de 300 : hors périmètre de cette étude."""
+    """title.ratings — 8 Mo compressés, chargeable tel quel.
+
+    **Sous `--imdb`, désactivé par défaut.** IMDb a été écartée du plan le
+    2026-08-06 : licence non commerciale, et apport marginal déjà couvert par
+    `alternative_titles` et `external_ids` côté TMDB. Le code reste pour que la
+    mesure qui a justifié cette décision soit rejouable — pas pour être relancé
+    à chaque étude.
+    """
     blob = get(IMDB_RATINGS, raw=True)
     if not blob:
         return {}
@@ -277,6 +286,11 @@ def main() -> None:
     parseur = argparse.ArgumentParser(description=__doc__)
     parseur.add_argument("--n", type=int, default=10, help="séries par décile")
     parseur.add_argument("--corpus", type=int, default=40, help="séries par corpus arabe/turc")
+    parseur.add_argument(
+        "--imdb",
+        action="store_true",
+        help="rejouer la mesure IMDb (source écartée le 2026-08-06)",
+    )
     parseur.add_argument("--out", default="etude_sources_complementaires.json")
     options = parseur.parse_args()
 
@@ -296,9 +310,11 @@ def main() -> None:
     qids = [v["qid"] for v in info.values() if v["qid"]]
     par_langue = articles(qids)
 
-    print("\nIMDb (title.ratings)…")
-    notes = notes_imdb()
-    print(f"  {len(notes):,} titres notés".replace(",", " "))
+    notes: dict[str, tuple[float, int]] = {}
+    if options.imdb:
+        print("\nIMDb (title.ratings)…")
+        notes = notes_imdb()
+        print(f"  {len(notes):,} titres notés".replace(",", " "))
 
     print("\nTVmaze…")
     resultats = []
@@ -359,13 +375,18 @@ def main() -> None:
         ],
     )
 
-    tableau(
-        "IMDb Datasets — les notes",
-        [
-            ("note disponible", sum(1 for r in resultats if r["imdb_note"]), total),
-            ("note sur les séries raccordées", sum(1 for r in avec_imdb if r["imdb_note"]), len(avec_imdb)),
-        ],
-    )
+    if options.imdb:
+        tableau(
+            "IMDb Datasets — les notes (source écartée, mesure d'archive)",
+            [
+                ("note disponible", sum(1 for r in resultats if r["imdb_note"]), total),
+                (
+                    "note sur les séries raccordées",
+                    sum(1 for r in avec_imdb if r["imdb_note"]),
+                    len(avec_imdb),
+                ),
+            ],
+        )
 
     print("\nPar décile — item Wikidata / série TVmaze")
     print("-" * 42)
