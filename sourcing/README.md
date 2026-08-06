@@ -88,7 +88,7 @@ cp .env.example .env   # puis renseigner TMDB_BEARER (token v4, préférable)
 
 ```bash
 make doctor                                  # interpréteur, base, migrations, schéma, identifiants
-make test                                    # 103 tests, dont 45 de bout en bout sur Postgres
+make test                                    # 111 tests, dont 53 de bout en bout sur Postgres
 ```
 
 Puis la ligne de commande, dans l'ordre où on s'en sert :
@@ -102,6 +102,7 @@ Puis la ligne de commande, dans l'ordre où on s'en sert :
 .venv/bin/fiv-sourcing tmdb stats            # ce qu'il y a en base, et la projection de volume
 
 .venv/bin/fiv-sourcing enrich --id 1399      # les sources tierces sur une série
+.venv/bin/fiv-sourcing enrich                # toutes celles sans complément
 ```
 
 `export` ne demande aucune clé — c'est un fichier public, hors quota. `backfill`
@@ -115,6 +116,21 @@ Wikidata par `P4983`, qui se déduit de l'id qu'on a déjà dans `tmdb_catalog` 
 une série jamais collectée peut être enrichie. Sur *Game of Thrones*, il ramène
 en 8 requêtes l'article Wikipédia des cinq langues et les résumés d'épisode
 TVmaze — 258 000 caractères, là où l'overview TMDB en fait 400.
+
+Sans `--id`, il traite **tout ce qui n'a pas encore de complément** et reprend là
+où la passe précédente s'est arrêtée. Il accepte les mêmes options que
+`backfill` : `--limit`, `--concurrency`, `--order`, `--refresh-after`,
+`--dry-run`.
+
+Ce qui rend cette passe tenable, c'est le **regroupement des résolutions** : une
+requête SPARQL pour cent séries au lieu d'une chacune. Le catalogue entier coûte
+ainsi 2 300 requêtes de résolution au lieu de 228 000 — 228 000 requêtes contre
+un service gratuit et partagé ne se font pas, indépendamment du temps que ça
+prendrait.
+
+Mesuré sur 60 séries tirées au hasard du catalogue : **36 % ont un item
+Wikidata**, 1,17 requête par série en moyenne, 1,7 série/s. À ce rythme, les
+228 454 séries représentent environ **37 heures** et 267 000 requêtes.
 
 ## Déploiement serveur (Docker)
 
@@ -215,8 +231,7 @@ ne bouge plus quand la collecte arrivera.
 
 ## Reste à faire
 
-Le lot 3 est en place pour une série à la fois (`enrich --id`) ; reste à le
-passer à l'échelle du catalogue et à mesurer le taux de raccrochage réel. Puis
-le lot 4 (dérivation de la couche faits), le lot 5 (rapport de couverture) et
-les priorités de rafraîchissement du lot 6. Voir
+Le lot 3 est en place, à l'unité comme sur tout le catalogue. Restent le lot 4
+(dérivation de la couche faits), le lot 5 (rapport de couverture) et les
+priorités de rafraîchissement du lot 6. Voir
 [`doc/v2-acquisition-series.md`](../doc/v2-acquisition-series.md).

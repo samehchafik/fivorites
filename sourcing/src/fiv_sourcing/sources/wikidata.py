@@ -21,6 +21,7 @@ même quand la collecte TMDB est bloquée.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from fiv_sourcing.http import FetchResult, HttpFetcher
@@ -56,12 +57,46 @@ LIMIT 1
 """
 
 
+# La même chose pour cent séries d'un coup. `VALUES` fait tout le travail.
+#
+# Sans ce lot, enrichir le catalogue entier voudrait dire 228 000 requêtes
+# SPARQL contre un service gratuit et partagé — ce qui, indépendamment du temps
+# que ça prendrait, ne se fait pas. Par cent, c'est 2 300 requêtes.
+LOOKUP_LOT = """
+SELECT ?tmdb ?item ?imdb ?tvmaze
+       (GROUP_CONCAT(DISTINCT ?paysCode; separator="|") AS ?pays)
+       (GROUP_CONCAT(DISTINCT ?langueCode; separator="|") AS ?langues)
+       (GROUP_CONCAT(DISTINCT ?tournageNom; separator="|") AS ?tournage)
+       (GROUP_CONCAT(DISTINCT ?actionNom; separator="|") AS ?action)
+WHERE {
+  VALUES ?tmdb { %(valeurs)s }
+  ?item wdt:P4983 ?tmdb .
+  OPTIONAL { ?item wdt:P345 ?imdb }
+  OPTIONAL { ?item wdt:P8600 ?tvmaze }
+  OPTIONAL { ?item wdt:P495 ?paysItem . ?paysItem wdt:P297 ?paysCode }
+  OPTIONAL { ?item wdt:P364 ?langueItem . ?langueItem wdt:P218 ?langueCode }
+  OPTIONAL { ?item wdt:P915 ?tournageItem . ?tournageItem rdfs:label ?tournageNom .
+             FILTER(lang(?tournageNom) = "en") }
+  OPTIONAL { ?item wdt:P840 ?actionItem . ?actionItem rdfs:label ?actionNom .
+             FILTER(lang(?actionNom) = "en") }
+}
+GROUP BY ?tmdb ?item ?imdb ?tvmaze
+"""
+
+
 class WikidataClient:
     def __init__(self, fetcher: HttpFetcher) -> None:
         self._fetcher = fetcher
 
     async def by_tmdb(self, tv_id: int) -> FetchResult:
         return await self._sparql("P4983", str(tv_id))
+
+    async def by_tmdb_lot(self, ids: Sequence[int]) -> FetchResult:
+        """Résout jusqu'à quelques centaines d'ids en une requête."""
+        valeurs = " ".join(f'"{int(i)}"' for i in ids)
+        return await self._fetcher.get_json(
+            SPARQL_URL, {"query": LOOKUP_LOT % {"valeurs": valeurs}, "format": "json"}
+        )
 
     async def by_imdb(self, imdb_id: str) -> FetchResult:
         return await self._sparql("P345", imdb_id)
@@ -87,14 +122,7 @@ class WikidataClient:
         )
 
 
-def lire_lookup(payload: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Aplatit la réponse SPARQL. None si l'item n'existe pas."""
-    lignes = ((payload or {}).get("results") or {}).get("bindings") or []
-    if not lignes:
-        return None
-
-    ligne = lignes[0]
-
+def _aplatir(ligne: dict[str, Any]) -> dict[str, Any] | None:
     def champ(nom: str) -> str:
         return ligne.get(nom, {}).get("value", "")
 
@@ -113,6 +141,45 @@ def lire_lookup(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         "lieux_tournage": liste("tournage"),
         "lieux_action": liste("action"),
     }
+
+
+def lire_lookup(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Aplatit la réponse SPARQL. None si l'item n'existe pas."""
+    lignes = ((payload or {}).get("results") or {}).get("bindings") or []
+    return _aplatir(lignes[0]) if lignes else None
+
+
+def lire_lookup_lot(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    """{id TMDB: faits}. Les ids absents de la réponse n'ont pas d'item —
+    c'est le cas majoritaire, et ce n'est pas une erreur."""
+    trouves: dict[int, dict[str, Any]] = {}
+    for ligne in ((payload or {}).get("results") or {}).get("bindings") or []:
+        brut = ligne.get("tmdb", {}).get("value", "")
+        faits = _aplatir(ligne)
+        if faits and brut.isdigit():
+            trouves[int(brut)] = faits
+    return trouves
+
+
+def enveloppe(ligne_brute: dict[str, Any]) -> dict[str, Any]:
+    """Réemballe une ligne d'un lot au format d'une réponse à une seule série.
+
+    Le lot est une optimisation de transport ; l'unité qu'on **conserve** reste
+    l'objet. Sans ce réemballage, `raw_source` porterait une ligne couvrant cent
+    séries, dont ni l'empreinte, ni la fraîcheur, ni le statut ne voudraient
+    plus rien dire pour aucune d'elles.
+    """
+    return {"results": {"bindings": [ligne_brute]}}
+
+
+def lignes_par_id(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    """{id TMDB: sa ligne brute}, pour pouvoir en garder le détail par série."""
+    par_id = {}
+    for ligne in ((payload or {}).get("results") or {}).get("bindings") or []:
+        brut = ligne.get("tmdb", {}).get("value", "")
+        if brut.isdigit():
+            par_id[int(brut)] = ligne
+    return par_id
 
 
 def lire_sitelinks(payload: dict[str, Any] | None, qid: str) -> dict[str, str]:
