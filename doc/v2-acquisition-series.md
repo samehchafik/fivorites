@@ -74,6 +74,10 @@ base fivorites_v2
 │    tmdb_catalog(id, original_name, popularity,        │
 │                exported_on, changed_at)               │
 │    → append-only, jamais retouché, jamais interprété   │
+│                                                       │
+│    series_source(id_tmdb, source, lang, content,      │
+│                 media, resolved_by, content_chars)    │
+│    → dérivée, reconstructible depuis raw_source       │
 │  ─────────────────────────────────────────────────────┘
 │              ↓  dérivation hors ligne, rejouable, sans réseau
 ├─ schéma catalog ── COUCHE 1 : FAITS ──────────────────┐
@@ -99,6 +103,21 @@ ligne par série connue de TMDB, et non une ligne par téléchargement. Il vient
 l'export quotidien, un fichier public qui ne consomme aucun appel d'API, et il
 sert de base de sondage : volumétrie réelle, déciles de popularité, et détection
 des séries disparues (`exported_on` qui décroche).
+
+`series_source` est l'autre exception, dans l'autre sens : c'est de la
+**dérivation**, posée dans `sourcing` parce qu'elle décide de ce qu'il reste à
+aller chercher. Une ligne par (série, source, langue) répond à une question que
+le brut ne sait pas poser — « pour cette série, qu'a-t-on trouvé ailleurs, et
+combien ça pèse ? ». Le payload, lui, continue d'aller dans `raw_source`, et la
+fraîcheur dans `fetch_state`, toutes deux déjà génériques : une source
+`wikipedia` n'y demande aucune colonne nouvelle.
+
+`resolved_by` mérite un mot. Elle enregistre **par quel chemin** le raccordement
+s'est fait — `p4983`, `p345`, `sitelink`, `title`. Sans elle, le taux de
+résolution par chemin est une étude à refaire à chaque fois ; avec elle, c'est un
+`group by`. La mesure du 2026-08-06 est là pour ça : l'entrée par identifiant
+TMDB ne rapporte que 6 séries de langue arabe et 8 de langue turque là où
+l'entrée par IMDb échoue — un chiffre à revérifier sans rejouer la collecte.
 
 Deux tables portent à elles seules la correction des trois faiblesses de la V1 :
 le brut jeté dans des fichiers jamais relus, l'état incrémental dans trois JSON
@@ -165,14 +184,34 @@ la passe complète.
 
 ### Lot 3 — Enrichissement externe
 
-Wikidata SPARQL sur les `wikidata_id` → P915 (lieu de tournage) et P840 (lieu de
-l'action). Puis sitelinks → article Wikipédia fr et en, en entier, pas le résumé
-d'intro.
+La table d'accueil existe déjà : `series_source` (§4). Reste à l'alimenter.
 
-*Livrable* : le **taux de raccrochage réel**. Combien de séries ont un
-`wikidata_id`, combien ont un lieu, combien ont un article fr avec section
-intrigue. C'est ce chiffre qui décide si ces sources sont des piliers ou des
-bonus.
+**Le raccordement, en trois entrées cumulées** — et non une chaîne, parce qu'une
+chaîne casse au premier maillon :
+
+1. `P4983` — l'identifiant TMDB porté directement par Wikidata. Aucun préalable ;
+   63 154 séries l'ont.
+2. `P345` — la chaîne actuelle, par l'`imdb_id` de `external_ids`. C'est elle qui
+   couvre l'occidental, à 98 %.
+3. Recherche par titre + année dans l'API de chaque Wikipédia, en dernier repli.
+
+Chaque ligne écrite note dans `resolved_by` le chemin qui a réussi : le taux de
+résolution par chemin devient une requête, plus une étude.
+
+Puis Wikidata SPARQL → P915 (lieu de tournage) et P840 (lieu de l'action), et les
+sitelinks → article Wikipédia **dans les cinq langues collectées**, en entier,
+pas le résumé d'intro.
+
+*Ce que le lot ne réparera pas.* Mesuré le 2026-08-06 : Wikidata ne connaît que
+663 séries de langue arabe (plancher — `P364` est souvent absente) contre 4 898
+`original_language=ar` chez TMDB. Aucune stratégie de jointure ne récupère ce qui
+n'est pas écrit. Pour le catalogue arabe et golfe, c'est une source dédiée ou
+rien — voir [`etude-couverture-marche-arabe.md`](etude-couverture-marche-arabe.md).
+
+*Livrable* : le **taux de raccrochage réel**, par corpus et par chemin. Combien
+de séries sont raccordées et par quelle entrée, combien ont un lieu, combien ont
+un article avec section intrigue. C'est ce chiffre qui décide si ces sources sont
+des piliers ou des bonus.
 
 ### Lot 4 — Dérivation de la couche faits
 
@@ -223,4 +262,5 @@ jeu d'évaluation gratuit, disponible sans annotation manuelle.
 | [`sourcing/migrations/001_sourcing.sql`](../sourcing/migrations/001_sourcing.sql) | le schéma de collecte |
 | [`sourcing/migrations/002_tmdb_catalog.sql`](../sourcing/migrations/002_tmdb_catalog.sql) | l'inventaire du catalogue |
 | [`sourcing/migrations/003_changes.sql`](../sourcing/migrations/003_changes.sql) | la marque de modification |
+| [`sourcing/migrations/004_series_source.sql`](../sourcing/migrations/004_series_source.sql) | l'enrichissement externe, et `resolved_by` |
 | `v2-sourcing-series.md` (dépôt V1) | l'analyse de l'existant et le modèle en trois couches |

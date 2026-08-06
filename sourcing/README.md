@@ -88,7 +88,7 @@ cp .env.example .env   # puis renseigner TMDB_BEARER (token v4, préférable)
 
 ```bash
 make doctor                                  # interpréteur, base, migrations, schéma, identifiants
-make test                                    # 80 tests, dont 34 de bout en bout sur Postgres
+make test                                    # 86 tests, dont 40 de bout en bout sur Postgres
 ```
 
 Puis la ligne de commande, dans l'ordre où on s'en sert :
@@ -174,7 +174,7 @@ l'emplacement doit être sans ambiguïté. [`test_schema.py`](tests/test_schema.
 garde le tout : une migration future qui créerait une table dans `public` par
 distraction fait échouer les tests.
 
-## Les trois tables
+## Les quatre tables
 
 `raw_source` est append-only et dédupliqué par empreinte : rejouer une collecte
 sur une source inchangée n'écrit rien. `fetch_state` porte la fraîcheur par
@@ -186,6 +186,14 @@ disque qui portaient tout l'incrémental de la V1.
 connue de TMDB, alimentée par l'export quotidien. C'est elle qui dit ce qu'il
 reste à collecter, ce qui a disparu de TMDB (`exported_on` qui décroche) et ce
 qui a été signalé comme modifié (`changed_at`).
+
+`series_source` est **dérivée** : une ligne par (série, source, langue), qui dit
+ce qu'une source tierce apporte — le texte, les médias, et par quel chemin le
+raccordement s'est fait (`resolved_by`). Elle se reconstruit entièrement depuis
+`raw_source`, sans réseau. Deux compteurs calculés, `content_chars` et
+`media_count`, permettent au rapport de couverture de seuiller sans jamais
+relire un article. Alimentée au lot 3 ; la table existe déjà pour que le schéma
+ne bouge plus quand la collecte arrivera.
 
 ## Reste à faire
 

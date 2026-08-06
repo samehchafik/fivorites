@@ -66,9 +66,11 @@ async def conn(settings: Settings) -> AsyncIterator[psycopg.AsyncConnection]:
     ) as connection:
         await migrate(connection, SOURCING_MIGRATIONS)
         await migrate(connection, ADMIN_MIGRATIONS)
+        # `sourcing.series_source` référence `tmdb_catalog` : l'omettre ferait
+        # échouer le truncate sur la contrainte, dans un test qui n'a rien à voir.
         await connection.execute(
             "truncate sourcing.raw_source, sourcing.fetch_state,"
-            " sourcing.tmdb_catalog, admin.admin_user"
+            " sourcing.tmdb_catalog, sourcing.series_source, admin.admin_user"
         )
         await connection.execute("set search_path to sourcing, admin, public")
         yield connection
