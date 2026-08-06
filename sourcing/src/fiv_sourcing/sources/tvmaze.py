@@ -84,6 +84,7 @@ def lire_show(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         "calendrier": payload.get("schedule") or {},
         "episodes": len(episodes),
         "episodes_dates": sum(1 for e in episodes if e.get("airdate")),
+        "episodes_resumes": len(resumes),
         "imdb": (payload.get("externals") or {}).get("imdb"),
         # Les résumés d'épisode sont la seule matière textuelle de TVmaze, et
         # elle est rare : une série trouvée sur trois en a. D'où leur

@@ -137,10 +137,9 @@ async def test_une_serie_raccordee_remplit_les_trois_sources(conn, settings: Set
 
 
 @respx.mock
-async def test_les_faits_tiers_sont_conserves(conn, settings: Settings):
-    """La réponse SPARQL et la fiche TVmaze ne sont pas gardées en brut : pays,
-    lieux, dates et diffuseur doivent survivre dans `facts`, sinon ils sont
-    perdus pour la couche 1."""
+async def test_les_faits_sont_au_format_canonique(conn, settings: Settings):
+    """R5 : mêmes clés quelle que soit la source — la couche 1 ne lira jamais
+    un format propriétaire."""
     await _serie_collectee(conn)
     _mock(SPARQL_TROUVE)
 
@@ -153,26 +152,35 @@ async def test_les_faits_tiers_sont_conserves(conn, settings: Settings):
         tvmaze_facts = (await cur.fetchone())[0]
 
     assert wikidata_facts["pays"] == ["US"]
-    assert wikidata_facts["lieux_tournage"] == ["Belfast"]
+    assert wikidata_facts["lieux"] == [{"type": "tournage", "nom": "Belfast"}]
+    assert wikidata_facts["ids"] == {"wikidata": QID, "imdb": IMDB, "tvmaze": 82}
     assert tvmaze_facts["diffuseur"] == "HBO"
-    assert tvmaze_facts["premiere"] == "2011-04-17"
-    assert tvmaze_facts["calendrier"] == {"days": ["Sunday"], "time": "21:00"}
+    assert tvmaze_facts["annee"] == 2011
+    assert tvmaze_facts["statut"] == "terminee"
+    assert tvmaze_facts["calendrier"] == {"jours": ["Sunday"], "heure": "21:00"}
+    assert tvmaze_facts["episodes"] == {"total": 1, "dates": 1, "resumes": 1}
 
 
 @respx.mock
-async def test_le_brut_reste_exclusivement_tmdb(conn, settings: Settings):
-    """La frontière de l'architecture : l'enrichissement n'écrit jamais dans
-    `raw_source`. Seul le passage est noté dans `fetch_state`."""
+async def test_le_brut_porte_wikimedia_mais_jamais_tvmaze(conn, settings: Settings):
+    """R1 : le brut de Wikidata et Wikipédia rejoint celui de TMDB — c'est ce
+    qui rend l'extraction rejouable. TVmaze, enrichissement pur, n'y entre
+    jamais."""
     await _serie_collectee(conn)
     _mock(SPARQL_TROUVE)
 
     await _enrichir(conn, settings)
 
     async with conn.cursor() as cur:
-        await cur.execute("select distinct source from raw_source")
-        assert await cur.fetchall() == [("tmdb",)]
-        await cur.execute("select source, kind from fetch_state where source <> 'tmdb'")
-        assert await cur.fetchall() == [("wikidata", "lookup")]
+        await cur.execute(
+            "select source, kind, count(*) from raw_source group by 1, 2 order by 1, 2"
+        )
+        assert await cur.fetchall() == [
+            ("tmdb", "tv", 1),
+            ("wikidata", "entity", 1),
+            ("wikidata", "lookup", 1),
+            ("wikipedia", "article", 2),
+        ]
 
 
 @respx.mock
@@ -188,6 +196,10 @@ async def test_rejouer_remplace_la_derivation_sans_l_empiler(conn, settings: Set
     async with conn.cursor() as cur:
         await cur.execute("select count(*) from riche_source")
         assert (await cur.fetchone())[0] == 4
+        # R2 : contenu inchangé, aucune ligne de brut en plus — la déduplication
+        # par empreinte tient la règle « jamais le même contenu deux fois ».
+        await cur.execute("select count(*) from raw_source")
+        assert (await cur.fetchone())[0] == 5
 
 
 @respx.mock

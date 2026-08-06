@@ -3,13 +3,18 @@
 Wikidata pour les faits et le raccordement, Wikipédia pour la matière textuelle,
 TVmaze pour les dates et le calendrier.
 
-**La frontière avec la collecte est nette, et c'est une décision d'architecture**
-(2026-08-06) : `raw_source` est exclusivement TMDB. Les réponses des sources
-tierces ne sont pas conservées en brut — ce qu'elles apportent va dans
-`riche_source`, raccrochée à la fiche collectée par `raw_source_id`. Corollaire :
-une série doit être **collectée** avant d'être enrichie, et les faits tiers
-(pays, langue, lieux P915/P840, dates et diffuseur TVmaze) vivent dans
-`riche_source.facts`, leur seul lieu de vie.
+Les règles sont celles de `doc/architecture-sourcing.md` :
+
+  * **R1** — le brut de Wikidata et Wikipédia va dans `raw_source`, comme celui
+    de TMDB. Jamais celui de TVmaze : enrichissement pur, rejouer = réinterroger.
+  * **R2** — `riche_source` n'est jamais une copie du brut, c'est une
+    interprétation : les `facts` au format canonique, le texte utile.
+  * **R5** — les faits passent par `normalize.py`, jamais par le format
+    propriétaire d'une source.
+
+Une série doit être **collectée** avant d'être enrichie sur ce chemin-ci —
+`riche_source` se raccroche à la fiche ; le flux hors-TMDB (crawler) entrera
+par le pivot `oeuvre`.
 
 L'enchaînement, et ce que chaque étape débloque pour la suivante :
 
@@ -32,7 +37,7 @@ from typing import Any
 
 import psycopg
 
-from fiv_sourcing import store
+from fiv_sourcing import normalize, store
 from fiv_sourcing.config import Settings
 from fiv_sourcing.http import FetchResult, HttpFetcher
 from fiv_sourcing.sources import tvmaze, wikidata, wikipedia
@@ -155,7 +160,7 @@ async def _apres_wikidata(
         await _tvmaze(conn, clients, cible, None, imdb_connu, titre, report)
         return
 
-    articles = await _sitelinks(clients, faits["qid"], report)
+    articles = await _sitelinks(conn, clients, faits["qid"], report)
     imdb = faits.get("imdb") or imdb_connu
 
     await asyncio.gather(
@@ -176,15 +181,25 @@ async def _wikidata(
     resultat = await clients.wikidata.by_tmdb(cible.tv_id)
     report.requests += 1
     voie = "p4983"
-    faits = wikidata.lire_lookup(resultat.payload) if resultat.ok else None
+    # `canonicaliser` avant tout : l'ordre des GROUP_CONCAT n'est pas garanti
+    # par Blazegraph, et sans tri chaque rejeu écrirait une ligne de brut de
+    # plus pour un contenu identique (R2).
+    faits = wikidata.lire_lookup(wikidata.canonicaliser(resultat.payload)) if resultat.ok else None
 
     if faits is None and imdb_connu:
         resultat = await clients.wikidata.by_imdb(imdb_connu)
         report.requests += 1
         voie = "p345"
-        faits = wikidata.lire_lookup(resultat.payload) if resultat.ok else None
+        faits = (
+            wikidata.lire_lookup(wikidata.canonicaliser(resultat.payload)) if resultat.ok else None
+        )
 
-    await _noter(conn, wikidata.SOURCE, "lookup", str(cible.tv_id), resultat)
+    # R1 : la réponse qui porte quelque chose va dans le brut. Une réponse
+    # vide n'apprend rien que fetch_state ne dise déjà — passage noté seulement.
+    if faits is not None:
+        await _persist(conn, wikidata.SOURCE, "lookup", str(cible.tv_id), None, resultat)
+    else:
+        await _noter(conn, wikidata.SOURCE, "lookup", str(cible.tv_id), resultat)
     if not resultat.ok:
         report.errors.append(f"wikidata: {resultat.error or resultat.status}")
     if faits is None:
@@ -222,28 +237,24 @@ async def _enregistrer_wikidata(
         url=f"https://www.wikidata.org/wiki/{faits['qid']}",
         content=None,
         media=[],
-        # Le seul lieu de vie de ces faits : la réponse SPARQL n'est pas
-        # conservée en brut. La couche 1 (lot 4) les dérivera d'ici.
-        facts={
-            "imdb": faits.get("imdb"),
-            "tvmaze": faits.get("tvmaze"),
-            "pays": faits.get("pays") or [],
-            "langues": faits.get("langues") or [],
-            "lieux_tournage": faits.get("lieux_tournage") or [],
-            "lieux_action": faits.get("lieux_action") or [],
-        },
+        # Au format canonique (R5) : la couche 1 lira ces clés-là, jamais le
+        # format propriétaire de la source.
+        facts=normalize.depuis_wikidata(faits),
         resolved_by=voie,
     )
     report.rows_written += 1
     report.sources.append(wikidata.SOURCE)
 
 
-async def _sitelinks(clients: Clients, qid: str, report: EnrichReport) -> dict[str, str]:
+async def _sitelinks(
+    conn: psycopg.AsyncConnection, clients: Clients, qid: str, report: EnrichReport
+) -> dict[str, str]:
     resultat = await clients.wikidata.entity(qid)
     report.requests += 1
     if not resultat.ok:
         report.errors.append(f"wikidata/entity: {resultat.error or resultat.status}")
         return {}
+    await _persist(conn, wikidata.SOURCE, "entity", qid, None, resultat)
     return wikidata.lire_sitelinks(resultat.payload, qid)
 
 
@@ -265,6 +276,9 @@ async def _wikipedia(
             report.errors.append(f"wikipedia/{lang}: {resultat.error or resultat.status}")
             continue
 
+        # R1 : l'article complet vit dans le brut — c'est ce qui rend
+        # l'extraction (R2, sections utiles) rejouable hors ligne.
+        await _persist(conn, wikipedia.SOURCE, "article", titre, lang, resultat)
         lu = wikipedia.lire_article(resultat.payload)
         if lu is None:
             continue
@@ -336,19 +350,9 @@ async def _tvmaze(
         url=lu.get("url"),
         content=lu.get("texte"),
         media=tvmaze.images(resultat.payload),
-        # Comme pour Wikidata : la réponse n'est pas gardée en brut, donc ces
-        # faits n'existent qu'ici.
-        facts={
-            "statut": lu.get("statut"),
-            "premiere": lu.get("premiere"),
-            "fin": lu.get("fin"),
-            "diffuseur": lu.get("diffuseur"),
-            "pays": lu.get("pays"),
-            "calendrier": lu.get("calendrier"),
-            "episodes": lu.get("episodes"),
-            "episodes_dates": lu.get("episodes_dates"),
-            "imdb": lu.get("imdb"),
-        },
+        # Au format canonique (R5). TVmaze n'a pas de brut (R1, enrichissement
+        # pur) : ces faits n'existent qu'ici, et rejouer = réinterroger.
+        facts=normalize.depuis_tvmaze(lu),
         resolved_by=voie,
     )
     report.rows_written += 1
@@ -572,9 +576,27 @@ async def _resoudre_le_lot(
         log.warning("lot wikidata en échec : %s", resultat.error or resultat.status)
         return {}
 
-    faits_par_id = wikidata.lire_lookup_lot(resultat.payload)
+    # Même canonicalisation qu'à l'unité : sans elle, chaque rejeu du lot
+    # écrirait cent lignes de brut pour un contenu identique.
+    payload = wikidata.canonicaliser(resultat.payload)
+    faits_par_id = wikidata.lire_lookup_lot(payload)
+    lignes = wikidata.lignes_par_id(payload)
 
     for tv_id in ids:
+        # R1/R2 : la ligne du lot est réemballée au format mono-série avant
+        # d'entrer dans le brut — le lot est une optimisation de transport,
+        # l'unité conservée reste l'objet. Rien pour les séries sans item.
+        ligne = lignes.get(tv_id)
+        if ligne is not None:
+            await store.store_raw(
+                conn,
+                source=wikidata.SOURCE,
+                kind="lookup",
+                source_id=str(tv_id),
+                lang=None,
+                http_status=resultat.status,
+                payload=wikidata.enveloppe(ligne),
+            )
         await store.mark_fetch(
             conn,
             source=wikidata.SOURCE,
@@ -658,8 +680,8 @@ async def _noter(
 ) -> None:
     """Note le passage dans `fetch_state` — et rien d'autre.
 
-    Les réponses des sources tierces ne vont pas dans `raw_source`, qui est
-    exclusivement TMDB. Ce qui mérite d'être gardé l'est dans `riche_source`.
+    Pour les réponses vides : « on a regardé, il n'y a rien » est une
+    information d'état, pas du brut.
     """
     await store.mark_fetch(
         conn,
@@ -668,5 +690,38 @@ async def _noter(
         source_id=source_id,
         http_status=resultat.status,
         changed=resultat.ok,
+        error=resultat.error,
+    )
+
+
+async def _persist(
+    conn: psycopg.AsyncConnection,
+    source: str,
+    kind: str,
+    source_id: str,
+    lang: str | None,
+    resultat: FetchResult,
+) -> None:
+    """Le brut dans `raw_source` (R1), le passage dans `fetch_state`.
+
+    La déduplication par empreinte fait qu'un contenu inchangé n'écrit rien —
+    c'est elle qui tient la règle « jamais le même contenu deux fois » (R2).
+    """
+    written = await store.store_raw(
+        conn,
+        source=source,
+        kind=kind,
+        source_id=source_id,
+        lang=lang,
+        http_status=resultat.status,
+        payload=resultat.payload,
+    )
+    await store.mark_fetch(
+        conn,
+        source=source,
+        kind=kind,
+        source_id=source_id,
+        http_status=resultat.status,
+        changed=written,
         error=resultat.error,
     )

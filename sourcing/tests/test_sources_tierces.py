@@ -149,3 +149,34 @@ def test_l_affiche_est_prise_a_defaut_en_taille_moyenne():
         {"type": "poster", "url": "http://x/m.jpg"}
     ]
     assert tvmaze.images({"image": None}) == []
+
+
+def test_les_group_concat_sont_canonicalises():
+    """Blazegraph ne garantit pas l'ordre des GROUP_CONCAT : deux réponses au
+    même contenu peuvent différer par une permutation. Constaté en vrai — une
+    ligne de brut en plus à chaque rejeu, en violation de R2."""
+    payload = {
+        "results": {
+            "bindings": [
+                {
+                    "tournage": {"value": "Malta|Croatia|Morocco"},
+                    "pays": {"value": "US|GB"},
+                    "imdb": {"value": "tt1"},
+                }
+            ]
+        }
+    }
+
+    wikidata.canonicaliser(payload)
+    ligne = payload["results"]["bindings"][0]
+
+    assert ligne["tournage"]["value"] == "Croatia|Malta|Morocco"
+    assert ligne["pays"]["value"] == "GB|US"
+    assert ligne["imdb"]["value"] == "tt1", "les champs non agrégés ne bougent pas"
+
+
+def test_canonicaliser_est_idempotent():
+    payload = {"results": {"bindings": [{"pays": {"value": "GB|US"}}]}}
+    assert wikidata.canonicaliser(wikidata.canonicaliser(payload)) == {
+        "results": {"bindings": [{"pays": {"value": "GB|US"}}]}
+    }

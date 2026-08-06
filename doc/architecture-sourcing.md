@@ -163,8 +163,8 @@ deux références redondantes. Le chemin, en étapes indépendantes et petites :
 
 | # | Étape | Nature |
 |---|---|---|
-| 1 | `normalize.py` + `facts` canoniques + test d'uniformité | code seul |
-| 2 | `enrich` réécrit le brut wikidata/wikipédia dans `raw_source` (R1) | code seul |
+| 1 | ✅ `normalize.py` + `facts` canoniques + test d'uniformité | livré |
+| 2 | ✅ `enrich` réécrit le brut wikidata/wikipédia dans `raw_source` (R1) | livré |
 | 3 | `content` allégé aux sections utiles (§4) | dérivation, rejouable |
 | 4 | `crawl wikidata` — le flux 2 | code + commande |
 | 5 | retirer `riche_source.id_tmdb` et `raw_source_id` | migration de ménage |

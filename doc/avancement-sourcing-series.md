@@ -33,7 +33,7 @@ donc le plafond configuré qui borne, pas le réseau ni la base.
 | Serveur Debian 11 | opérationnel |
 | Collecte TMDB | **en cours** — ~148 600 séries collectées, ~79 800 restantes (~11 h) |
 | Enrichissement | opérationnel, et indépendant du jeton |
-| Tests `sourcing` | 123 — 60 unitaires, 63 de bout en bout sur Postgres |
+| Tests `sourcing` | 132 — 69 unitaires, 63 de bout en bout sur Postgres |
 | Tests `admin` | 85 |
 | Code `sourcing` | ~3 100 lignes de source, ~1 900 de tests |
 
@@ -105,13 +105,15 @@ imposerait de réécrire toute la série pour rafraîchir une saison, invalidera
 l'empreinte du bloc entier au moindre changement, et rendrait les échecs
 tout-ou-rien.
 
-**`raw_source` est exclusivement TMDB** (décision du 2026-08-06). Les réponses
-des sources tierces sont de l'enrichissement, pas de la collecte : elles ne sont
-pas conservées en brut. Ce qu'elles apportent va dans `riche_source`, leurs
-faits dans `riche_source.facts`, et seul le passage est noté dans `fetch_state`.
-Contrepartie assumée : changer la façon d'extraire imposera de réinterroger les
-sources. Une série doit être **collectée** avant d'être enrichie — `riche_source`
-référence sa fiche.
+**Le brut porte TMDB et Wikidata/Wikimedia — jamais TVmaze** (R1 de
+[`architecture-sourcing.md`](architecture-sourcing.md), qui a remplacé la
+décision « exclusivement TMDB » du même jour). La dérivation est ainsi
+rejouable hors ligne ; TVmaze, enrichissement pur, se rejoue en réinterrogeant.
+`riche_source` n'est jamais une copie du brut (R2) : ses `facts` sont au format
+canonique produit par `normalize.py` (R5) — la seule frontière avec les formats
+propriétaires. Piège attrapé en vrai : Blazegraph ne garantit pas l'ordre des
+`GROUP_CONCAT`, et sans canonicalisation chaque rejeu écrivait une ligne de
+brut pour un contenu identique.
 
 **Rejouer une collecte inchangée n'écrit rien.** Déduplication par SHA-256 du
 payload canonicalisé. `riche_source`, elle, est **remplacée** à chaque passe :

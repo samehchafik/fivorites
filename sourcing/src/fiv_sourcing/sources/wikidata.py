@@ -161,6 +161,49 @@ def lire_lookup_lot(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]
     return trouves
 
 
+# Les champs agrégés par GROUP_CONCAT dans les deux requêtes de lookup.
+_CHAMPS_GROUPES = ("pays", "langues", "tournage", "action")
+
+
+def canonicaliser(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Trie les valeurs des `GROUP_CONCAT`, en place.
+
+    Blazegraph ne garantit pas leur ordre : deux réponses au même contenu
+    peuvent différer par la seule permutation de « Malta|Croatia|Morocco » —
+    constaté en vrai, une ligne de brut en plus à chaque rejeu. L'ordre n'est
+    pas une information ; le trier avant stockage est le même geste que les
+    clés JSON triées de l'empreinte, pas une interprétation du brut. Bonus :
+    les `facts` dérivés deviennent stables d'une passe à l'autre.
+    """
+    for ligne in ((payload or {}).get("results") or {}).get("bindings") or []:
+        for champ in _CHAMPS_GROUPES:
+            noeud = ligne.get(champ)
+            if noeud and noeud.get("value"):
+                noeud["value"] = "|".join(sorted(noeud["value"].split("|")))
+    return payload
+
+
+def enveloppe(ligne_brute: dict[str, Any]) -> dict[str, Any]:
+    """Réemballe une ligne d'un lot au format d'une réponse à une seule série.
+
+    Le lot est une optimisation de transport ; l'unité qu'on **conserve** reste
+    l'objet (R2). Sans ce réemballage, `raw_source` porterait une ligne couvrant
+    cent séries, dont ni l'empreinte, ni la fraîcheur, ni le statut ne
+    voudraient plus rien dire pour aucune d'elles.
+    """
+    return {"results": {"bindings": [ligne_brute]}}
+
+
+def lignes_par_id(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    """{id TMDB: sa ligne brute}, pour en garder le détail par série."""
+    par_id = {}
+    for ligne in ((payload or {}).get("results") or {}).get("bindings") or []:
+        brut = ligne.get("tmdb", {}).get("value", "")
+        if brut.isdigit():
+            par_id[int(brut)] = ligne
+    return par_id
+
+
 def lire_sitelinks(payload: dict[str, Any] | None, qid: str) -> dict[str, str]:
     """{code langue: titre de l'article}, pour les Wikipédias seulement.
 

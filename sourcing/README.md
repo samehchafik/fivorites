@@ -88,7 +88,7 @@ cp .env.example .env   # puis renseigner TMDB_BEARER (token v4, préférable)
 
 ```bash
 make doctor                                  # interpréteur, base, migrations, schéma, identifiants
-make test                                    # 123 tests, dont 63 de bout en bout sur Postgres
+make test                                    # 132 tests, dont 63 de bout en bout sur Postgres
 ```
 
 Puis la ligne de commande, dans l'ordre où on s'en sert :
@@ -247,8 +247,9 @@ quand la série vient de TMDB, raccroché à la fiche collectée par
 `raw_source_id` : une ligne par (série, source, langue), avec le texte
 (`content`), les médias, les faits tiers (`facts` — pays, langue, lieux,
 dates et diffuseur TVmaze, leur seul lieu de vie) et le chemin du raccordement
-(`resolved_by`). **`raw_source` reste exclusivement TMDB** : les réponses des
-sources tierces ne sont pas conservées en brut. Deux compteurs calculés,
+(`resolved_by`). Le brut de Wikidata et Wikipédia rejoint celui de TMDB dans
+`raw_source` (R1) — jamais celui de TVmaze, enrichissement pur. Les `facts`
+sont au format canonique de [`normalize.py`](src/fiv_sourcing/normalize.py). Deux compteurs calculés,
 `content_chars` et `media_count`, permettent au rapport de couverture de
 seuiller sans jamais relire un article.
 
