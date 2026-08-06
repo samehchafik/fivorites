@@ -160,26 +160,55 @@ def tmdb_fetch(
 
 @app.command()
 def enrich(
-    ids: Annotated[list[int], typer.Option("--id", help="Id TMDB de la série (répétable)")],
+    ids: Annotated[
+        list[int] | None,
+        typer.Option(
+            "--id", help="Une série précise (répétable). Défaut : toutes celles sans complément."
+        ),
+    ] = None,
+    limit: Annotated[
+        int | None, typer.Option("--limit", help="Nombre de séries à traiter. Défaut : toutes.")
+    ] = None,
+    concurrency: Annotated[
+        int, typer.Option("--concurrency", help="Séries traitées en parallèle.")
+    ] = 4,
+    order: Annotated[
+        str,
+        typer.Option("--order", help="id (neutre, défaut), random (pour estimer) ou popularity."),
+    ] = "id",
+    refresh_after: Annotated[
+        int | None,
+        typer.Option("--refresh-after", help="Reprendre aussi celles vues il y a plus de N jours."),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Compter le reste à faire, sans rien télécharger.")
+    ] = False,
 ) -> None:
-    """Ajoute les sources tierces sur une série déjà inventoriée.
+    """Ajoute les sources tierces : Wikidata, Wikipédia, TVmaze.
 
-    Wikidata (faits et raccordement), Wikipédia (le texte), TVmaze (dates,
-    épisodes, calendrier). Aucun appel à TMDB, donc **aucun jeton requis** :
-    l'entrée se fait par `P4983`, qui se déduit de l'id.
+    Sans `--id`, traite **toutes les séries encore sans complément** et reprend
+    là où la passe précédente s'est arrêtée. Aucun appel à TMDB, donc **aucun
+    jeton requis** : l'entrée se fait par `P4983`, qui se déduit de l'id.
     """
-    from fiv_sourcing.enrich import build_clients, build_fetcher, enrich_series
+    from fiv_sourcing.enrich import (
+        EnrichAllReport,
+        build_clients,
+        build_fetcher,
+        enrich_all,
+        enrich_series,
+        pending_ids,
+    )
 
     settings = get_settings()
     langues = settings.wikipedia_languages
 
-    async def run() -> int:
+    async def une_par_une() -> int:
         echecs = 0
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
             fetcher = build_fetcher(settings)
             async with fetcher:
                 clients = build_clients(fetcher)
-                for tv_id in ids:
+                for tv_id in ids or []:
                     report = await enrich_series(conn, clients, tv_id, languages=langues)
                     marker = "ok " if report.sources else "rien"
                     typer.echo(
@@ -192,9 +221,74 @@ def enrich(
                     echecs += int(not report.sources)
         return echecs
 
+    started = time.monotonic()
+    last_shown = 0.0
+
+    def show(report: EnrichAllReport) -> None:
+        nonlocal last_shown
+        now = time.monotonic()
+        if now - last_shown < 10 and report.remaining:
+            return
+        last_shown = now
+        elapsed = now - started
+        rate = report.done / elapsed if elapsed else 0
+        eta = report.remaining / rate if rate else 0
+        typer.echo(
+            f"{report.done:>7}/{report.selected}  "
+            f"{report.resolved} raccordée(s)  {report.enriched} enrichie(s)  "
+            f"{rate:5.2f} série/s  reste {_duree(eta)}"
+        )
+
+    async def en_masse() -> EnrichAllReport:
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            selection = await pending_ids(
+                conn, refresh_after=refresh_after, limit=limit, order=order
+            )
+            if dry_run or not selection:
+                return EnrichAllReport(selected=len(selection))
+
+            stop = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for signame in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(signame, _request_stop, stop)
+
+            fetcher = build_fetcher(settings)
+            async with fetcher:
+                return await enrich_all(
+                    conn,
+                    build_clients(fetcher),
+                    selection,
+                    languages=langues,
+                    concurrency=concurrency,
+                    stop=stop,
+                    on_progress=show,
+                )
+
     typer.echo(f"langues : {', '.join(langues)}")
     typer.echo(f"débit   : {settings.enrich_rate_limit} requête/s (ENRICH_RATE_LIMIT)")
-    raise typer.Exit(1 if _run_db(run) == len(ids) else 0)
+
+    if ids:
+        raise typer.Exit(1 if _run_db(une_par_une) == len(ids) else 0)
+
+    report = _run_db(en_masse)
+    if dry_run:
+        typer.echo(f"à enrichir : {report.selected} série(s)")
+        return
+    if not report.selected:
+        typer.echo("Rien à enrichir. Lancer `tmdb export` si le catalogue est vide.")
+        return
+
+    typer.echo("")
+    typer.echo(f"traitées      : {report.done}/{report.selected}")
+    typer.echo(f"raccordées    : {report.resolved}  (item Wikidata)")
+    typer.echo(f"enrichies     : {report.enriched}  (au moins une source)")
+    typer.echo(f"requêtes      : {report.requests}")
+    typer.echo(f"lignes brutes : {report.rows_written}")
+    if report.errors:
+        typer.echo(f"erreurs       : {report.errors}")
+    if report.interrupted:
+        typer.echo("")
+        typer.echo("Interrompu. Relancer la même commande reprend où on s'est arrêté.")
 
 
 @tmdb_app.command("export")

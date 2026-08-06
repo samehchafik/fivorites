@@ -183,20 +183,35 @@ mais elle n'a pas été vérifiée par une requête réelle, et le facteur est d
 cinq sur le poste de coût dominant. Une seule requête suffit à trancher, avant
 la passe complète.
 
-### Lot 3 — Enrichissement externe *(livré à l'unité)*
+### ✅ Lot 3 — Enrichissement externe *(livré)*
 
-`enrich --id 1399` enchaîne les trois sources et remplit `series_source`. Il
-n'appelle pas TMDB et **ne demande aucun jeton** : l'entrée se fait par `P4983`,
-qui se déduit de l'id déjà présent dans `tmdb_catalog`. Une série jamais
-collectée peut donc être enrichie — c'est ce qui permet d'avancer pendant que le
-jeton est refusé.
+`enrich` enchaîne les trois sources et remplit `series_source` — une série avec
+`--id`, tout le reste sans. Il n'appelle pas TMDB et **ne demande aucun jeton** :
+l'entrée se fait par `P4983`, qui se déduit de l'id déjà présent dans
+`tmdb_catalog`. Une série jamais collectée peut donc être enrichie, ce qui permet
+d'avancer pendant que le jeton est refusé.
 
-Vérifié sur *Game of Thrones* : 8 requêtes, l'article Wikipédia des cinq langues
-et les résumés d'épisode TVmaze, soit **258 000 caractères** de matière — contre
-400 pour l'overview TMDB.
+**Le regroupement des résolutions est ce qui rend la passe possible.** Une
+requête SPARQL porte cent séries : le catalogue entier coûte 2 300 requêtes de
+résolution au lieu de 228 000. Adresser 228 000 requêtes à un service gratuit et
+partagé ne se fait pas, indépendamment du temps que ça prendrait. Le lot est une
+optimisation de transport ; l'unité conservée dans `raw_source` reste l'objet,
+une ligne par série, sans quoi ni la fraîcheur ni l'empreinte ne voudraient plus
+rien dire.
 
-Reste à faire : le passage à l'échelle du catalogue (l'équivalent de `backfill`
-pour l'enrichissement) et la mesure du taux de raccrochage réel.
+Le critère de reprise est `fetch_state`, pas la présence d'une ligne dans
+`series_source` : la majorité des séries n'a pas d'item Wikidata et n'en
+produira donc jamais. Se fier à `series_source` ferait retenter le fond de
+catalogue à chaque passe.
+
+*Mesuré sur 60 séries tirées au hasard* : 36 % ont un item Wikidata, 1,17 requête
+par série, 1,7 série/s — soit environ **37 heures et 267 000 requêtes** pour les
+228 454 séries. Sur *Game of Thrones* seule : 8 requêtes, l'article Wikipédia des
+cinq langues et les résumés d'épisode TVmaze, **258 000 caractères** de matière
+contre 400 pour l'overview TMDB.
+
+*Livrable restant* : le taux de raccrochage à l'échelle, qui se lira dans
+`series_source.resolved_by` une fois la passe complète faite.
 
 **Le raccordement, en trois entrées cumulées** — et non une chaîne, parce qu'une
 chaîne casse au premier maillon :

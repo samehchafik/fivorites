@@ -264,11 +264,29 @@ sudo docker compose run --rm sourcing tmdb stats
 ```
 
 Les sources tierces s'ajoutent séparément, et **sans jeton TMDB** — l'entrée
-dans Wikidata se fait par l'id qu'on a déjà :
+dans Wikidata se fait par l'id qu'on a déjà. Une série d'abord, pour voir :
 
 ```bash
 sudo docker compose run --rm sourcing enrich --id 1399
 ```
+
+Puis tout ce qui n'a pas encore de complément. Compter d'abord, la passe
+complète dure une trentaine d'heures :
+
+```bash
+sudo docker compose run --rm sourcing enrich --dry-run
+```
+
+```bash
+sudo docker compose run --rm sourcing enrich --limit 500 --order random
+```
+
+```bash
+sudo docker compose run --rm sourcing enrich
+```
+
+Elle s'interrompt et reprend comme `backfill` : un seul Ctrl-C, ou
+`docker stop`, et relancer la même commande repart d'où l'on s'était arrêté.
 
 Enfin le rattrapage : `tmdb changes` marque les séries que TMDB signale comme
 modifiées, et le `backfill` suivant les recollecte.
