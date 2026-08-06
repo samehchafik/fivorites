@@ -193,6 +193,9 @@ async def test_summary_counts_by_language(conn: psycopg.AsyncConnection) -> None
         "seen": 3,
         "ok": 2,
         "failed": 1,
+        # 4 séries au catalogue, 3 regardées : il en reste une.
+        "remaining": 1,
+        "lastHour": 3,
         "lastAt": summary["works"]["lastAt"],
     }
     assert summary["parts"]["expected"] == 2
@@ -206,6 +209,20 @@ async def test_summary_counts_by_language(conn: psycopg.AsyncConnection) -> None
         "lastAt": summary["byLang"]["en-US"]["lastAt"],
     }
     assert [error["sourceId"] for error in summary["errors"]] == ["3000"]
+
+
+async def test_remaining_never_goes_negative(conn: psycopg.AsyncConnection) -> None:
+    """Une série peut être collectée puis disparaître de l'export TMDB — le
+    catalogue rétrécit, `fetch_state` non. Un « reste −3 » à l'écran ferait
+    douter de tout le reste du tableau."""
+    await seed(conn)
+    await conn.execute("delete from tmdb_catalog where id in (3000, 4000)")
+
+    summary = await fetch_summary(conn, TV)
+
+    assert summary["catalog"]["total"] == 2
+    assert summary["works"]["seen"] == 3
+    assert summary["works"]["remaining"] == 0
 
 
 async def test_observed_languages(conn: psycopg.AsyncConnection) -> None:

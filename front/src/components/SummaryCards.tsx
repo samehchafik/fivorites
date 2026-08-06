@@ -1,6 +1,6 @@
 import { Card, Group, Progress, SimpleGrid, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
 
-import { formatDate, formatNumber, formatPercent } from '../display'
+import { formatDate, formatEta, formatNumber, formatPercent } from '../display'
 import type { Summary } from '../types'
 
 /** Les quatre chiffres qui disent où en est la collecte. Le quatrième dépend de
@@ -16,8 +16,8 @@ export function SummaryCards({
 }) {
   if (!summary) {
     return (
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-        {[0, 1, 2, 3].map((index) => (
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl: 5 }}>
+        {[0, 1, 2, 3, 4].map((index) => (
           <Skeleton key={index} h={116} radius="md" />
         ))}
       </SimpleGrid>
@@ -29,8 +29,10 @@ export function SummaryCards({
   const seenRatio = catalogue ? summary.works.seen / catalogue : null
   const langRatio = summary.parts.expected ? (perLang?.partsOk ?? 0) / summary.parts.expected : null
 
+  const eta = formatEta(summary.works.remaining, summary.works.lastHour)
+
   return (
-    <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+    <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl: 5 }}>
       <Metric
         title="Catalogue"
         value={formatNumber(catalogue)}
@@ -45,6 +47,23 @@ export function SummaryCards({
         detail={`${formatNumber(summary.works.ok)} abouties · ${formatNumber(summary.works.failed)} en échec`}
         progress={seenRatio}
         color={summary.works.failed > 0 ? 'orange' : 'indigo'}
+      />
+
+      {/* La question qu'on pose le plus souvent devant ce tableau : combien
+          reste-t-il, et pour combien de temps. Le débit est celui de la
+          dernière heure — le seul qui décrive la collecte en cours plutôt
+          qu'une moyenne depuis le début. */}
+      <Metric
+        title="Reste à collecter"
+        value={formatNumber(summary.works.remaining)}
+        hint={eta ?? undefined}
+        detail={
+          summary.works.lastHour > 0
+            ? `${formatNumber(summary.works.lastHour)} fiche(s) sur la dernière heure`
+            : 'aucune collecte depuis une heure'
+        }
+        progress={catalogue ? 1 - summary.works.remaining / catalogue : null}
+        color="grape"
       />
 
       <Metric

@@ -477,6 +477,11 @@ async def fetch_summary(conn: psycopg.AsyncConnection, media: Media) -> dict[str
             select count(*) as seen,
                    count(*) filter (where last_success_at is not null) as ok,
                    count(*) filter (where last_status >= 400) as failed,
+                   -- Le débit de la dernière heure. C'est ce qui transforme
+                   -- « il en reste 216 000 » en « il en reste pour deux jours »,
+                   -- seule forme sous laquelle le chiffre aide à décider.
+                   count(*) filter (where last_fetched_at > now() - interval '1 hour')
+                       as last_hour,
                    max(last_fetched_at) as last_at
             from fetch_state
             where source = %(source)s and kind = %(kind)s
@@ -542,6 +547,11 @@ async def fetch_summary(conn: psycopg.AsyncConnection, media: Media) -> dict[str
             "seen": int(works.get("seen") or 0),
             "ok": int(works.get("ok") or 0),
             "failed": int(works.get("failed") or 0),
+            # Ce qui n'a jamais été regardé. Calculé plutôt que compté : une
+            # anti-jointure sur 228 000 lignes pour un chiffre qu'une
+            # soustraction donne exactement.
+            "remaining": max(0, int(catalog_row.get("total") or 0) - int(works.get("seen") or 0)),
+            "lastHour": int(works.get("last_hour") or 0),
             "lastAt": works.get("last_at"),
         },
         "parts": {
