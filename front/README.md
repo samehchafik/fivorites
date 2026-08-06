@@ -109,6 +109,32 @@ essayé puis retiré, pour deux raisons qui tiennent toutes deux au fait qu'il
 Les deux sont sans objet quand le build a lieu ici et que le serveur ne fait que
 lire.
 
+## L'URL porte la fiche ouverte et les filtres
+
+```
+?id=1399                            ouvre la fiche de la série 1399
+?filtre=image,description           coche les deux cases et applique les filtres
+?id=1399&filtre=description         les deux
+```
+
+L'URL est **la source au chargement**, puis l'état la réécrit : la barre
+d'adresse est donc toujours copiable telle quelle, et une URL collée dans une
+conversation rouvre exactement la même vue — cases cochées comprises, pas
+seulement le résultat filtré.
+
+Les noms des filtres sont ceux qu'on écrit à la main (`image`, `description`),
+pas ceux du code (`withPoster`, `withOverview`) : une URL se retape et se
+retrouve dans un ticket. La virgule est laissée en clair — légale dans une
+chaîne de requête, et `?filtre=image%2Cdescription` ne se lit pas.
+
+Une valeur qui n'a pas de sens est ignorée plutôt que transmise : `?id=abc`
+n'ouvre rien, `?filtre=inconnu` ne coche rien, et l'URL se nettoie au premier
+changement d'état. Les paramètres inconnus, eux, sont préservés.
+
+`replaceState` et non `pushState` : cocher une case n'est pas une navigation, et
+empiler une entrée d'historique par clic rendrait le bouton « précédent »
+inutilisable. Contrepartie assumée — « précédent » ne referme pas la fiche.
+
 ## Les écrans
 
 | Fichier | Rôle |
@@ -121,6 +147,7 @@ lire.
 | [`src/components/SeasonPanel.tsx`](src/components/SeasonPanel.tsx) | les épisodes d'une saison, dans la langue choisie |
 | [`src/components/WatchPanel.tsx`](src/components/WatchPanel.tsx) | où regarder la série, dans le pays de la langue choisie |
 | [`src/components/AcquisitionTable.tsx`](src/components/AcquisitionTable.tsx) | le tableau d'avancement sur tout le catalogue |
+| [`src/urlState.ts`](src/urlState.ts) | l'état partageable : la fiche ouverte et les filtres |
 | [`src/api.ts`](src/api.ts) | le seul point d'appel réseau |
 | [`src/types.ts`](src/types.ts) | le contrat avec l'API |
 

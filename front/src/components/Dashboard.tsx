@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ApiError, api } from '../api'
 import { formatNumber } from '../display'
 import type { Account, CardsResponse, ItemsResponse, Meta, Summary } from '../types'
+import { readUrl, writeUrl } from '../urlState'
 import { AcquisitionTable } from './AcquisitionTable'
 import { DetailDrawer } from './DetailDrawer'
 import { Filters, type FilterState } from './Filters'
@@ -83,13 +84,28 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   const [tablePage, setTablePage] = useState(1)
   const [drawerId, setDrawerId] = useState<number | null>(null)
 
-  const [grid, setGrid] = useState<GridState>(DEFAULT_GRID)
+  // L'URL est la source au chargement : `?id=1399&filtre=image,description`
+  // ouvre la fiche 1399 et coche les deux cases. Lu une seule fois — ensuite
+  // c'est l'état qui réécrit l'URL, et l'inverse boucherait.
+  const [depuisUrl] = useState(readUrl)
+
+  const [grid, setGrid] = useState<GridState>({
+    ...DEFAULT_GRID,
+    withPoster: depuisUrl.withPoster,
+    withOverview: depuisUrl.withOverview,
+  })
   const [gridPage, setGridPage] = useState(1)
-  const [modalId, setModalId] = useState<number | null>(null)
+  const [modalId, setModalId] = useState<number | null>(depuisUrl.id)
 
   // Une frappe ne doit pas lancer une requête par caractère sur 228 000 lignes.
   const [tableSearch] = useDebouncedValue(filters.search, 350)
   const [gridSearch] = useDebouncedValue(grid.search, 350)
+
+  // … et l'état la réécrit, pour que la barre d'adresse soit toujours
+  // copiable-collable telle quelle.
+  useEffect(() => {
+    writeUrl({ id: modalId, withPoster: grid.withPoster, withOverview: grid.withOverview })
+  }, [modalId, grid.withPoster, grid.withOverview])
 
   const meta = useQuery<Meta>({ queryKey: ['meta'], queryFn: api.meta, staleTime: 5 * 60_000 })
   const available = meta.data?.media.find((entry) => entry.key === media)
