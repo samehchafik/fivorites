@@ -76,9 +76,13 @@ base fivorites_v2
 │                exported_on, changed_at)               │
 │    → append-only, jamais retouché, jamais interprété   │
 │                                                       │
-│    riche_source(raw_source_id, id_tmdb, source,       │
-│                 lang, content, media, facts, …)       │
-│    → l'enrichissement, raccroché à la fiche collectée  │
+│    oeuvre(id, univers, id_tmdb?, wikidata_qid?,       │
+│           imdb_id?, tvmaze_id?, titre?)               │
+│    → le pivot d'identité — accueille le hors-TMDB      │
+│                                                       │
+│    riche_source(oeuvre_id, raw_source_id?, id_tmdb?,  │
+│                 source, lang, content, facts, …)      │
+│    → l'enrichissement, attaché au pivot                │
 │  ─────────────────────────────────────────────────────┘
 │              ↓  dérivation hors ligne, rejouable, sans réseau
 ├─ schéma catalog ── COUCHE 1 : FAITS ──────────────────┐

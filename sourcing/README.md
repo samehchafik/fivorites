@@ -88,7 +88,7 @@ cp .env.example .env   # puis renseigner TMDB_BEARER (token v4, préférable)
 
 ```bash
 make doctor                                  # interpréteur, base, migrations, schéma, identifiants
-make test                                    # 122 tests, dont 62 de bout en bout sur Postgres
+make test                                    # 123 tests, dont 63 de bout en bout sur Postgres
 ```
 
 Puis la ligne de commande, dans l'ordre où on s'en sert :
@@ -222,7 +222,7 @@ l'emplacement doit être sans ambiguïté. [`test_schema.py`](tests/test_schema.
 garde le tout : une migration future qui créerait une table dans `public` par
 distraction fait échouer les tests.
 
-## Les quatre tables
+## Les cinq tables
 
 `raw_source` est append-only et dédupliqué par empreinte : rejouer une collecte
 sur une source inchangée n'écrit rien. `fetch_state` porte la fraîcheur par
@@ -235,7 +235,15 @@ connue de TMDB, alimentée par l'export quotidien. C'est elle qui dit ce qu'il
 reste à collecter, ce qui a disparu de TMDB (`exported_on` qui décroche) et ce
 qui a été signalé comme modifié (`changed_at`).
 
-`riche_source` porte l'enrichissement, raccroché à la fiche collectée par
+`oeuvre` est le **pivot d'identité**. Aucun identifiant universel n'existe
+dehors — la moitié du Wikidata « séries » ignore TMDB, TVmaze ne porte jamais
+d'id TMDB — donc on tient le nôtre : un id propre, un `univers` (les cinq
+familles à venir), et les identifiants externes tous nullables et uniques.
+C'est ce qui permet d'accueillir une série absente de TMDB, et de la
+réconcilier le jour où elle y apparaît.
+
+`riche_source` porte l'enrichissement, attaché au pivot par `oeuvre_id` et,
+quand la série vient de TMDB, raccroché à la fiche collectée par
 `raw_source_id` : une ligne par (série, source, langue), avec le texte
 (`content`), les médias, les faits tiers (`facts` — pays, langue, lieux,
 dates et diffuseur TVmaze, leur seul lieu de vie) et le chemin du raccordement

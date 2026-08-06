@@ -23,7 +23,7 @@ async def test_les_tables_de_collecte_sont_dans_le_schema_sourcing(conn, setting
         )
         tables = [row[0] for row in await cur.fetchall()]
 
-    assert tables == ["fetch_state", "raw_source", "riche_source", "tmdb_catalog"]
+    assert tables == ["fetch_state", "oeuvre", "raw_source", "riche_source", "tmdb_catalog"]
 
 
 async def test_public_ne_contient_que_l_historique_des_migrations(conn):

@@ -70,8 +70,8 @@ async def conn(settings: Settings) -> AsyncIterator[psycopg.AsyncConnection]:
         # l'omettre ferait échouer le truncate sur la contrainte, dans un test
         # qui n'a rien à voir.
         await connection.execute(
-            "truncate sourcing.raw_source, sourcing.fetch_state,"
-            " sourcing.tmdb_catalog, sourcing.riche_source, admin.admin_user"
+            "truncate sourcing.raw_source, sourcing.fetch_state, sourcing.tmdb_catalog,"
+            " sourcing.riche_source, sourcing.oeuvre, admin.admin_user"
         )
         await connection.execute("set search_path to sourcing, admin, public")
         yield connection

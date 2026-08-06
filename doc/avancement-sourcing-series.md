@@ -32,7 +32,7 @@ donc le plafond configuré qui borne, pas le réseau ni la base.
 | Serveur Debian 11 | opérationnel |
 | Collecte TMDB | **en cours** — ~148 600 séries collectées, ~79 800 restantes (~11 h) |
 | Enrichissement | opérationnel, et indépendant du jeton |
-| Tests `sourcing` | 122 — 60 unitaires, 62 de bout en bout sur Postgres |
+| Tests `sourcing` | 123 — 60 unitaires, 63 de bout en bout sur Postgres |
 | Tests `admin` | 85 |
 | Code `sourcing` | ~3 100 lignes de source, ~1 900 de tests |
 
@@ -79,7 +79,8 @@ Une base — `fivorites_v2` — et un schéma par domaine.
 | `sourcing.raw_source` | le brut, append-only, une ligne par réponse HTTP |
 | `sourcing.fetch_state` | fraîcheur et état par objet ; remplace les 3 fichiers JSON de la V1 |
 | `sourcing.tmdb_catalog` | inventaire du catalogue, issu de l'export quotidien ; `first_air_date` y est dérivée du brut |
-| `sourcing.riche_source` | l'enrichissement, raccroché à la fiche collectée (`raw_source_id`) — une ligne par (série, source, langue) |
+| `sourcing.oeuvre` | le **pivot d'identité** — id propre, identifiants externes nullables et uniques ; accueille les œuvres hors TMDB |
+| `sourcing.riche_source` | l'enrichissement, attaché au pivot (`oeuvre_id`) ; `id_tmdb` et `raw_source_id` nullables |
 | `public.schema_migrations` | historique des migrations, valable pour la base entière |
 
 `riche_source` porte `raw_source_id` (la fiche référencée), `id_tmdb`,
@@ -142,6 +143,16 @@ déjà regardé ? ».
 | **Python** | 3.12 vendorisé dans `sourcing/vendor` | aucune dépendance à un interpréteur système |
 | **Postgres** | toujours sur l'hôte, jamais en conteneur | dev comme serveur |
 | **Docker** | serveur uniquement, pour l'application | le poste de dev n'en utilise pas |
+
+**Le pivot `oeuvre`** (2026-08-06) répond à une mesure : la moitié des items
+« série » de Wikidata n'a pas d'identifiant TMDB, 300 des 480 séries de langue
+arabe n'ont *aucun* identifiant externe, et TVmaze ne porte jamais d'id TMDB.
+Aucun « id média universel » n'existe dehors ; le nôtre est `oeuvre.id`, avec
+les identifiants externes nullables et uniques par univers. Une série hors TMDB
+entre par là (`id_tmdb` et `raw_source_id` nuls dans `riche_source`), et la
+réconciliation tardive est prévue : les index uniques empêchent le doublon, une
+collision est journalisée comme « réconciliation à faire », jamais absorbée en
+silence. Le point d'entrée de saisie (par QID ou par titre) reste à écrire.
 
 **Sur IMDb**, la décision mérite d'être écrite en clair parce qu'elle reviendra :
 ni datasets, ni scraping. La licence exclut l'usage commercial et les conditions

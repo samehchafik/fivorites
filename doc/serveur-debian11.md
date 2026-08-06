@@ -213,7 +213,7 @@ sudo docker compose run --rm sourcing doctor
 ✓  identifiants TMDB  token v4
 ✓  base               PostgreSQL 16.x
 ✓  migrations         à jour
-✓  schéma             sourcing — 4 table(s)
+✓  schéma             sourcing — 5 table(s)
 ```
 
 Si la ligne `base` échoue, le message dit lequel des deux cas s'applique :

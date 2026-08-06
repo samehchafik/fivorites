@@ -106,21 +106,37 @@ async def enrich_series(
         report.errors.append("série non collectée — `tmdb fetch` d'abord")
         return report
 
+    cible = Cible(
+        tv_id=tv_id,
+        oeuvre_id=(await store.ensure_oeuvres(conn, [tv_id]))[tv_id],
+        fiche_id=fiche_id,
+    )
     titre = await _titre_du_catalogue(conn, tv_id)
     imdb_connu = await _imdb_depuis_la_collecte(conn, tv_id)
-    faits = await _wikidata(conn, clients, tv_id, fiche_id, imdb_connu, report)
+    faits = await _wikidata(conn, clients, cible, imdb_connu, report)
 
-    await _apres_wikidata(
-        conn, clients, tv_id, fiche_id, faits, imdb_connu, titre, languages, report
-    )
+    await _apres_wikidata(conn, clients, cible, faits, imdb_connu, titre, languages, report)
     return report
+
+
+@dataclass(slots=True, frozen=True)
+class Cible:
+    """Une série à enrichir : ses trois identités internes.
+
+    `oeuvre_id` est le pivot — c'est lui qui attache les lignes entre elles.
+    `tv_id` et `fiche_id` sont l'ancrage TMDB, présent sur ce chemin-ci ;
+    le schéma les accepte nuls pour les œuvres hors TMDB à venir.
+    """
+
+    tv_id: int
+    oeuvre_id: int
+    fiche_id: int
 
 
 async def _apres_wikidata(
     conn: psycopg.AsyncConnection,
     clients: Clients,
-    tv_id: int,
-    fiche_id: int,
+    cible: Cible,
     faits: dict[str, Any] | None,
     imdb_connu: str | None,
     titre: str | None,
@@ -136,15 +152,15 @@ async def _apres_wikidata(
         # Sans item Wikidata, il reste TVmaze — par l'imdb_id de la collecte, ou
         # par le titre si cet identifiant existe pour départager. Au dixième
         # décile de popularité, rien n'aboutit : c'est mesuré, pas une anomalie.
-        await _tvmaze(conn, clients, tv_id, fiche_id, None, imdb_connu, titre, report)
+        await _tvmaze(conn, clients, cible, None, imdb_connu, titre, report)
         return
 
     articles = await _sitelinks(clients, faits["qid"], report)
     imdb = faits.get("imdb") or imdb_connu
 
     await asyncio.gather(
-        _wikipedia(conn, clients, tv_id, fiche_id, articles, languages, report),
-        _tvmaze(conn, clients, tv_id, fiche_id, faits.get("tvmaze"), imdb, titre, report),
+        _wikipedia(conn, clients, cible, articles, languages, report),
+        _tvmaze(conn, clients, cible, faits.get("tvmaze"), imdb, titre, report),
     )
 
 
@@ -152,13 +168,12 @@ async def _apres_wikidata(
 async def _wikidata(
     conn: psycopg.AsyncConnection,
     clients: Clients,
-    tv_id: int,
-    fiche_id: int,
+    cible: Cible,
     imdb_connu: str | None,
     report: EnrichReport,
 ) -> dict[str, Any] | None:
     """P4983 d'abord, P345 en second recours. Voir le module pour le pourquoi."""
-    resultat = await clients.wikidata.by_tmdb(tv_id)
+    resultat = await clients.wikidata.by_tmdb(cible.tv_id)
     report.requests += 1
     voie = "p4983"
     faits = wikidata.lire_lookup(resultat.payload) if resultat.ok else None
@@ -169,30 +184,39 @@ async def _wikidata(
         voie = "p345"
         faits = wikidata.lire_lookup(resultat.payload) if resultat.ok else None
 
-    await _noter(conn, wikidata.SOURCE, "lookup", str(tv_id), resultat)
+    await _noter(conn, wikidata.SOURCE, "lookup", str(cible.tv_id), resultat)
     if not resultat.ok:
         report.errors.append(f"wikidata: {resultat.error or resultat.status}")
     if faits is None:
         return None
 
-    await _enregistrer_wikidata(conn, tv_id, fiche_id, faits, voie, report)
+    await _enregistrer_wikidata(conn, cible, faits, voie, report)
     return faits
 
 
 async def _enregistrer_wikidata(
     conn: psycopg.AsyncConnection,
-    tv_id: int,
-    fiche_id: int,
+    cible: Cible,
     faits: dict[str, Any],
     voie: str,
     report: EnrichReport,
 ) -> None:
     report.qid = faits["qid"]
     report.resolved_by = voie
+    # Les identifiants appris remontent sur le pivot : c'est lui qui permettra
+    # la réconciliation le jour où une œuvre saisie hors TMDB y apparaît.
+    await store.attach_identifiers(
+        conn,
+        cible.oeuvre_id,
+        wikidata_qid=faits["qid"],
+        imdb_id=faits.get("imdb"),
+        tvmaze_id=_entier(faits.get("tvmaze")),
+    )
     await store.upsert_riche_source(
         conn,
-        raw_source_id=fiche_id,
-        tv_id=tv_id,
+        oeuvre_id=cible.oeuvre_id,
+        raw_source_id=cible.fiche_id,
+        tv_id=cible.tv_id,
         source=wikidata.SOURCE,
         source_id=faits["qid"],
         url=f"https://www.wikidata.org/wiki/{faits['qid']}",
@@ -226,8 +250,7 @@ async def _sitelinks(clients: Clients, qid: str, report: EnrichReport) -> dict[s
 async def _wikipedia(
     conn: psycopg.AsyncConnection,
     clients: Clients,
-    tv_id: int,
-    fiche_id: int,
+    cible: Cible,
     articles: dict[str, str],
     languages: tuple[str, ...],
     report: EnrichReport,
@@ -248,8 +271,9 @@ async def _wikipedia(
         titre_canonique, texte = lu
         await store.upsert_riche_source(
             conn,
-            raw_source_id=fiche_id,
-            tv_id=tv_id,
+            oeuvre_id=cible.oeuvre_id,
+            raw_source_id=cible.fiche_id,
+            tv_id=cible.tv_id,
             source=wikipedia.SOURCE,
             lang=lang,
             source_id=titre_canonique,
@@ -265,8 +289,7 @@ async def _wikipedia(
 async def _tvmaze(
     conn: psycopg.AsyncConnection,
     clients: Clients,
-    tv_id: int,
-    fiche_id: int,
+    cible: Cible,
     tvmaze_id: str | None,
     imdb: str | None,
     titre: str | None,
@@ -300,10 +323,14 @@ async def _tvmaze(
     lu = tvmaze.lire_show(resultat.payload)
     if lu is None:
         return
+    await store.attach_identifiers(
+        conn, cible.oeuvre_id, imdb_id=lu.get("imdb"), tvmaze_id=_entier(lu.get("id"))
+    )
     await store.upsert_riche_source(
         conn,
-        raw_source_id=fiche_id,
-        tv_id=tv_id,
+        oeuvre_id=cible.oeuvre_id,
+        raw_source_id=cible.fiche_id,
+        tv_id=cible.tv_id,
         source=tvmaze.SOURCE,
         source_id=str(lu["id"]),
         url=lu.get("url"),
@@ -429,7 +456,13 @@ async def enrich_all(
             break
         tranche = ids[depart : depart + lot]
         fiches = await store.latest_fiche_ids(conn, tranche)
-        faits_par_id = await _resoudre_le_lot(conn, clients, tranche, fiches, report)
+        oeuvres = await store.ensure_oeuvres(conn, [i for i in tranche if i in fiches])
+        cibles = {
+            tv_id: Cible(tv_id=tv_id, oeuvre_id=oeuvres[tv_id], fiche_id=fiches[tv_id])
+            for tv_id in tranche
+            if tv_id in fiches
+        }
+        faits_par_id = await _resoudre_le_lot(conn, clients, tranche, cibles, report)
         titres = await _titres_du_catalogue(conn, tranche)
         imdbs = await _imdbs_depuis_la_collecte(conn, tranche)
 
@@ -437,7 +470,7 @@ async def enrich_all(
             conn,
             clients,
             tranche,
-            fiches=fiches,
+            cibles=cibles,
             faits_par_id=faits_par_id,
             titres=titres,
             imdbs=imdbs,
@@ -459,7 +492,7 @@ async def _traiter_la_tranche(
     clients: Clients,
     tranche: list[int],
     *,
-    fiches: dict[int, int],
+    cibles: dict[int, Cible],
     faits_par_id: dict[int, dict[str, Any]],
     titres: dict[int, str],
     imdbs: dict[int, str],
@@ -481,7 +514,7 @@ async def _traiter_la_tranche(
         # Sans fiche collectée, rien à raccrocher. Sans item et sans imdb_id,
         # rien à tenter : la recherche par titre ne pourrait rien confirmer.
         # Le passage est déjà noté dans fetch_state.
-        if tv_id in fiches and (tv_id in faits_par_id or imdbs.get(tv_id)):
+        if tv_id in cibles and (tv_id in faits_par_id or imdbs.get(tv_id)):
             file.put_nowait(tv_id)
         else:
             report.done += 1
@@ -502,8 +535,7 @@ async def _traiter_la_tranche(
                 await _apres_wikidata(
                     conn,
                     clients,
-                    tv_id,
-                    fiches[tv_id],
+                    cibles[tv_id],
                     faits_par_id.get(tv_id),
                     imdbs.get(tv_id),
                     titres.get(tv_id),
@@ -529,7 +561,7 @@ async def _resoudre_le_lot(
     conn: psycopg.AsyncConnection,
     clients: Clients,
     ids: list[int],
-    fiches: dict[int, int],
+    cibles: dict[int, Cible],
     report: EnrichAllReport,
 ) -> dict[int, dict[str, Any]]:
     """Une requête SPARQL pour cent séries, et le passage noté pour chacune."""
@@ -553,11 +585,11 @@ async def _resoudre_le_lot(
         )
 
     for tv_id, faits in faits_par_id.items():
-        fiche_id = fiches.get(tv_id)
-        if fiche_id is None:
+        cible = cibles.get(tv_id)
+        if cible is None:
             continue
         detail = EnrichReport(tv_id=tv_id)
-        await _enregistrer_wikidata(conn, tv_id, fiche_id, faits, "p4983", detail)
+        await _enregistrer_wikidata(conn, cible, faits, "p4983", detail)
         report.rows_written += detail.rows_written
     report.resolved += len(faits_par_id)
     return faits_par_id
@@ -607,6 +639,14 @@ async def _imdb_depuis_la_collecte(conn: psycopg.AsyncConnection, tv_id: int) ->
     surtout il **décide** de l'appariement TVmaze."""
     payload = await store.latest_payload(conn, source="tmdb", kind="tv", source_id=str(tv_id))
     return ((payload or {}).get("external_ids") or {}).get("imdb_id") or None
+
+
+def _entier(valeur: Any) -> int | None:
+    """`oeuvre.tvmaze_id` est un entier ; Wikidata le donne en chaîne."""
+    try:
+        return int(valeur) if valeur is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 async def _noter(

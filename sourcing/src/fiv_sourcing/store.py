@@ -5,19 +5,27 @@ module ne fait d'UPDATE dessus, et l'enrichissement n'y écrit jamais. La seule
 chose qu'on évite, c'est de réécrire un contenu strictement identique — d'où
 l'empreinte.
 
+`oeuvre` est le pivot d'identité : aucun identifiant universel n'existe dehors
+— la moitié du Wikidata « séries » ignore TMDB, TVmaze ne porte jamais d'id
+TMDB — donc on tient le nôtre, et chaque identifiant externe y est nullable.
+
 `riche_source` porte l'enrichissement — ce que les sources tierces apportent —
-raccroché à la fiche collectée par `raw_source_id`. Une ligne par (fiche,
-source, langue), remplacée à chaque passe.
+attaché au pivot par `oeuvre_id`. Une ligne par (œuvre, source, langue),
+remplacée à chaque passe. `id_tmdb` et `raw_source_id` y sont nullables : une
+œuvre hors TMDB n'a ni l'un ni l'autre.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
 
 import psycopg
 from psycopg.types.json import Jsonb
+
+log = logging.getLogger(__name__)
 
 
 def payload_digest(payload: Any) -> bytes:
@@ -143,11 +151,76 @@ async def latest_fiche_ids(conn: psycopg.AsyncConnection, ids: list[int]) -> dic
         return dict(await cur.fetchall())
 
 
+async def ensure_oeuvres(
+    conn: psycopg.AsyncConnection, ids: list[int], *, univers: str = "series"
+) -> dict[int, int]:
+    """id TMDB → id d'œuvre, en créant les œuvres manquantes.
+
+    Le pivot est créé paresseusement, à l'enrichissement : inutile de fabriquer
+    228 000 lignes d'avance pour un catalogue dont 64 % n'auront jamais une
+    ligne de riche_source.
+    """
+    if not ids:
+        return {}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into oeuvre (univers, id_tmdb)
+            select %s, unnest(%s::int[])
+            on conflict do nothing
+            """,
+            (univers, ids),
+        )
+        await cur.execute(
+            "select id_tmdb, id from oeuvre where univers = %s and id_tmdb = any(%s)",
+            (univers, ids),
+        )
+        return dict(await cur.fetchall())
+
+
+async def attach_identifiers(
+    conn: psycopg.AsyncConnection,
+    oeuvre_id: int,
+    *,
+    wikidata_qid: str | None = None,
+    imdb_id: str | None = None,
+    tvmaze_id: int | None = None,
+) -> None:
+    """Pose sur l'œuvre les identifiants externes appris en route.
+
+    `coalesce` : on complète, on n'écrase pas. Et une violation d'unicité n'est
+    pas une erreur de programme — c'est **une réconciliation à faire** : une
+    autre œuvre (saisie hors TMDB, typiquement) revendique déjà ce QID ou cet id
+    TVmaze. On la journalise au lieu de tuer la passe ; la fusion est un geste
+    humain, pas un effet de bord d'enrichissement.
+    """
+    try:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                update oeuvre set
+                    wikidata_qid = coalesce(wikidata_qid, %s),
+                    imdb_id      = coalesce(imdb_id, %s),
+                    tvmaze_id    = coalesce(tvmaze_id, %s)
+                where id = %s
+                """,
+                (wikidata_qid, imdb_id, tvmaze_id, oeuvre_id),
+            )
+    except psycopg.errors.UniqueViolation as exc:
+        log.warning(
+            "œuvre %s : identifiant déjà revendiqué par une autre œuvre — "
+            "réconciliation à faire (%s)",
+            oeuvre_id,
+            exc.diag.constraint_name,
+        )
+
+
 async def upsert_riche_source(
     conn: psycopg.AsyncConnection,
     *,
-    raw_source_id: int,
-    tv_id: int,
+    oeuvre_id: int,
+    raw_source_id: int | None = None,
+    tv_id: int | None = None,
     source: str,
     lang: str = "",
     source_id: str,
@@ -157,21 +230,24 @@ async def upsert_riche_source(
     facts: dict[str, Any] | None = None,
     resolved_by: str | None = None,
 ) -> None:
-    """Enregistre ce qu'une source tierce apporte sur une fiche collectée.
+    """Enregistre ce qu'une source tierce apporte sur une œuvre.
 
-    La clé porte la série (`id_tmdb`, source, langue), pas la fiche : après une
-    re-collecte, la fiche a un nouvel id (`raw_source` est append-only), et le
-    ré-enrichissement met simplement `raw_source_id` à jour au lieu de dupliquer
-    la série.
+    La clé porte l'œuvre (pivot, source, langue) : c'est elle qui attache entre
+    elles les lignes d'une même série, TMDB ou pas. `raw_source_id` et `tv_id`
+    sont nullables — une œuvre hors TMDB n'a ni fiche ni id TMDB. Après une
+    re-collecte, le ré-enrichissement met `raw_source_id` à jour au lieu de
+    dupliquer.
     """
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            insert into riche_source (raw_source_id, id_tmdb, source, lang, source_id,
-                                      url, content, media, facts, resolved_by, fetched_at)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
-            on conflict (id_tmdb, source, lang) do update set
+            insert into riche_source (oeuvre_id, raw_source_id, id_tmdb, source, lang,
+                                      source_id, url, content, media, facts,
+                                      resolved_by, fetched_at)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            on conflict (oeuvre_id, source, lang) do update set
                 raw_source_id = excluded.raw_source_id,
+                id_tmdb       = excluded.id_tmdb,
                 source_id     = excluded.source_id,
                 url           = excluded.url,
                 content       = excluded.content,
@@ -181,6 +257,7 @@ async def upsert_riche_source(
                 fetched_at    = now()
             """,
             (
+                oeuvre_id,
                 raw_source_id,
                 tv_id,
                 source,
