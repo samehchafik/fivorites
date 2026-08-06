@@ -58,14 +58,19 @@ function directionsFor(sort: string): { value: string; label: string }[] {
   ]
 }
 
-/** Le compte des résultats, rapporté au total quand un filtre est actif. */
-function Filtre({ data }: { data: CardsResponse }) {
+/** Le compte des résultats, rapporté au total dès qu'un filtre est actif.
+ *
+ *  Le rapport s'affiche même quand le filtre ne retire rien : « 1 240 / 1 240 »
+ *  dit qu'il est en place et qu'il ne mord pas, ce qu'un nombre seul ne dit
+ *  pas — on ne peut alors pas distinguer « le filtre est sans effet » de « le
+ *  filtre n'est pas appliqué ». */
+function Filtre({ data, actif }: { data: CardsResponse; actif: boolean }) {
   const total = data.projection.projected
-  // `total` est le nombre de vignettes de la projection, tous filtres retirés.
-  // Il n'a de sens comme dénominateur que s'il est supérieur : une projection
-  // rafraîchie entre deux requêtes pourrait le rendre inférieur, et « 12 / 8 »
-  // ferait douter des deux nombres.
-  if (!Number.isFinite(total) || total <= data.total) {
+  // Le dénominateur est le nombre de vignettes tous filtres retirés. Il n'a de
+  // sens que s'il n'est pas inférieur : une projection rafraîchie entre deux
+  // requêtes pourrait le rendre plus petit, et « 12 / 8 » ferait douter des
+  // deux nombres plutôt que d'en éclairer un.
+  if (!actif || !Number.isFinite(total) || total < data.total) {
     return <>{formatNumber(data.total)} série(s) collectée(s)</>
   }
   return (
@@ -127,6 +132,10 @@ export function SeriesGrid({
 }) {
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1
   const projection = data?.projection
+
+  // Un filtre est « en place » dès qu'il peut retirer des lignes, qu'il en
+  // retire ou non.
+  const filtreActif = state.search.trim() !== '' || state.withPoster || state.withOverview
 
   return (
     <Stack gap="md">
@@ -278,7 +287,7 @@ export function SeriesGrid({
               seul ne dit pas si le filtre a mordu, ni sur quoi il mord : entre
               « 142 séries » et « 142 sur 1 240 », seul le second permet de
               juger si le catalogue est maigre ou si le filtre est sévère. */}
-          {data ? <Filtre data={data} /> : '—'}
+          {data ? <Filtre data={data} actif={filtreActif} /> : '—'}
           {' · tri : '}
           <Text span fw={600}>
             {labelOf(state.sort)}
