@@ -63,12 +63,26 @@ export function SeriesCard({
             <Text fw={600} lineClamp={2} dir="auto" style={{ minWidth: 0 }}>
               {card.name ?? `#${card.id}`}
             </Text>
-            {card.voteAverage ? (
-              <Group gap={2} wrap="nowrap" c="dimmed">
-                <IconStar size={13} />
-                <Text size="xs">{card.voteAverage.toFixed(1)}</Text>
-              </Group>
-            ) : null}
+
+            {/* Deux nombres qu'on confond volontiers, et qui n'ont rien à voir.
+                La popularité est un critère de tri : ne pas l'afficher rendait
+                ce tri invérifiable, et l'étoile — la note des votants — servait
+                de substitut trompeur. Les deux sont là, nommés. */}
+            <Group gap={8} wrap="nowrap" c="dimmed">
+              <Tooltip label="Popularité TMDB — le critère de tri">
+                <Text size="xs" ff="monospace">
+                  {card.popularity === null ? 'pop. —' : `pop. ${card.popularity.toFixed(1)}`}
+                </Text>
+              </Tooltip>
+              {card.voteAverage ? (
+                <Tooltip label={`Note des votants : ${card.voteAverage.toFixed(1)} sur 10`}>
+                  <Group gap={2} wrap="nowrap">
+                    <IconStar size={13} />
+                    <Text size="xs">{card.voteAverage.toFixed(1)}</Text>
+                  </Group>
+                </Tooltip>
+              ) : null}
+            </Group>
           </Group>
 
           <Group gap={6} wrap="wrap">
