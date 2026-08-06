@@ -184,6 +184,24 @@ export interface CastMember {
   episodeCount: number | null
 }
 
+export interface WatchProvider {
+  id: number | null
+  name: string | null
+  logoPath: string | null
+}
+
+/** Où regarder la série, dans le pays de la langue choisie. TMDB indexe cette
+ *  donnée par pays — une série est sur Netflix en France et sur Shahid en
+ *  Arabie saoudite — et la tient de JustWatch, qu'il faut citer. */
+export interface Watch {
+  country: string | null
+  link: string | null
+  offers: { kind: string; label: string; providers: WatchProvider[] }[]
+  /** Les pays où la série est disponible : distingue « rien chez vous » de
+   *  « aucune donnée de disponibilité ». */
+  countries: string[]
+}
+
 export interface Work {
   id: number
   name: string | null
@@ -210,6 +228,7 @@ export interface Work {
   translations: string[]
   gallery: { backdrops: string[]; posters: string[] }
   cast: CastMember[]
+  watch: Watch
   seasons: SeasonSummary[]
   raw: { fetchedAt: string; httpStatus: number }
   catalog: { popularity: number; adult: boolean; exportedOn: string } | null

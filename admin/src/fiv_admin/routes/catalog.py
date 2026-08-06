@@ -35,11 +35,14 @@ async def cards(
     minPopularity: float | None = Query(default=None, ge=0),
     sort: str = Query(default="air_date"),
     order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    sort2: str | None = Query(default=None),
+    order2: str = Query(default="desc", pattern="^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
     pageSize: int = Query(default=24, ge=1, le=96),
 ) -> dict[str, Any]:
-    if sort not in CARD_SORTS:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"tri inconnu : {sort}")
+    for key in (sort, sort2):
+        if key is not None and key not in CARD_SORTS:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"tri inconnu : {key}")
 
     rows, total = await fetch_cards(
         conn,
@@ -49,6 +52,8 @@ async def cards(
             min_popularity=minPopularity,
             sort=sort,
             descending=order == "desc",
+            sort2=sort2 or None,
+            descending2=order2 == "desc",
             page=page,
             page_size=pageSize,
         ),

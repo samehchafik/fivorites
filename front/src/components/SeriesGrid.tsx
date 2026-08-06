@@ -25,10 +25,34 @@ export const CARD_SORTS: { value: string; label: string }[] = [
   { value: 'fetched', label: 'Dernière collecte' },
 ]
 
+/** Le sens de tri se dit autrement selon ce qu'on trie : « du plus récent »
+ *  n'a aucun sens pour un titre, ni « de A à Z » pour une date. */
+function directionsFor(sort: string): { value: string; label: string }[] {
+  if (sort === 'name') {
+    return [
+      { value: 'asc', label: 'de A à Z' },
+      { value: 'desc', label: 'de Z à A' },
+    ]
+  }
+  if (sort === 'popularity') {
+    return [
+      { value: 'desc', label: 'des plus populaires' },
+      { value: 'asc', label: 'des moins populaires' },
+    ]
+  }
+  return [
+    { value: 'desc', label: 'du plus récent au plus ancien' },
+    { value: 'asc', label: 'du plus ancien au plus récent' },
+  ]
+}
+
 export interface GridState {
   search: string
   sort: string
   order: 'asc' | 'desc'
+  /** Chaîne vide = pas de second critère. */
+  sort2: string
+  order2: 'asc' | 'desc'
   pageSize: number
 }
 
@@ -82,15 +106,40 @@ export function SeriesGrid({
           />
           <Select
             label="Sens"
-            data={[
-              { value: 'desc', label: 'du plus récent au plus ancien' },
-              { value: 'asc', label: 'du plus ancien au plus récent' },
-            ]}
+            data={directionsFor(state.sort)}
             value={state.order}
             onChange={(next) => next && onState({ ...state, order: next as 'asc' | 'desc' })}
             allowDeselect={false}
-            w={260}
+            w={230}
           />
+
+          {/* Le départage. Sans lui, un lot de séries sorties le même jour
+              tombe dans un ordre arbitraire qui peut changer d'une page à
+              l'autre — la pagination fait alors réapparaître une série ou en
+              saute une. Facultatif : « aucun » est la valeur de départ. */}
+          <Select
+            label="Puis par"
+            description="à valeur égale"
+            data={[
+              { value: '', label: 'aucun' },
+              ...CARD_SORTS.filter((entry) => entry.value !== state.sort),
+            ]}
+            value={state.sort2}
+            onChange={(next) => onState({ ...state, sort2: next ?? '' })}
+            allowDeselect={false}
+            w={190}
+          />
+
+          {state.sort2 && (
+            <Select
+              label="Sens"
+              data={directionsFor(state.sort2)}
+              value={state.order2}
+              onChange={(next) => next && onState({ ...state, order2: next as 'asc' | 'desc' })}
+              allowDeselect={false}
+              w={230}
+            />
+          )}
           <Select
             label="Par page"
             data={['12', '24', '48', '96']}

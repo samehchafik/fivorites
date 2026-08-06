@@ -85,6 +85,48 @@ SERIES_1399 = {
         ]
     },
     "translations": {"translations": [{"iso_639_1": "fr"}, {"iso_639_1": "ar"}]},
+    # La forme exacte de TMDB : un dictionnaire par pays, des rubriques par
+    # mode d'accès, et un `display_priority` qui donne l'ordre d'affichage.
+    "watch/providers": {
+        "results": {
+            "FR": {
+                "link": "https://www.themoviedb.org/tv/1399/watch?locale=FR",
+                "flatrate": [
+                    {
+                        "provider_id": 119,
+                        "provider_name": "Prime Video",
+                        "logo_path": "/prime.jpg",
+                        "display_priority": 3,
+                    },
+                    {
+                        "provider_id": 8,
+                        "provider_name": "Netflix",
+                        "logo_path": "/netflix.jpg",
+                        "display_priority": 1,
+                    },
+                ],
+                "rent": [
+                    {
+                        "provider_id": 2,
+                        "provider_name": "Apple TV",
+                        "logo_path": "/apple.jpg",
+                        "display_priority": 5,
+                    }
+                ],
+            },
+            "SA": {
+                "link": "https://www.themoviedb.org/tv/1399/watch?locale=SA",
+                "flatrate": [
+                    {
+                        "provider_id": 350,
+                        "provider_name": "Shahid VIP",
+                        "logo_path": "/shahid.jpg",
+                        "display_priority": 2,
+                    }
+                ],
+            },
+        }
+    },
 }
 
 SERIES_2000 = {
@@ -233,6 +275,60 @@ async def test_cards_sort_and_search(conn: psycopg.AsyncConnection) -> None:
     assert total == 1 and found[0]["id"] == 2000
 
 
+async def test_a_second_criterion_breaks_the_ties(conn: psycopg.AsyncConnection) -> None:
+    """« Les plus récentes, et à date égale les plus populaires ».
+
+    Sans départage, un lot de séries sorties le même jour tombe dans un ordre
+    arbitraire, qui peut changer d'une page à l'autre — la pagination fait alors
+    apparaître deux fois la même série, ou en saute une.
+    """
+    await seed(conn)
+    # Trois séries à la même date, popularités distinctes.
+    for tv_id, popularity, digest in (
+        (5001, 1.0, b"\x31"),
+        (5002, 90.0, b"\x32"),
+        (5003, 40.0, b"\x33"),
+    ):
+        await conn.execute(
+            "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+            " values (%s, %s, %s, date '2026-08-05')",
+            (tv_id, f"Même jour {tv_id}", popularity),
+        )
+        await conn.execute(
+            """
+            insert into raw_source (source, kind, source_id, lang, http_status,
+                                    payload, payload_sha256)
+            values ('tmdb', 'tv', %s, 'fr-FR', 200,
+                    jsonb_build_object('name', %s::text, 'first_air_date', '2020-01-01'), %s)
+            """,
+            (str(tv_id), f"Même jour {tv_id}", digest),
+        )
+    await refresh_cards(conn)
+
+    same_day = [5002, 5003, 5001]  # par popularité décroissante
+
+    rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR", sort="air_date", sort2="popularity"))
+    assert [row["id"] for row in rows if row["id"] in same_day] == same_day
+
+    rows, _ = await fetch_cards(
+        conn, CardQuery(lang="fr-FR", sort="air_date", sort2="popularity", descending2=False)
+    )
+    assert [row["id"] for row in rows if row["id"] in same_day] == list(reversed(same_day))
+
+
+async def test_a_second_criterion_identical_to_the_first_is_ignored(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """`order by x desc, x asc` est contradictoire et Postgres n'en dirait
+    rien : on écarte le doublon plutôt que de produire la clause."""
+    await seed(conn)
+    q = CardQuery(lang="fr-FR", sort="air_date", sort2="air_date", descending2=False)
+
+    assert q.criteria == (("air_date", True),)
+    rows, _ = await fetch_cards(conn, q)
+    assert [row["id"] for row in rows] == [1399, 2000]
+
+
 async def test_projection_state_says_when_it_lags(conn: psycopg.AsyncConnection) -> None:
     await seed(conn)
     assert await cards_state(conn) == {
@@ -311,6 +407,49 @@ async def test_seasons_report_their_languages(conn: psycopg.AsyncConnection) -> 
     # La saison 2 a été tentée en arabe et a échoué : elle est « connue » dans
     # cette langue, mais son 404 se voit.
     assert second["collected"]["ar-SA"]["status"] == 404
+
+
+async def test_watch_providers_follow_the_country_of_the_language(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """TMDB indexe la disponibilité par pays. Le sélecteur de langue porte déjà
+    la région : `fr-FR` interroge la France, `ar-SA` l'Arabie saoudite."""
+    await seed(conn)
+
+    france = await fetch_work(conn, 1399, "fr-FR")
+    arabie = await fetch_work(conn, 1399, "ar-SA")
+
+    assert france is not None and arabie is not None
+    assert france["watch"]["country"] == "FR"
+    assert [offer["kind"] for offer in france["watch"]["offers"]] == ["flatrate", "rent"]
+    # Trié par `display_priority` : Netflix (1) avant Prime Video (3).
+    assert [p["name"] for p in france["watch"]["offers"][0]["providers"]] == [
+        "Netflix",
+        "Prime Video",
+    ]
+    assert france["watch"]["link"].endswith("locale=FR")
+
+    assert arabie["watch"]["country"] == "SA"
+    assert [p["name"] for p in arabie["watch"]["offers"][0]["providers"]] == ["Shahid VIP"]
+
+
+async def test_a_country_without_offer_is_not_a_missing_datum(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """« Pas de plateforme en Turquie » et « aucune donnée de disponibilité »
+    sont deux choses différentes, et le front doit pouvoir les distinguer."""
+    await seed(conn)
+    turquie = await fetch_work(conn, 1399, "tr-TR")
+
+    assert turquie is not None
+    assert turquie["watch"]["offers"] == []
+    # … mais on sait que la série est disponible ailleurs.
+    assert turquie["watch"]["countries"] == ["FR", "SA"]
+
+    # Une série dont le brut ne porte aucun `watch/providers` : rien du tout.
+    sans = await fetch_work(conn, 2000, "fr-FR")
+    assert sans is not None
+    assert sans["watch"]["offers"] == [] and sans["watch"]["countries"] == []
 
 
 async def test_work_absent_from_the_raw(conn: psycopg.AsyncConnection) -> None:

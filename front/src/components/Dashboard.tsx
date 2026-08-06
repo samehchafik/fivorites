@@ -45,6 +45,11 @@ const DEFAULT_GRID: GridState = {
   // Le tri demandé : de la plus récente à la plus ancienne.
   sort: 'air_date',
   order: 'desc',
+  // Le départage, par défaut sur la popularité : à date de diffusion égale —
+  // et elles le sont souvent, tout un lot sortant le même jour — l'ordre serait
+  // sinon arbitraire et pourrait changer d'une page à l'autre.
+  sort2: 'popularity',
+  order2: 'desc',
   pageSize: 24,
 }
 
@@ -92,13 +97,25 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   })
 
   const cards = useQuery<CardsResponse>({
-    queryKey: ['cards', lang, gridSearch, grid.sort, grid.order, gridPage, grid.pageSize],
+    queryKey: [
+      'cards',
+      lang,
+      gridSearch,
+      grid.sort,
+      grid.order,
+      grid.sort2,
+      grid.order2,
+      gridPage,
+      grid.pageSize,
+    ],
     queryFn: () =>
       api.cards({
         lang,
         search: gridSearch,
         sort: grid.sort,
         order: grid.order,
+        sort2: grid.sort2 || undefined,
+        order2: grid.order2,
         page: gridPage,
         pageSize: grid.pageSize,
       }),
@@ -156,7 +173,15 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     filters.order,
     filters.pageSize,
   ])
-  useEffect(() => setGridPage(1), [lang, gridSearch, grid.sort, grid.order, grid.pageSize])
+  useEffect(() => setGridPage(1), [
+    lang,
+    gridSearch,
+    grid.sort,
+    grid.order,
+    grid.sort2,
+    grid.order2,
+    grid.pageSize,
+  ])
 
   const languages = meta.data?.languages ?? []
   const langLabel = useMemo(

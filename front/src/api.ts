@@ -102,6 +102,9 @@ export interface CardsParams extends Record<string, QueryValue> {
   minPopularity?: number | null
   sort: string
   order: 'asc' | 'desc'
+  /** Critère de départage, facultatif. Vide = un seul critère. */
+  sort2?: string
+  order2?: 'asc' | 'desc'
   page: number
   pageSize: number
 }

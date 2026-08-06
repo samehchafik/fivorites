@@ -47,15 +47,23 @@ Le **sélecteur de langue** est commun aux deux et se trouve dans l'en-tête.
 Il change trois choses :
 
 * le compteur de couverture de chaque carte et de chaque ligne ;
+* **le pays** dont on affiche les plateformes de streaming ;
 * la colonne « couverture » et les filtres « présente / absente de la langue » ;
 * **les synopsis d'épisode** dans la fiche d'une série — le seul endroit où la
   langue change la matière affichée et pas seulement un chiffre. Ces synopsis
   n'existent que parce que la collecte a redemandé la saison entière dans cette
   langue ; l'endpoint `translations` de TMDB ne couvre pas les épisodes.
 
-Au clic sur une carte : la fiche complète, avec un accordéon par saison
-(épisodes chargés à l'ouverture du volet), la galerie de visuels, la
-distribution, et un onglet technique.
+Au clic sur une carte : la fiche complète — **où regarder la série**, un
+accordéon par saison (épisodes chargés à l'ouverture du volet), la galerie de
+visuels, la distribution, et un onglet technique.
+
+La disponibilité en streaming s'établit **par pays**, jamais « en général » :
+c'est ainsi que les droits se vendent. Le pays vient de la région du sélecteur
+de langue (`fr-FR` → France, `ar-SA` → Arabie saoudite), ce qui évite un second
+sélecteur qui dirait presque toujours la même chose que le premier. La donnée
+vient de JustWatch via TMDB, était déjà collectée par le sourcing
+(`watch/providers` dans l'`append_to_response`), et n'était simplement pas lue.
 
 ## Installation
 
@@ -104,7 +112,7 @@ make dev          # l'API (8182) et Vite (5173) côte à côte → http://localh
 make api          # l'API seule, rechargement à chaud
 make web-build    # construit ../front dans ../www
 make serve        # l'API sert le front → http://127.0.0.1:8182
-make test         # 76 tests
+make test         # 80 tests
 make lint         # ruff + tsc
 ```
 

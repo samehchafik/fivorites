@@ -116,6 +116,7 @@ sudo chown -R "$USER" www
 | [`src/components/SeriesCard.tsx`](src/components/SeriesCard.tsx) | une vignette — affiche à gauche, l'essentiel à droite |
 | [`src/components/SeriesModal.tsx`](src/components/SeriesModal.tsx) | la fiche : saisons, distribution, galerie, technique |
 | [`src/components/SeasonPanel.tsx`](src/components/SeasonPanel.tsx) | les épisodes d'une saison, dans la langue choisie |
+| [`src/components/WatchPanel.tsx`](src/components/WatchPanel.tsx) | où regarder la série, dans le pays de la langue choisie |
 | [`src/components/AcquisitionTable.tsx`](src/components/AcquisitionTable.tsx) | le tableau d'avancement sur tout le catalogue |
 | [`src/api.ts`](src/api.ts) | le seul point d'appel réseau |
 | [`src/types.ts`](src/types.ts) | le contrat avec l'API |

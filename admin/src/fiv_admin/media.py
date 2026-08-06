@@ -76,6 +76,21 @@ LANGUAGE_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
+def country_of(lang: str) -> str | None:
+    """La région d'un code de langue : `fr-FR` → `FR`, `ar-SA` → `SA`.
+
+    TMDB indexe la disponibilité en streaming **par pays**, pas par langue —
+    une série est sur Netflix en France et sur Shahid en Arabie saoudite. Le
+    sélecteur de langue porte déjà cette région : la réutiliser évite un second
+    sélecteur qui dirait presque toujours la même chose que le premier.
+
+    Une langue sans région (`fr` seul) ne désigne aucun marché ; on renvoie None
+    plutôt que d'en deviner un.
+    """
+    region = lang.rpartition("-")[2]
+    return region.upper() if len(region) == 2 and region.isalpha() else None
+
+
 def language_label(code: str) -> tuple[str, str]:
     """Libellé et drapeau d'un code langue. Une langue inconnue s'affiche par
     son code plutôt que de disparaître : si elle est en base, elle a été

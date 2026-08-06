@@ -22,6 +22,8 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
+from fiv_admin.media import country_of
+
 SOURCE = "tmdb"
 KIND_SERIES = "tv"
 KIND_SEASON = "tv_season"
@@ -43,6 +45,15 @@ GALLERY_LIMIT = 18
 CAST_LIMIT = 30
 
 
+# Les colonnes du SELECT final, où `page` a perdu les préfixes de tables.
+PAGE_SORTS: dict[str, sql.SQL] = {
+    "air_date": sql.SQL("p.first_air_date"),
+    "name": sql.SQL("coalesce(p.name, p.original_name)"),
+    "popularity": sql.SQL("p.popularity"),
+    "fetched": sql.SQL("p.fetched_at"),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class CardQuery:
     lang: str
@@ -50,12 +61,48 @@ class CardQuery:
     min_popularity: float | None = None
     sort: str = "air_date"
     descending: bool = True
+    # Le critère de départage. « Les plus récentes, et à date égale les plus
+    # populaires » : sans lui, tout un lot de séries sorties le même jour tombe
+    # dans un ordre arbitraire, qui change d'une page à l'autre.
+    sort2: str | None = None
+    descending2: bool = True
     page: int = 1
     page_size: int = 24
 
     @property
     def offset(self) -> int:
         return (self.page - 1) * self.page_size
+
+    @property
+    def criteria(self) -> tuple[tuple[str, bool], ...]:
+        """Les critères effectifs, du plus fort au plus faible.
+
+        Un second critère identique au premier est écarté : il ne départagerait
+        rien, et laisser passer `order by x desc, x asc` produirait une clause
+        contradictoire dont Postgres ne dirait rien.
+        """
+        if self.sort2 and self.sort2 != self.sort:
+            return ((self.sort, self.descending), (self.sort2, self.descending2))
+        return ((self.sort, self.descending),)
+
+
+def _order_by(
+    criteria: tuple[tuple[str, bool], ...], columns: dict[str, sql.SQL], tiebreak: sql.SQL
+) -> sql.SQL:
+    """La clause de tri, plus un départage final sur l'id.
+
+    Le départage n'est pas cosmétique : sans lui, deux lignes que tous les
+    critères déclarent égales peuvent changer de place entre deux pages, et la
+    pagination fait alors apparaître deux fois la même série ou en saute une.
+    """
+    parts = [
+        sql.SQL("{} {} nulls last").format(
+            columns[key], sql.SQL("desc") if desc else sql.SQL("asc")
+        )
+        for key, desc in criteria
+    ]
+    parts.append(tiebreak)
+    return sql.SQL(", ").join(parts)
 
 
 async def fetch_cards(
@@ -85,8 +132,8 @@ async def fetch_cards(
         ]
     )
 
-    direction = sql.SQL("desc") if q.descending else sql.SQL("asc")
-    order = sql.SQL("{} {} nulls last, v.id desc").format(CARD_SORTS[q.sort], direction)
+    order = _order_by(q.criteria, CARD_SORTS, sql.SQL("v.id desc"))
+    order_page = _order_by(q.criteria, PAGE_SORTS, sql.SQL("p.id desc"))
 
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
@@ -156,28 +203,12 @@ async def fetch_cards(
                 left join parts t on t.sid = p.id::text
                 order by {order_page}
                 """
-            ).format(
-                where=where,
-                order=order,
-                order_page=sql.SQL("{} {} nulls last, p.id desc").format(
-                    _page_column(q.sort), direction
-                ),
-            ),
+            ).format(where=where, order=order, order_page=order_page),
             params,
         )
         rows = await cur.fetchall()
 
     return [_shape_card(row, q.lang) for row in rows], total
-
-
-def _page_column(sort: str) -> sql.SQL:
-    """Le SELECT final trie sur `page`, où les colonnes ont perdu leur préfixe."""
-    return {
-        "air_date": sql.SQL("p.first_air_date"),
-        "name": sql.SQL("coalesce(p.name, p.original_name)"),
-        "popularity": sql.SQL("p.popularity"),
-        "fetched": sql.SQL("p.fetched_at"),
-    }[sort]
 
 
 def _shape_card(row: dict[str, Any], lang: str) -> dict[str, Any]:
@@ -271,7 +302,24 @@ async def fetch_work(
                        from jsonb_array_elements(
                            coalesce(r.payload -> 'translations' -> 'translations', '[]'::jsonb)
                        ) t
-                   ), '[]'::jsonb) as translations
+                   ), '[]'::jsonb) as translations,
+                   -- La disponibilité en streaming, pour le pays de la langue
+                   -- choisie seulement. Le brut en porte une centaine ; les
+                   -- envoyer tous ferait transiter un catalogue mondial pour
+                   -- afficher trois logos.
+                   coalesce(
+                       r.payload -> 'watch/providers' -> 'results' -> %(country)s,
+                       '{}'::jsonb
+                   ) as providers,
+                   -- Les pays où la série est disponible, pour pouvoir dire
+                   -- « rien chez vous, mais disponible ailleurs » plutôt qu'un
+                   -- vide qu'on prendrait pour une donnée manquante.
+                   coalesce((
+                       select jsonb_agg(pays order by pays)
+                       from jsonb_object_keys(
+                           coalesce(r.payload -> 'watch/providers' -> 'results', '{}'::jsonb)
+                       ) as pays
+                   ), '[]'::jsonb) as provider_countries
             from raw_source r
             where r.source = %(source)s and r.kind = %(kind)s and r.source_id = %(id)s
               and r.http_status between 200 and 299
@@ -282,6 +330,7 @@ async def fetch_work(
                 "source": SOURCE,
                 "kind": KIND_SERIES,
                 "id": str(work_id),
+                "country": country_of(lang) or "",
                 "backdrops": f"$.images.backdrops[0 to {GALLERY_LIMIT - 1}]",
                 "posters": f"$.images.posters[0 to {GALLERY_LIMIT - 1}]",
                 "agg_cast": f"$.aggregate_credits.cast[0 to {CAST_LIMIT - 1}]",
@@ -369,6 +418,7 @@ async def fetch_work(
             "posters": [image.get("file_path") for image in head["posters"]],
         },
         "cast": [_shape_member(member) for member in head["members"]],
+        "watch": _shape_watch(head["providers"], head["provider_countries"], lang),
         "seasons": seasons,
         "raw": {"fetchedAt": head["fetched_at"], "httpStatus": head["http_status"]},
         "catalog": (
@@ -380,6 +430,55 @@ async def fetch_work(
             if catalog
             else None
         ),
+    }
+
+
+# Les rubriques de TMDB, dans l'ordre où elles intéressent : par abonnement
+# d'abord, puis gratuit, puis à l'acte. `ads` est le gratuit financé par la
+# publicité, que JustWatch distingue du gratuit tout court.
+WATCH_KINDS: tuple[tuple[str, str], ...] = (
+    ("flatrate", "Par abonnement"),
+    ("free", "Gratuit"),
+    ("ads", "Gratuit avec publicité"),
+    ("rent", "En location"),
+    ("buy", "À l'achat"),
+)
+
+
+def _shape_watch(providers: dict[str, Any], countries: list[str], lang: str) -> dict[str, Any]:
+    """Où regarder la série, dans le pays de la langue choisie.
+
+    La donnée vient de JustWatch via TMDB, et TMDB impose de citer la source —
+    c'est fait dans le front, à côté des logos.
+    """
+    country = country_of(lang)
+    return {
+        "country": country,
+        # Le lien JustWatch du pays : la page qui fait autorité, et le seul
+        # endroit où l'on saura si l'offre a changé depuis la collecte.
+        "link": providers.get("link"),
+        "offers": [
+            {
+                "kind": kind,
+                "label": label,
+                "providers": [
+                    {
+                        "id": provider.get("provider_id"),
+                        "name": provider.get("provider_name"),
+                        "logoPath": provider.get("logo_path"),
+                    }
+                    for provider in sorted(
+                        providers.get(kind) or [],
+                        key=lambda p: p.get("display_priority") or 0,
+                    )
+                ],
+            }
+            for kind, label in WATCH_KINDS
+            if providers.get(kind)
+        ],
+        # Sert à distinguer « aucune plateforme dans ce pays » de « aucune
+        # donnée de disponibilité du tout ».
+        "countries": countries or [],
     }
 
 

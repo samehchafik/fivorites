@@ -21,6 +21,7 @@ import {
 } from '@mantine/core'
 import {
   IconAlertTriangle,
+  IconDeviceTv,
   IconExternalLink,
   IconPhoto,
   IconStar,
@@ -33,6 +34,7 @@ import { api, tmdbImage } from '../api'
 import { POSTER_FALLBACK, formatDate, formatNumber } from '../display'
 import type { Language, Work } from '../types'
 import { SeasonPanel } from './SeasonPanel'
+import { WatchPanel } from './WatchPanel'
 
 /**
  * La fiche complète d'une série, telle qu'elle est en base.
@@ -199,8 +201,13 @@ export function SeriesModal({
 
           <Divider />
 
-          <Tabs defaultValue="seasons" keepMounted={false}>
+          <Tabs defaultValue="watch" keepMounted={false}>
             <Tabs.List px="lg">
+              <Tabs.Tab value="watch" leftSection={<IconDeviceTv size={16} />}>
+                Où regarder
+                {data.watch.offers.length > 0 &&
+                  ` (${data.watch.offers.reduce((n, o) => n + o.providers.length, 0)})`}
+              </Tabs.Tab>
               <Tabs.Tab value="seasons">Saisons ({data.seasons.length})</Tabs.Tab>
               <Tabs.Tab value="cast" leftSection={<IconUsers size={16} />}>
                 Distribution ({data.cast.length})
@@ -210,6 +217,10 @@ export function SeriesModal({
               </Tabs.Tab>
               <Tabs.Tab value="technical">Technique</Tabs.Tab>
             </Tabs.List>
+
+            <Tabs.Panel value="watch" p="lg">
+              <WatchPanel watch={data.watch} languages={languages} />
+            </Tabs.Panel>
 
             <Tabs.Panel value="seasons" p="lg">
               <Text size="xs" c="dimmed" mb="sm">
