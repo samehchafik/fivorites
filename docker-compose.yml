@@ -23,6 +23,16 @@ services:
     #   docker compose run --rm sourcing db migrate
     #   docker compose run --rm sourcing tmdb fetch --id 1399
     profiles: ["cli"]
+    # Le délai laissé à un `docker stop` avant le SIGKILL. Le défaut de Docker
+    # est de **dix secondes**, et c'est trop court ici : `backfill` intercepte
+    # SIGTERM pour laisser les collectes en vol aller à leur terme, mais une
+    # série de huit saisons en cinq langues, c'est quarante requêtes.
+    #
+    # Ce que coûte un SIGKILL au mauvais moment : la fiche est marquée réussie
+    # avant que ses saisons soient téléchargées, donc une série tuée entre les
+    # deux garde des saisons manquantes que `backfill` ne reprendra jamais —
+    # il ne sélectionne que ce qui n'a jamais abouti.
+    stop_grace_period: 180s
     environment:
       DATABASE_URL: postgresql://${DB_USER:-fivorites_v2}:${DB_PASSWORD:?DB_PASSWORD doit être défini dans .env}@${DB_HOST:-172.28.0.1}:${DB_PORT:-5432}/${DB_NAME:-fivorites_v2}
       DB_SCHEMA: ${DB_SCHEMA:-sourcing}
