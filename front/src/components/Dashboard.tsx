@@ -42,8 +42,11 @@ const DEFAULT_FILTERS: FilterState = {
 
 const DEFAULT_GRID: GridState = {
   search: '',
-  // Le tri demandé : de la plus récente à la plus ancienne.
-  sort: 'air_date',
+  // « De la plus récente à la plus ancienne », mais à l'**année** et non au
+  // jour. Au jour près, deux séries n'ont presque jamais la même date : le
+  // critère de départage ci-dessous n'aurait alors rien à départager, et
+  // paraîtrait ne pas fonctionner. À l'année, il classe pour de bon.
+  sort: 'air_year',
   order: 'desc',
   // Le départage, par défaut sur la popularité : à date de diffusion égale —
   // et elles le sont souvent, tout un lot sortant le même jour — l'ordre serait

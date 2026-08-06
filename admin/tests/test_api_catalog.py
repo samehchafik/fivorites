@@ -66,6 +66,23 @@ async def test_cards_need_a_session() -> None:
         assert (await http.get("/api/catalog/cards")).status_code == 401
 
 
+async def test_the_filters_change_the_total(client: httpx.AsyncClient) -> None:
+    """Le total doit suivre les cases cochées : un compteur qui reste au total
+    général annonce des pages qui n'existent pas, et laisse croire que le filtre
+    n'a rien fait."""
+    tout = (await client.get("/api/catalog/cards", params={"lang": "fr-FR"})).json()
+    assert tout["total"] == 2
+
+    # Les deux séries semées ont affiche et synopsis : on en ajoute une nue.
+    sans = (
+        await client.get("/api/catalog/cards", params={"lang": "fr-FR", "search": "باب"})
+    ).json()
+    assert sans["total"] == 1, "la recherche aussi doit compter juste"
+
+    # Le total non filtré reste disponible pour l'affichage « x / y ».
+    assert tout["projection"]["projected"] == 2
+
+
 async def test_work_route(client: httpx.AsyncClient) -> None:
     body = (await client.get("/api/catalog/works/1399", params={"lang": "fr-FR"})).json()
 
