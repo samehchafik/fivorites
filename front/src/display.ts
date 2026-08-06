@@ -83,3 +83,17 @@ export const POSTER_FALLBACK =
       '<circle cx="0.72" cy="1.2" r="0.12" fill="#adb5bd"/>' +
       '</svg>',
   )
+
+/** Une durée en heures, dite comme on la dirait à voix haute.
+ *
+ *  `null` quand rien ne permet de l'estimer : afficher « 0 h » là où l'on ne
+ *  sait pas serait un mensonge par arrondi, et « ∞ » n'aide personne. */
+export function formatEta(remaining: number, perHour: number): string | null {
+  if (remaining <= 0) return 'terminé'
+  if (perHour <= 0) return null
+
+  const hours = remaining / perHour
+  if (hours < 1) return `~${Math.max(1, Math.round(hours * 60))} min`
+  if (hours < 48) return `~${Math.round(hours)} h`
+  return `~${Math.round(hours / 24)} jours`
+}

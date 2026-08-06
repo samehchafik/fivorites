@@ -1,6 +1,6 @@
 import { Card, Group, Progress, SimpleGrid, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
 
-import { formatDate, formatNumber, formatPercent } from '../display'
+import { formatDate, formatEta, formatNumber, formatPercent } from '../display'
 import type { Summary } from '../types'
 
 /** Les quatre chiffres qui disent où en est la collecte. Le quatrième dépend de
@@ -16,8 +16,8 @@ export function SummaryCards({
 }) {
   if (!summary) {
     return (
-      <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-        {[0, 1, 2, 3].map((index) => (
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl: 5 }}>
+        {[0, 1, 2, 3, 4].map((index) => (
           <Skeleton key={index} h={116} radius="md" />
         ))}
       </SimpleGrid>
@@ -27,10 +27,15 @@ export function SummaryCards({
   const perLang = summary.byLang[lang]
   const catalogue = summary.catalog.total
   const seenRatio = catalogue ? summary.works.seen / catalogue : null
-  const langRatio = summary.parts.expected ? (perLang?.partsOk ?? 0) / summary.parts.expected : null
+  // Une couverture en séries, pas en saisons : « combien d'œuvres ai-je dans
+  // cette langue », rapporté aux œuvres effectivement collectées. Une
+  // proportion de saisons ne se compare à rien de ce qui est affiché autour.
+  const langRatio = summary.works.ok ? (perLang?.worksOk ?? 0) / summary.works.ok : null
+
+  const eta = formatEta(summary.works.remaining, summary.works.lastHour)
 
   return (
-    <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+    <SimpleGrid cols={{ base: 1, sm: 2, lg: 3, xl: 5 }}>
       <Metric
         title="Catalogue"
         value={formatNumber(catalogue)}
@@ -47,6 +52,23 @@ export function SummaryCards({
         color={summary.works.failed > 0 ? 'orange' : 'indigo'}
       />
 
+      {/* La question qu'on pose le plus souvent devant ce tableau : combien
+          reste-t-il, et pour combien de temps. Le débit est celui de la
+          dernière heure — le seul qui décrive la collecte en cours plutôt
+          qu'une moyenne depuis le début. */}
+      <Metric
+        title="Reste à collecter"
+        value={formatNumber(summary.works.remaining)}
+        hint={eta ?? undefined}
+        detail={
+          summary.works.lastHour > 0
+            ? `${formatNumber(summary.works.lastHour)} fiche(s) sur la dernière heure`
+            : 'aucune collecte depuis une heure'
+        }
+        progress={catalogue ? 1 - summary.works.remaining / catalogue : null}
+        color="grape"
+      />
+
       <Metric
         title="Parties énumérées"
         value={formatNumber(summary.parts.expected)}
@@ -56,11 +78,11 @@ export function SummaryCards({
 
       <Metric
         title={`Couverture ${langLabel}`}
-        value={formatNumber(perLang?.partsOk ?? 0)}
+        value={formatNumber(perLang?.worksOk ?? 0)}
         hint={formatPercent(langRatio)}
         detail={
           perLang
-            ? `${formatNumber(perLang.worksOk)} œuvre(s) · ${formatNumber(perLang.failed)} échec(s)`
+            ? `série(s) sur ${formatNumber(summary.works.ok)} collectée(s) · ${formatNumber(perLang.failed)} échec(s)`
             : 'aucune ligne dans cette langue'
         }
         progress={langRatio}

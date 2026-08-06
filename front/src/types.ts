@@ -61,7 +61,16 @@ export interface ItemsResponse {
 
 export interface Summary {
   catalog: { total: number; popular: number; exportedOn: string | null }
-  works: { seen: number; ok: number; failed: number; lastAt: string | null }
+  works: {
+    seen: number
+    ok: number
+    failed: number
+    /** Ce qui n'a jamais été regardé — la réponse à « combien reste-t-il ». */
+    remaining: number
+    /** Fiches traitées dans la dernière heure : de quoi estimer la fin. */
+    lastHour: number
+    lastAt: string | null
+  }
   parts: { expected: number; lastAt: string | null }
   byLang: Record<
     string,

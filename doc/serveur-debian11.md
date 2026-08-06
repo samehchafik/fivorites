@@ -426,6 +426,50 @@ installés sur la machine.
 Le front seul ne demande rien de plus que le `git pull` : le conteneur lit
 `www/` à chaque requête, il n'y a même pas à le redémarrer.
 
+**Une collecte en cours n'a pas à être arrêtée pour ça.** `sourcing` et `admin`
+sont deux conteneurs distincts ; mettre à jour l'un ne touche pas l'autre. Le
+seul cas qui l'exigerait est une migration ajoutant un index sur les tables de
+`sourcing` — un `create index` prend un verrou qui bloque les écritures, donc
+la collecte, le temps de sa construction.
+
+Pour savoir ce qu'un `git pull` a réellement changé avant de décider :
+
+```bash
+git diff --name-only HEAD@{1} HEAD | cut -d/ -f1 | sort -u
+```
+
+### Arrêter et reprendre une collecte
+
+Il n'y a pas d'état à sauvegarder : `backfill` recalcule sa liste à chaque
+lancement depuis `fetch_state`. **Relancer la même commande reprend où l'on
+s'était arrêté.**
+
+En premier plan, un seul **Ctrl-C** — pas deux. Le premier arme un arrêt
+propre : les collectes en vol vont à leur terme, les suivantes ne démarrent
+pas. Le second tuerait le processus au milieu d'une série.
+
+Depuis un autre terminal, ou si la commande a été lancée détachée :
+
+```bash
+sudo docker ps --filter name=sourcing --format '{{.Names}}'
+```
+
+```bash
+sudo docker stop <le-nom-du-conteneur>
+```
+
+`docker stop` envoie SIGTERM, que `backfill` intercepte de la même façon. Le
+compose lui laisse trois minutes (`stop_grace_period`) : le défaut de Docker est
+de dix secondes, et une série de huit saisons en cinq langues représente
+quarante requêtes — la couper au milieu laisse des saisons manquantes que la
+reprise ne rattrapera pas, faute de les voir.
+
+Puis, pour reprendre :
+
+```bash
+sudo docker compose run --rm sourcing tmdb backfill
+```
+
 ## Sauvegarde
 
 La base est sur l'hôte : pas de volume Docker à sauvegarder.
