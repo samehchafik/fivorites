@@ -12,6 +12,7 @@ import {
   Stack,
   Text,
   TextInput,
+  Tooltip,
 } from '@mantine/core'
 import { IconAlertTriangle, IconRefresh, IconSearch } from '@tabler/icons-react'
 
@@ -55,6 +56,28 @@ function directionsFor(sort: string): { value: string; label: string }[] {
     { value: 'desc', label: 'du plus récent au plus ancien' },
     { value: 'asc', label: 'du plus ancien au plus récent' },
   ]
+}
+
+/** Le compte des résultats, rapporté au total quand un filtre est actif. */
+function Filtre({ data }: { data: CardsResponse }) {
+  const total = data.projection.projected
+  // `total` est le nombre de vignettes de la projection, tous filtres retirés.
+  // Il n'a de sens comme dénominateur que s'il est supérieur : une projection
+  // rafraîchie entre deux requêtes pourrait le rendre inférieur, et « 12 / 8 »
+  // ferait douter des deux nombres.
+  if (!Number.isFinite(total) || total <= data.total) {
+    return <>{formatNumber(data.total)} série(s) collectée(s)</>
+  }
+  return (
+    <Tooltip label={`${formatNumber(data.total)} correspondent aux filtres, sur ${formatNumber(total)} collectées`}>
+      <span>
+        <Text span fw={600}>
+          {formatNumber(data.total)}
+        </Text>
+        {` / ${formatNumber(total)} série(s) collectée(s)`}
+      </span>
+    </Tooltip>
+  )
 }
 
 const labelOf = (value: string) =>
@@ -251,7 +274,11 @@ export function SeriesGrid({
             combinaison — et un tri qu'on croit avoir choisi sans l'avoir fait
             ressemble en tout point à un tri cassé. */}
         <Text size="sm" c="dimmed">
-          {data ? `${formatNumber(data.total)} série(s) collectée(s)` : '—'}
+          {/* « 142 / 1 240 » dès qu'un filtre retire quelque chose. Le total
+              seul ne dit pas si le filtre a mordu, ni sur quoi il mord : entre
+              « 142 séries » et « 142 sur 1 240 », seul le second permet de
+              juger si le catalogue est maigre ou si le filtre est sévère. */}
+          {data ? <Filtre data={data} /> : '—'}
           {' · tri : '}
           <Text span fw={600}>
             {labelOf(state.sort)}
