@@ -6,7 +6,8 @@
 >
 > Compléments : [`v2-acquisition-series.md`](v2-acquisition-series.md) pour le
 > plan, [`v2-notation-axes.md`](v2-notation-axes.md) pour la couche 2,
-> [`serveur-debian11.md`](serveur-debian11.md) pour le déploiement,
+> [`serveur-debian11.md`](serveur-debian11.md) pour l'installation,
+> [`exploitation.md`](exploitation.md) pour le quotidien,
 > [`sourcing/README.md`](../sourcing/README.md) pour l'usage courant.
 > Les deux études : [couverture du marché arabe](etude-couverture-marche-arabe.md)
 > et [sources complémentaires](etude-sources-complementaires.md).
@@ -31,7 +32,7 @@ donc le plafond configuré qui borne, pas le réseau ni la base.
 | Serveur Debian 11 | opérationnel |
 | Collecte TMDB | **en cours** — ~148 600 séries collectées, ~79 800 restantes (~11 h) |
 | Enrichissement | opérationnel, et indépendant du jeton |
-| Tests `sourcing` | 111 — 58 unitaires, 53 de bout en bout sur Postgres |
+| Tests `sourcing` | 118 — 60 unitaires, 58 de bout en bout sur Postgres |
 | Tests `admin` | 82 |
 | Code `sourcing` | ~3 100 lignes de source, ~1 900 de tests |
 
@@ -49,6 +50,7 @@ fiv-sourcing tmdb export               # charge la liste de toutes les séries (
 fiv-sourcing tmdb catalog              # volumétrie et déciles de popularité
 fiv-sourcing tmdb fetch --id 1399      # collecte une série
 fiv-sourcing tmdb backfill             # collecte tout le catalogue, reprenable
+fiv-sourcing tmdb dates                # recopie les dates du brut vers l'inventaire
 fiv-sourcing tmdb changes --days 1     # marque ce que TMDB signale comme modifié
 fiv-sourcing tmdb stats                # ce qui est en base + projection de volume
 
@@ -58,7 +60,15 @@ fiv-sourcing enrich                    # toutes celles sans complément, reprena
 
 `backfill` et `enrich` acceptent tous deux `--limit`, `--concurrency`,
 `--order`, `--refresh-after` et `--dry-run`, et s'interrompent proprement sur un
-seul Ctrl-C ou un `docker stop`.
+seul Ctrl-C ou un `docker stop`. Les deux **refusent de démarrer si une migration
+est en attente** : une passe dure des heures, elle doit échouer à la première
+seconde et nommer ce qui manque.
+
+`--order recent` trie par année de diffusion décroissante puis popularité — ce
+que `popularity` seul ne fait pas. Il demande que `tmdb dates` ait tourné.
+
+Le débit de `enrich` est **par hôte** : `ENRICH_RATE_LIMIT` (5) pour Wikimedia,
+`TVMAZE_RATE_LIMIT` (2) pour TVmaze, dont la limite est documentée.
 
 ### 2.2 Le schéma
 
@@ -68,7 +78,7 @@ Une base — `fivorites_v2` — et un schéma par domaine.
 |---|---|
 | `sourcing.raw_source` | le brut, append-only, une ligne par réponse HTTP |
 | `sourcing.fetch_state` | fraîcheur et état par objet ; remplace les 3 fichiers JSON de la V1 |
-| `sourcing.tmdb_catalog` | inventaire du catalogue, issu de l'export quotidien |
+| `sourcing.tmdb_catalog` | inventaire du catalogue, issu de l'export quotidien ; `first_air_date` y est dérivée du brut |
 | `sourcing.series_source` | **dérivée** : ce qu'une source tierce apporte, par (série, source, langue) |
 | `public.schema_migrations` | historique des migrations, valable pour la base entière |
 

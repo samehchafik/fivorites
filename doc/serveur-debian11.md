@@ -1,7 +1,9 @@
 # Mise en place du serveur — Debian 11
 
 > Postgres sur l'hôte, application en conteneur. À exécuter une fois, sur un
-> Debian 11 (bullseye) frais.
+> Debian 11 (bullseye) frais. Une fois le serveur en place, le quotidien —
+> lancer une passe, la surveiller, diagnostiquer une panne — est dans
+> [`exploitation.md`](exploitation.md).
 >
 > L'ordre compte : le réseau Docker est créé **avant** de configurer Postgres,
 > parce que c'est lui qui fait apparaître sur l'hôte l'adresse que Postgres doit
