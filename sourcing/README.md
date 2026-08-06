@@ -121,9 +121,15 @@ La procédure complète, une fois pour toutes :
 Au quotidien, une fois le serveur en place :
 
 ```bash
+docker compose build sourcing                    # si src/ ou migrations/ a bougé
 docker compose run --rm sourcing db migrate
 docker compose run --rm sourcing tmdb fetch --id 1399
 ```
+
+⚠️ **Le `build` n'est pas optionnel quand une migration est arrivée.** Le
+`Dockerfile` copie `migrations/` dans l'image et `MIGRATIONS_DIR` y pointe :
+sans reconstruction, `db migrate` lit les migrations d'avant le `git pull` et
+répond « base déjà à jour » sans rien appliquer.
 
 Le service `sourcing` est sous le profil `cli` : c'est un pipeline par lots, pas
 un service permanent, donc un `compose up` ne doit pas déclencher de collecte.

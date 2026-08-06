@@ -422,17 +422,41 @@ qu'on ouvre n'est jamais périmé.
 
 ### Mettre à jour
 
+⚠️ **Les migrations sont dans l'image, pas sur le disque.** Les deux
+`Dockerfile` font `COPY migrations ./migrations` et pointent `MIGRATIONS_DIR`
+dedans ; aucun volume ne les monte. Un `git pull` amène donc le fichier `.sql`
+sur le serveur **sans que le conteneur le voie** — et `db migrate` répond
+tranquillement « base déjà à jour » alors qu'une migration attend. Toute
+migration nouvelle impose de **reconstruire l'image avant de l'appliquer**.
+
 ```bash
-git pull                                        # amène le front déjà construit
-sudo docker compose build admin                 # seulement si admin/src a bougé
-sudo docker compose run --rm admin db migrate   # seulement si admin/migrations a bougé
+git pull                                        # amène aussi le front déjà construit
+```
+
+Puis, pour chaque service dont `src/` **ou** `migrations/` a bougé :
+
+```bash
+sudo docker compose build sourcing
+sudo docker compose run --rm sourcing db migrate
+```
+
+```bash
+sudo docker compose build admin
+sudo docker compose run --rm admin db migrate
 sudo docker compose up -d admin
 ```
 
-Et côté collecte, si `sourcing/migrations` a bougé :
+Pour savoir ce que le `git pull` a réellement changé, et donc ce qu'il faut
+reconstruire :
 
 ```bash
-sudo docker compose run --rm sourcing db migrate
+git diff --name-only HEAD@{1} HEAD | cut -d/ -f1,2 | sort -u
+```
+
+Contrôle — ce que l'image embarque vraiment, à comparer au dépôt :
+
+```bash
+sudo docker compose run --rm --entrypoint ls sourcing /app/migrations
 ```
 
 `db migrate` n'applique que ce qui manque et le dit ; le relancer sur une base à
@@ -449,13 +473,8 @@ Le front seul ne demande rien de plus que le `git pull` : le conteneur lit
 sont deux conteneurs distincts ; mettre à jour l'un ne touche pas l'autre. Le
 seul cas qui l'exigerait est une migration ajoutant un index sur les tables de
 `sourcing` — un `create index` prend un verrou qui bloque les écritures, donc
-la collecte, le temps de sa construction.
-
-Pour savoir ce qu'un `git pull` a réellement changé avant de décider :
-
-```bash
-git diff --name-only HEAD@{1} HEAD | cut -d/ -f1 | sort -u
-```
+la collecte, le temps de sa construction. Le `git diff` ci-dessus dit s'il y en
+a une.
 
 ### Arrêter et reprendre une collecte
 
