@@ -23,7 +23,10 @@ export function LanguageCoverage({
   selected: string
   onSelect: (code: string) => void
 }) {
-  const expected = summary?.parts.expected ?? 0
+  // Le dénominateur est le nombre de séries collectées, pas de saisons
+  // attendues : c'est la seule base qui rende les cinq barres comparables entre
+  // elles *et* comparables aux chiffres affichés autour.
+  const collected = summary?.works.ok ?? 0
 
   return (
     <Card withBorder radius="md" padding="md">
@@ -33,16 +36,16 @@ export function LanguageCoverage({
             Couverture par langue
           </Text>
           <Text size="xs" c="dimmed">
-            {expected
-              ? `sur ${formatNumber(expected)} partie(s) énumérée(s)`
-              : "aucune partie énumérée pour l'instant"}
+            {collected
+              ? `séries ayant au moins une partie dans la langue, sur ${formatNumber(collected)} collectée(s)`
+              : "aucune série collectée pour l'instant"}
           </Text>
         </Group>
 
         <Stack gap={8}>
           {languages.map((language) => {
             const stats = summary?.byLang[language.code]
-            const ratio = expected ? (stats?.partsOk ?? 0) / expected : null
+            const ratio = collected ? (stats?.worksOk ?? 0) / collected : null
             const active = language.code === selected
 
             return (
@@ -59,7 +62,7 @@ export function LanguageCoverage({
                   <Tooltip
                     label={
                       stats
-                        ? `${formatNumber(stats.partsOk)} collectée(s) · ${formatNumber(stats.failed)} en échec · dernier passage ${formatDate(stats.lastAt)}`
+                        ? `${formatNumber(stats.worksOk)} série(s) · ${formatNumber(stats.partsOk)} partie(s) · ${formatNumber(stats.failed)} en échec · dernier passage ${formatDate(stats.lastAt)}`
                         : 'rien de collecté dans cette langue'
                     }
                   >
@@ -72,7 +75,7 @@ export function LanguageCoverage({
                     />
                   </Tooltip>
                   <Text size="sm" w={110} ta="right" c={stats ? undefined : 'dimmed'}>
-                    {stats ? formatNumber(stats.partsOk) : '—'}{' '}
+                    {stats ? formatNumber(stats.worksOk) : '—'}{' '}
                     <Text span size="xs" c="dimmed">
                       {formatPercent(ratio)}
                     </Text>

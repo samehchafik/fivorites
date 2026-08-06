@@ -27,7 +27,10 @@ export function SummaryCards({
   const perLang = summary.byLang[lang]
   const catalogue = summary.catalog.total
   const seenRatio = catalogue ? summary.works.seen / catalogue : null
-  const langRatio = summary.parts.expected ? (perLang?.partsOk ?? 0) / summary.parts.expected : null
+  // Une couverture en séries, pas en saisons : « combien d'œuvres ai-je dans
+  // cette langue », rapporté aux œuvres effectivement collectées. Une
+  // proportion de saisons ne se compare à rien de ce qui est affiché autour.
+  const langRatio = summary.works.ok ? (perLang?.worksOk ?? 0) / summary.works.ok : null
 
   const eta = formatEta(summary.works.remaining, summary.works.lastHour)
 
@@ -75,11 +78,11 @@ export function SummaryCards({
 
       <Metric
         title={`Couverture ${langLabel}`}
-        value={formatNumber(perLang?.partsOk ?? 0)}
+        value={formatNumber(perLang?.worksOk ?? 0)}
         hint={formatPercent(langRatio)}
         detail={
           perLang
-            ? `${formatNumber(perLang.worksOk)} œuvre(s) · ${formatNumber(perLang.failed)} échec(s)`
+            ? `série(s) sur ${formatNumber(summary.works.ok)} collectée(s) · ${formatNumber(perLang.failed)} échec(s)`
             : 'aucune ligne dans cette langue'
         }
         progress={langRatio}

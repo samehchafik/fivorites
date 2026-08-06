@@ -11,10 +11,14 @@ import type { Language, Summary } from '../types'
  * soit informé : une langue configurée mais jamais collectée se voit sans avoir
  * à la sélectionner pour le découvrir.
  *
- * Le chiffre est **explicite dans la liste déroulée** — « 1 240 saisons ·
- * 310 séries ». Il ne l'était pas, et un nombre nu à côté d'un nom de langue
- * ne dit pas ce qu'il compte : on peut y lire des séries, des épisodes, un
- * pourcentage. Le champ fermé reste compact, la liste explique.
+ * Le chiffre est un **nombre de séries** : celles qui ont au moins une partie
+ * collectée dans cette langue. C'était un nombre de saisons, qui ne se compare
+ * à rien — ni au catalogue, ni aux fiches collectées — et qu'on lisait
+ * naturellement comme des séries. Deux fois trop grand, donc, pour la seule
+ * question qu'on se pose ici : « combien d'œuvres ai-je dans cette langue ».
+ *
+ * La liste déroulée l'écrit en toutes lettres ; le champ fermé reste compact,
+ * faute de place dans l'en-tête.
  */
 export function LanguagePicker({
   languages,
@@ -30,7 +34,7 @@ export function LanguagePicker({
   const statsOf = (code: string) => summary?.byLang[code]
 
   const data = languages.map((language) => {
-    const collected = statsOf(language.code)?.partsOk ?? 0
+    const collected = statsOf(language.code)?.worksOk ?? 0
     return {
       value: language.code,
       label: `${language.flag} ${language.label}${collected ? ` · ${formatNumber(collected)}` : ' · —'}`,
@@ -42,7 +46,7 @@ export function LanguagePicker({
       <Text size="sm" c="dimmed" visibleFrom="md">
         Langue
       </Text>
-      <Tooltip label="Le nombre est celui des saisons collectées dans cette langue" withArrow>
+      <Tooltip label="Séries ayant au moins une partie collectée dans cette langue" withArrow>
         <Select
           aria-label="Langue affichée"
           leftSection={<IconLanguage size={16} />}
@@ -62,8 +66,8 @@ export function LanguagePicker({
                   {language?.flag} {language?.label}
                 </Text>
                 <Text size="xs" c="dimmed">
-                  {stats && stats.partsOk > 0
-                    ? `${formatNumber(stats.partsOk)} saison(s) · ${formatNumber(stats.worksOk)} série(s)`
+                  {stats && stats.worksOk > 0
+                    ? `${formatNumber(stats.worksOk)} série(s)`
                     : 'rien de collecté'}
                 </Text>
               </Stack>
