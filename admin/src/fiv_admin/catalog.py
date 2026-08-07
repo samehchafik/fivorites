@@ -650,10 +650,42 @@ async def refresh_cards(conn: psycopg.AsyncConnection) -> int:
 
 
 async def cards_state(conn: psycopg.AsyncConnection) -> dict[str, Any]:
-    """De quoi dire au front si la projection est vide, en retard, ou à jour."""
+    """De quoi dire au front si la projection est vide, en retard, ou à jour.
+
+    Le point délicat est le sens de « en retard ». Il se mesurait contre
+    `fetch_state`, et c'était faux : cette table dit ce que la collecte a
+    *tenté et réussi*, pas ce qu'elle a *stocké*. Les deux peuvent diverger —
+    observé en production, 226 séries marquées « succès HTTP 200 » sans aucune
+    ligne dans `raw_source` — et le bandeau restait alors allumé pour toujours,
+    puisqu'aucun rafraîchissement ne pouvait projeter des séries dont le brut
+    n'existe pas.
+
+    Le compte se fait donc contre **ce dont la projection est faite** : les
+    identifiants distincts que la vue matérialisée retiendrait si on la
+    recalculait maintenant. Par construction, l'égalité signifie « à jour », et
+    aucune incohérence en amont ne peut plus allumer le bandeau à tort.
+    """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute("select count(*) as total, max(fetched_at) as last_at from admin.tv_card")
         projection = await cur.fetchone() or {}
+
+        # Exactement le filtre de `002_admin_cards.sql`. Parcours d'index seul
+        # grâce à `raw_source_latest_idx (source, kind, source_id, …)`, mais ce
+        # `count(distinct)` reste le poste le plus cher de cette réponse : il
+        # justifierait un cache si la page devenait lente.
+        await cur.execute(
+            """
+            select count(distinct source_id) as total
+            from raw_source
+            where source = %(source)s and kind = %(kind)s
+              and http_status between 200 and 299 and payload is not null
+            """,
+            {"source": SOURCE, "kind": KIND_SERIES},
+        )
+        projetables = await cur.fetchone() or {}
+
+        # Gardé pour l'affichage, et parce que l'écart entre les deux est en soi
+        # un signal : une collecte qui se dit réussie sans rien avoir stocké.
         await cur.execute(
             """
             select count(*) as total
@@ -665,12 +697,14 @@ async def cards_state(conn: psycopg.AsyncConnection) -> dict[str, Any]:
         collected = await cur.fetchone() or {}
 
     total = int(projection.get("total") or 0)
-    available = int(collected.get("total") or 0)
+    disponibles = int(projetables.get("total") or 0)
     return {
         "projected": total,
-        "collected": available,
-        # « en retard » = des séries ont été collectées depuis le dernier
-        # rafraîchissement. C'est le seul cas où le bouton sert vraiment.
-        "stale": available > total,
+        "collected": int(collected.get("total") or 0),
+        "projectable": disponibles,
+        # Ce qu'un rafraîchissement ajouterait — donc ce que le bouton sert à
+        # faire, et rien d'autre.
+        "pending": max(0, disponibles - total),
+        "stale": disponibles > total,
         "lastAt": projection.get("last_at"),
     }

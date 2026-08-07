@@ -160,7 +160,13 @@ export interface Card {
 /** L'état de la projection d'affichage — vide, en retard, ou à jour. */
 export interface Projection {
   projected: number
+  /** Ce que `fetch_state` dit avoir réussi — pas ce qui est stocké. */
   collected: number
+  /** Ce que la projection retiendrait si on la recalculait maintenant. */
+  projectable: number
+  /** Ce qu'un rafraîchissement ajouterait. C'est ce chiffre qu'affiche le
+   *  bandeau : `collected - projected` mêlait les incohérences amont. */
+  pending: number
   stale: boolean
   lastAt: string | null
 }

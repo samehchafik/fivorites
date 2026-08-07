@@ -47,6 +47,8 @@ async def test_cards_route(client: httpx.AsyncClient) -> None:
     assert body["projection"] == {
         "projected": 2,
         "collected": 2,
+        "projectable": 2,
+        "pending": 0,
         "stale": False,
         "lastAt": body["projection"]["lastAt"],
     }

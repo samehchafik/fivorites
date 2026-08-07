@@ -476,11 +476,40 @@ async def test_sorting_by_year_lets_the_second_criterion_work(
     assert [r["id"] for r in rows if r["id"] in lot] == [8002, 8003, 8001]
 
 
+async def test_a_collection_that_stored_nothing_never_lights_the_banner(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Observé en production : `fetch_state` disait « succès 200 » pour 226
+    séries sans aucune ligne dans `raw_source`. Le bandeau se mesurait contre
+    cette table et restait allumé pour toujours — aucun rafraîchissement ne peut
+    projeter une série dont le brut n'existe pas."""
+    await seed(conn)
+    await conn.execute(
+        """
+        insert into fetch_state (source, kind, source_id, last_fetched_at,
+                                 last_success_at, last_status)
+        values ('tmdb', 'tv', '999001', now(), now(), 200),
+               ('tmdb', 'tv', '999002', now(), now(), 200)
+        """
+    )
+    await refresh_cards(conn)
+
+    etat = await cards_state(conn)
+
+    assert etat["collected"] == 4, "fetch_state en compte quatre…"
+    assert etat["projectable"] == 2, "… mais deux seulement ont un brut exploitable"
+    assert etat["projected"] == 2
+    assert etat["pending"] == 0
+    assert etat["stale"] is False, "rien à rafraîchir : le bandeau doit rester éteint"
+
+
 async def test_projection_state_says_when_it_lags(conn: psycopg.AsyncConnection) -> None:
     await seed(conn)
     assert await cards_state(conn) == {
         "projected": 2,
         "collected": 2,
+        "projectable": 2,
+        "pending": 0,
         "stale": False,
         "lastAt": (await cards_state(conn))["lastAt"],
     }
