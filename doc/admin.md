@@ -217,6 +217,7 @@ rafraîchie — et le front doit pouvoir les distinguer.
 | `user list` | les liste |
 | `catalog refresh` | recalcule la projection |
 | `training note -n <N>` | note les N séries les plus populaires pas encore jugées |
+| `training poids` | réentraîne la régression sur toutes les notes du barème |
 
 `training note` est le remplissage de la phase 1 : la page Training note une
 œuvre à la fois, ce que soixante œuvres rendent intenable. Elle emprunte
@@ -254,6 +255,19 @@ La liste lit `admin.tv_card`, comme la grille : interroger le brut obligeait à
 déplier le JSON de chaque fiche collectée pour n'en garder que vingt, d'où
 plusieurs secondes sur un simple aperçu. Contrepartie, la même que pour la
 grille — une série fraîchement collectée n'apparaît qu'après `catalog refresh`.
+
+`training poids` fait le même travail que le bouton « Entraînement » de
+Training 2, par le même chemin — et se lance en ligne de commande parce que
+c'est long : assembler les dossiers et calculer les embeddings prend des
+minutes sur plusieurs dizaines d'œuvres, ce qu'une requête web supporte mal.
+
+```bash
+docker compose run --rm admin training poids
+```
+
+Il affiche le MAE de validation croisée par axe : c'est lui qui compte, pas le
+MAE d'ajustement, car il mesure ce que les poids feraient sur une œuvre jamais
+vue.
 
 L'ordre est celui du catalogue — popularité, puis note des votants. Ce n'est
 pas un biais de confort : les œuvres les plus vues ont les dossiers les plus

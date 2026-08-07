@@ -814,19 +814,29 @@ class TrainIn(BaseModel):
     rubricVersion: str
 
 
-@router.post("/training/weights/train")
-async def train_weights(
-    user: CurrentUser, conn: Conn, settings: Config, body: TrainIn
-) -> dict[str, Any]:
+class PasAssezDOeuvres(RuntimeError):
+    """Moins d'œuvres notées que le minimum : entraîner n'aurait pas de sens."""
+
+    def __init__(self, works: int) -> None:
+        super().__init__(
+            f"{works} œuvre(s) notée(s) sur ce barème — il en faut au moins "
+            f"{MIN_TRAINING_WORKS}. La phase 1 nourrit la phase 2."
+        )
+        self.works = works
+
+
+async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> dict[str, Any]:
     """Réentraîne la régression sur TOUTES les notes OpenAI du barème.
 
     Toujours sur l'historique complet, jamais sur le dernier lot seul : les
     poids capitalisent, ils ne suivent pas la mode du dernier échantillon.
+
+    Partagée entre le bouton de l'atelier et `fiv-admin training poids` : deux
+    entrées qui entraîneraient différemment produiraient des poids
+    incomparables sans que rien ne le signale.
     """
-    if not settings.openai_api_key:
-        raise HTTPException(status.HTTP_409_CONFLICT, "OPENAI_API_KEY absente du .env admin.")
-    rubric = await _rubric(conn, body.rubricVersion)
     axes: list[str] = rubric["axes"]
+    rubric_version: str = rubric["version"]
 
     # La note courante de chaque œuvre : la plus récente par (œuvre, axe),
     # modèle OpenAI seulement — le contre-juge n'entraîne pas.
@@ -839,7 +849,7 @@ async def train_weights(
               and valeur is not null
             order by id_tmdb, axe, scored_at desc
             """,
-            (body.rubricVersion, INTERNAL_MODEL),
+            (rubric_version, INTERNAL_MODEL),
         )
         rows = await cur.fetchall()
 
@@ -847,11 +857,7 @@ async def train_weights(
     for row in rows:
         by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
     if len(by_work) < MIN_TRAINING_WORKS:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"{len(by_work)} œuvre(s) notée(s) sur ce barème — il en faut au moins "
-            f"{MIN_TRAINING_WORKS}. La phase 1 nourrit la phase 2.",
-        )
+        raise PasAssezDOeuvres(len(by_work))
 
     # Les embeddings de chaque œuvre notée, dossier reconstruit à l'identique.
     # Les dossiers sont gardés : la régénération plus bas en a besoin, et les
@@ -866,10 +872,7 @@ async def train_weights(
             if built is None:
                 continue
             dossiers[id_tmdb] = built
-            try:
-                vectors[id_tmdb] = await _embedding(conn, settings, http, built)
-            except LlmError as exc:
-                raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+            vectors[id_tmdb] = await _embedding(conn, settings, http, built)
 
     trained: list[dict[str, Any]] = []
     weights_json: dict[str, Any] = {}
@@ -898,7 +901,7 @@ async def train_weights(
                     trained_at = now()
                 """,
                 (
-                    body.rubricVersion,
+                    rubric_version,
                     axe,
                     result.intercept,
                     Jsonb(result.coef),
@@ -945,7 +948,7 @@ async def train_weights(
                 returning id, trained_at
                 """,
                 (
-                    body.rubricVersion,
+                    rubric_version,
                     rubric["prompt"],
                     _prompt_sha(rubric["prompt"]),
                     embedder,
@@ -969,7 +972,7 @@ async def train_weights(
                 where rubric_version = %s and openai is not null
                 order by id_tmdb, created_at desc
                 """,
-                (body.rubricVersion,),
+                (rubric_version,),
             )
             journaux = await cur.fetchall()
 
@@ -994,7 +997,7 @@ async def train_weights(
                     conn,
                     id_tmdb=id_tmdb,
                     internal=_predict_all(vector, weights_json),
-                    rubric_version=body.rubricVersion,
+                    rubric_version=rubric_version,
                     prompt=entry["prompt"],
                     dossier_sha256=built["sha256"],
                     raw_source_id=built["rawSourceId"],
@@ -1002,13 +1005,29 @@ async def train_weights(
                 generated += 1
 
     return {
-        "rubricVersion": body.rubricVersion,
+        "rubricVersion": rubric_version,
         "works": len(by_work),
         "axes": trained,
         "weightsId": weights_id,
         "trainedAt": trained_at,
         "generated": generated,
     }
+
+
+@router.post("/training/weights/train")
+async def train_weights(
+    user: CurrentUser, conn: Conn, settings: Config, body: TrainIn
+) -> dict[str, Any]:
+    """L'entraînement depuis l'atelier — même chemin que la ligne de commande."""
+    if not settings.openai_api_key:
+        raise HTTPException(status.HTTP_409_CONFLICT, "OPENAI_API_KEY absente du .env admin.")
+    rubric = await _rubric(conn, body.rubricVersion)
+    try:
+        return await entrainer_poids(conn, settings, rubric)
+    except PasAssezDOeuvres as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except LlmError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
 
 class Phase2In(BaseModel):

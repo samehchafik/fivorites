@@ -14,6 +14,7 @@ from typing import Annotated, Any
 
 import psycopg
 import typer
+from psycopg.rows import dict_row
 
 from fiv_admin.config import VENDOR_DIR, get_settings
 from fiv_admin.db import MigrationsNotFound, connect, migrate
@@ -204,6 +205,76 @@ def training_note(
                     "qui refait les poids et régénère les vecteurs."
                 )
             return notees
+
+    _run(run())
+
+
+@training_app.command("poids")
+def training_poids(
+    bareme: Annotated[
+        str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
+    ] = None,
+) -> None:
+    """Réentraîne la régression sur toutes les notes du barème.
+
+    Le même travail que le bouton « Entraînement » de Training 2, par le même
+    chemin : la régression est refaite sur tout l'historique de notes, chaque
+    axe choisit son λ par validation croisée, et les vecteurs internes des
+    œuvres déjà jugées sont régénérés dans la foulée — des poids neufs
+    périment les prédictions faites avec les anciens.
+
+    En ligne de commande parce que c'est long : assembler les dossiers et
+    calculer les embeddings prend des minutes sur plusieurs dizaines
+    d'œuvres, ce qu'une requête web supporte mal. Rien n'est appelé chez
+    OpenAI si les embeddings sont déjà en cache.
+    """
+    from fiv_admin.llm import LlmError
+    from fiv_admin.routes.training import PasAssezDOeuvres, _rubric, entrainer_poids
+
+    settings = get_settings()
+    if not settings.openai_api_key:
+        typer.echo("ERREUR : OPENAI_API_KEY absente — les embeddings en dépendent.")
+        raise typer.Exit(1)
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            if bareme:
+                rubric = await _rubric(conn, bareme)
+            else:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric"
+                        " order by created_at desc limit 1"
+                    )
+                    rubric = await cur.fetchone()
+                if rubric is None:
+                    typer.echo("aucun barème en base.")
+                    raise typer.Exit(1)
+
+            typer.echo(f"barème {rubric['version']} — assemblage des dossiers…")
+            try:
+                bilan = await entrainer_poids(conn, settings, rubric)
+            except PasAssezDOeuvres as exc:
+                typer.echo(f"ERREUR : {exc}")
+                raise typer.Exit(1) from exc
+            except LlmError as exc:
+                typer.echo(f"ERREUR : {exc}")
+                raise typer.Exit(1) from exc
+
+            typer.echo(f"\nentraîné sur {bilan['works']} œuvre(s) :")
+            for axe in bilan["axes"]:
+                if axe.get("skipped"):
+                    typer.echo(f"  {axe['axe']:12s} trop peu de notes ({axe['trainedOn']})")
+                else:
+                    typer.echo(
+                        f"  {axe['axe']:12s} MAE cv {axe['maeCv']:5.2f}"
+                        f"  (ajustement {axe['maeFit']:5.2f}, lambda {axe['lambda']})"
+                    )
+            typer.echo(f"\n{bilan['generated']} vecteur(s) interne(s) régénéré(s).")
+            typer.echo(
+                "La colonne « MAE cv » est celle qui compte : elle mesure ce que les poids"
+                " feraient sur une œuvre jamais vue."
+            )
 
     _run(run())
 
