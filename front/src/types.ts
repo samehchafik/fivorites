@@ -154,8 +154,9 @@ export interface Card {
   fetchedAt: string
   /** Le vecteur de goût courant, axe → note (1-10) — le dernier verdict du
    *  juge, jamais la contre-note manuelle ni la prédiction interne. `null`
-   *  tant que la série n'a jamais été jugée : pas un objet vide, une absence. */
-  axisScores: Record<string, number> | null
+   *  tant que la série n'a jamais été jugée : pas un objet vide, une absence.
+   *  Facultatif : une API plus ancienne que le front ne le renvoie pas. */
+  axisScores?: Record<string, number> | null
   expectedParts: number
   coverage: Record<string, { ok: number; failed: number }>
   selected: { lang: string; ok: number; failed: number; ratio: number | null }
@@ -258,8 +259,9 @@ export interface Work {
   seasons: SeasonSummary[]
   raw: { fetchedAt: string; httpStatus: number }
   /** Le vecteur de goût courant, axe → note (1-10). Même règle que sur la
-   *  vignette : `null` tant que la série n'a jamais été jugée. */
-  axisScores: Record<string, number> | null
+   *  vignette : `null` tant que la série n'a jamais été jugée, et facultatif
+   *  parce qu'une API plus ancienne que le front ne le renvoie pas. */
+  axisScores?: Record<string, number> | null
   catalog: { popularity: number; adult: boolean; exportedOn: string } | null
 }
 
@@ -360,8 +362,9 @@ export interface Gaps {
 export interface Phase1Result {
   id: number
   /** L'essai dans le journal `notation.training_run` — à renvoyer avec la
-   *  contre-note manuelle pour qu'elle rejoigne la bonne ligne. */
-  runId: number
+   *  contre-note manuelle pour qu'elle rejoigne la bonne ligne. Facultatif :
+   *  une API plus ancienne que le front ne le renvoie pas. */
+  runId?: number
   dossier: { sha256: string; chars: number; title: string; sections: Dossier['sections'] }
   openai: { model: string; scores: Record<string, AxisScore> }
   /** Null sans clé Anthropic : le contre-jugement se fait alors à la main,
@@ -376,20 +379,24 @@ export interface TrainResult {
   axes: { axe: string; trainedOn: number; maeFit?: number; skipped?: boolean }[]
   /** La ligne du journal notation.training_weights — une par prompt, la plus
    *  récente est la version par défaut de la phase 2. */
-  weightsId: number | null
-  trainedAt: string | null
+  weightsId?: number | null
+  trainedAt?: string | null
   /** Combien d'œuvres ont vu leur vecteur interne régénéré dans la foulée —
    *  toutes celles dont le journal porte un verdict OpenAI. */
-  generated: number
+  generated?: number
 }
 
 export interface Phase2Result {
   id: number
-  /** L'essai du journal où le vecteur généré a été écrit (colonne `interne`). */
-  runId: number
+  /** L'essai du journal où le vecteur généré a été écrit (colonne `interne`).
+   *
+   *  **Facultatif à dessein**, comme les deux champs suivants : une API plus
+   *  ancienne que le front ne les renvoie pas, et le typage oblige alors à
+   *  traiter l'absence plutôt qu'à blanchir la page sur un `undefined.x`. */
+  runId?: number
   dossier: { sha256: string; chars: number; title: string }
   /** La version de poids qui a produit la prédiction — la plus récente du journal. */
-  weights: { id: number; trainedAt: string; works: number }
+  weights?: { id: number; trainedAt: string; works: number }
   internal: Record<string, { score: number; trainedOn: number; maeFit: number | null }>
   llm: {
     scores: Record<string, AxisScore>
@@ -397,7 +404,7 @@ export interface Phase2Result {
   }
   /** Le contre-juge, s'il s'est prononcé sur ce barème — affiché à côté
    *  d'OpenAI pour voir si l'interne dérive vers l'une des deux lignées. */
-  claude: {
+  claude?: {
     scores: Record<string, AxisScore>
     origin: { model: string; scoredAt: string } | null
   }

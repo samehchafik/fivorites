@@ -679,7 +679,9 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
     onSuccess: (bilan) => {
       notifications.show({
         color: 'teal',
-        title: `Poids entraînés sur ${bilan.works} œuvre(s) · ${bilan.generated} vecteur(s) régénéré(s)`,
+        title:
+          `Poids entraînés sur ${bilan.works} œuvre(s)` +
+          (bilan.generated === undefined ? '' : ` · ${bilan.generated} vecteur(s) régénéré(s)`),
         message: bilan.axes
           .map((axe) =>
             axe.skipped ? `${axe.axe} : trop peu de notes` : `${axe.axe} : MAE ${axe.maeFit}`,
@@ -766,10 +768,12 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
 
       {result && (
         <Paper withBorder radius="md" p="sm">
-          <Text size="xs" c="dimmed" mb={4}>
-            Poids du {new Date(result.weights.trainedAt).toLocaleString('fr-FR')} — la version la
-            plus récente du journal, entraînée sur {result.weights.works} œuvre(s).
-          </Text>
+          {result.weights && (
+            <Text size="xs" c="dimmed" mb={4}>
+              Poids du {new Date(result.weights.trainedAt).toLocaleString('fr-FR')} — la version la
+              plus récente du journal, entraînée sur {result.weights.works} œuvre(s).
+            </Text>
+          )}
           {result.gaps ? (
             <GapSummary gaps={result.gaps} />
           ) : (
@@ -790,7 +794,7 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
                     : ''}
                 </Table.Th>
                 <Table.Th>
-                  Claude {result.claude.origin ? `(${result.claude.origin.model})` : ''}
+                  Claude {result.claude?.origin ? `(${result.claude.origin.model})` : ''}
                 </Table.Th>
                 <Table.Th>Écart interne / OpenAI</Table.Th>
               </Table.Tr>
@@ -823,7 +827,7 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
                     <ScoreCell entry={result.llm.scores[axe]} />
                   </Table.Td>
                   <Table.Td>
-                    <ScoreCell entry={result.claude.scores[axe]} />
+                    <ScoreCell entry={result.claude?.scores[axe]} />
                   </Table.Td>
                   <Table.Td>
                     <GapBadge gap={result.gaps?.perAxis[axe]} />
@@ -832,7 +836,7 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
               ))}
             </Table.Tbody>
           </Table>
-          {!result.claude.origin && (
+          {!result.claude?.origin && (
             <Text size="xs" c="dimmed" mt={6}>
               Aucune contre-note Claude sur ce barème — la colonne se remplit depuis Training 1,
               « Copier pour Claude.ai » puis « Enregistrer la contre-note ».

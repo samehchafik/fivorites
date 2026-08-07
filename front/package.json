@@ -1,12 +1,12 @@
 {
   "name": "fiv-admin-web",
   "private": true,
-  "version": "0.1.54",
+  "version": "0.1.55",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "tsc --noEmit",
+    "lint": "tsc -b --force",
     "preview": "vite preview"
   },
   "dependencies": {
