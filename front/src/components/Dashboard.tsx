@@ -414,6 +414,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
         id={modalId}
         lang={lang}
         languages={languages}
+        onLang={setLang}
         onClose={() => setModalId(null)}
       />
 

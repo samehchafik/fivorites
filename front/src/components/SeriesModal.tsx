@@ -12,6 +12,7 @@ import {
   Loader,
   Modal,
   ScrollArea,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Table,
@@ -46,14 +47,23 @@ export function SeriesModal({
   id,
   lang,
   languages,
+  onLang,
   onClose,
 }: {
   id: number | null
   lang: string
   languages: Language[]
+  /** Changer de langue depuis la fiche change la langue de toute
+   *  l'application : c'est la même donnée, et deux langues courantes
+   *  différentes selon l'écran seraient impossibles à tenir dans l'URL. */
+  onLang: (code: string) => void
   onClose: () => void
 }) {
   const [openSeason, setOpenSeason] = useState<string | null>(null)
+  // Le visuel agrandi, s'il y en a un. Un seul état pour toute la fiche : les
+  // affiches, la galerie, la distribution et les images d'épisode passent par
+  // le même agrandissement.
+  const [zoom, setZoom] = useState<string | null>(null)
 
   const work = useQuery<Work>({
     queryKey: ['work', id, lang],
@@ -116,7 +126,12 @@ export function SeriesModal({
                 w={160}
                 radius="md"
                 alt=""
-                style={{ flexShrink: 0, boxShadow: 'var(--mantine-shadow-md)' }}
+                onClick={() => data.posterPath && setZoom(data.posterPath)}
+                style={{
+                  flexShrink: 0,
+                  boxShadow: 'var(--mantine-shadow-md)',
+                  cursor: data.posterPath ? 'zoom-in' : undefined,
+                }}
               />
 
               <Stack gap="xs" style={{ minWidth: 0 }}>
@@ -212,6 +227,28 @@ export function SeriesModal({
                     </Anchor>
                   )}
                 </Group>
+
+                {/* Le même sélecteur qu'en en-tête, à portée de main là où la
+                    langue compte le plus : c'est ici que le texte change
+                    vraiment, pas seulement un compteur. Des drapeaux plutôt
+                    qu'une liste déroulante — cinq choix, et l'on bascule
+                    souvent de l'un à l'autre pour comparer. */}
+                {languages.length > 1 && (
+                  <Group gap="xs" align="center">
+                    <Text size="xs" c="dimmed">
+                      Afficher en
+                    </Text>
+                    <SegmentedControl
+                      size="xs"
+                      value={lang}
+                      onChange={onLang}
+                      data={languages.map((entry) => ({
+                        value: entry.code,
+                        label: `${entry.flag} ${entry.code.slice(0, 2).toUpperCase()}`,
+                      }))}
+                    />
+                  </Group>
+                )}
               </Stack>
             </Group>
           </Box>
@@ -256,7 +293,20 @@ export function SeriesModal({
                     <Accordion.Item key={value} value={value}>
                       <Accordion.Control>
                         <Group wrap="nowrap" gap="sm">
-                          <Image src={poster} fallbackSrc={POSTER_FALLBACK} w={40} radius="sm" alt="" />
+                          <Image
+                            src={poster}
+                            fallbackSrc={POSTER_FALLBACK}
+                            w={40}
+                            radius="sm"
+                            alt=""
+                            onClick={(event) => {
+                              // Sans ça, agrandir l'affiche d'une saison
+                              // déplierait aussi son volet.
+                              event.stopPropagation()
+                              if (season.posterPath) setZoom(season.posterPath)
+                            }}
+                            style={{ cursor: season.posterPath ? 'zoom-in' : undefined }}
+                          />
                           <Stack gap={2} style={{ minWidth: 0 }}>
                             <Text size="sm" fw={600} dir="auto">
                               {season.name ?? `Saison ${number}`}
@@ -292,6 +342,7 @@ export function SeriesModal({
                             seasonNumber={number}
                             lang={lang}
                             languages={languages}
+                            onZoom={setZoom}
                           />
                         )}
                       </Accordion.Panel>
@@ -315,6 +366,8 @@ export function SeriesModal({
                         radius="sm"
                         size="lg"
                         alt=""
+                        onClick={() => member.profilePath && setZoom(member.profilePath)}
+                        style={{ cursor: member.profilePath ? 'zoom-in' : undefined }}
                       />
                       <Stack gap={0} style={{ minWidth: 0 }}>
                         <Text size="sm" fw={600} lineClamp={1} dir="auto">
@@ -337,8 +390,18 @@ export function SeriesModal({
 
             <Tabs.Panel value="gallery" p="lg">
               <Stack gap="lg">
-                <Gallery title="Visuels larges" paths={data.gallery.backdrops} size="w300" />
-                <Gallery title="Affiches" paths={data.gallery.posters} size="w185" />
+                <Gallery
+                  title="Visuels larges"
+                  paths={data.gallery.backdrops}
+                  size="w300"
+                  onZoom={setZoom}
+                />
+                <Gallery
+                  title="Affiches"
+                  paths={data.gallery.posters}
+                  size="w185"
+                  onZoom={setZoom}
+                />
               </Stack>
             </Tabs.Panel>
 
@@ -378,11 +441,49 @@ export function SeriesModal({
           </Tabs>
         </Stack>
       )}
+
+      {/* L'agrandissement. Une fenêtre dans la fenêtre : Mantine les empile
+          correctement, et refermer celle-ci ne referme pas la fiche — on
+          enchaîne donc les visuels sans perdre sa place.
+
+          800 × 600 est un cadre, pas un redimensionnement : les visuels de TMDB
+          n'ont pas tous le même rapport (16/9 pour les décors, 2/3 pour les
+          affiches). L'image est contenue dedans, jamais déformée. */}
+      <Modal
+        opened={zoom !== null}
+        onClose={() => setZoom(null)}
+        size={800}
+        padding={0}
+        withCloseButton
+        title={null}
+        zIndex={300}
+      >
+        {zoom && (
+          <Image
+            src={tmdbImage(zoom, 'w780')}
+            fallbackSrc={POSTER_FALLBACK}
+            alt=""
+            h={600}
+            fit="contain"
+            bg="black"
+          />
+        )}
+      </Modal>
     </Modal>
   )
 }
 
-function Gallery({ title, paths, size }: { title: string; paths: string[]; size: string }) {
+function Gallery({
+  title,
+  paths,
+  size,
+  onZoom,
+}: {
+  title: string
+  paths: string[]
+  size: string
+  onZoom: (path: string) => void
+}) {
   if (paths.length === 0) return null
   return (
     <Stack gap="xs">
@@ -391,14 +492,15 @@ function Gallery({ title, paths, size }: { title: string; paths: string[]; size:
       </Text>
       <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing="sm">
         {paths.map((path) => (
-          <Anchor
+          <Image
             key={path}
-            href={tmdbImage(path, 'original') ?? undefined}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            <Image src={tmdbImage(path, size)} radius="sm" alt="" loading="lazy" />
-          </Anchor>
+            src={tmdbImage(path, size)}
+            radius="sm"
+            alt=""
+            loading="lazy"
+            onClick={() => onZoom(path)}
+            style={{ cursor: 'zoom-in' }}
+          />
         ))}
       </SimpleGrid>
     </Stack>

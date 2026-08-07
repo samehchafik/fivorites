@@ -21,11 +21,15 @@ export function SeasonPanel({
   seasonNumber,
   lang,
   languages,
+  onZoom,
 }: {
   workId: number
   seasonNumber: number
   lang: string
   languages: Language[]
+  /** Agrandir une image d'épisode. La fenêtre appartient à la fiche : un seul
+   *  agrandissement pour toutes les images, quel que soit l'onglet. */
+  onZoom: (path: string) => void
 }) {
   const season = useQuery<SeasonDetail>({
     queryKey: ['season', workId, seasonNumber, lang],
@@ -69,7 +73,15 @@ export function SeasonPanel({
         return (
           <Group key={episode.episodeNumber ?? episode.name} align="flex-start" wrap="nowrap" gap="sm">
             {still ? (
-              <Image src={still} w={120} radius="sm" alt="" loading="lazy" style={{ flexShrink: 0 }} />
+              <Image
+                src={still}
+                w={120}
+                radius="sm"
+                alt=""
+                loading="lazy"
+                onClick={() => episode.stillPath && onZoom(episode.stillPath)}
+                style={{ flexShrink: 0, cursor: 'zoom-in' }}
+              />
             ) : null}
             <Stack gap={2} style={{ minWidth: 0 }}>
               <Text size="sm" fw={600} dir="auto">
