@@ -2,11 +2,17 @@ import type {
   Account,
   CardsResponse,
   Detail,
+  Dossier,
   ItemsResponse,
   Meta,
+  Phase1Result,
+  Phase2Result,
   Projection,
+  Rubric,
   SeasonDetail,
+  StoredScore,
   Summary,
+  TrainResult,
   Work,
 } from './types'
 
@@ -94,6 +100,41 @@ export const api = {
     ),
 
   refreshCatalog: () => request<Projection>('/api/catalog/refresh', { method: 'POST' }),
+
+  // --------------------------------------------------------- entraînement
+
+  trainingDossier: (id: number) => request<Dossier>(`/api/training/works/${id}/dossier`),
+
+  trainingScores: (id: number) => request<StoredScore[]>(`/api/training/works/${id}/scores`),
+
+  rubrics: () => request<Rubric[]>('/api/training/rubrics'),
+
+  saveRubric: (body: { version: string; prompt: string; axes: string[]; note?: string }) =>
+    request<{ version: string }>('/api/training/rubrics', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Phase 1 : une œuvre, deux juges (OpenAI note, Haiku contre-note). */
+  phase1: (body: { id: number; rubricVersion: string; prompt: string; axes: string[] }) =>
+    request<Phase1Result>('/api/training/phase1', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Réentraîne la régression interne sur toutes les notes du barème. */
+  trainWeights: (rubricVersion: string) =>
+    request<TrainResult>('/api/training/weights/train', {
+      method: 'POST',
+      body: JSON.stringify({ rubricVersion }),
+    }),
+
+  /** Phase 2 : la prédiction interne face aux notes LLM. */
+  phase2: (body: { id: number; rubricVersion: string; runLlm?: boolean }) =>
+    request<Phase2Result>('/api/training/phase2', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 }
 
 export interface CardsParams extends Record<string, QueryValue> {

@@ -93,6 +93,13 @@ services:
       CORS_ORIGINS: ""
       SEASON_LANGUAGES: ${TMDB_SEASON_LANGUAGES:-fr-FR,en-US,es-ES,ar-SA,tr-TR}
       WEB_DIST: /srv/www
+      # L'atelier d'entraînement (pages Training 1 et 2). Facultatives : sans
+      # elles, tout le reste de l'admin fonctionne et les routes /training
+      # répondent par un message clair.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8182/api/health').read()"]
       interval: 30s

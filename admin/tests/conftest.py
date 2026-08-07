@@ -77,10 +77,15 @@ async def conn(settings: Settings) -> AsyncIterator[psycopg.AsyncConnection]:
         await migrate(connection, ADMIN_MIGRATIONS)
         # `sourcing.riche_source` référence `raw_source` et `tmdb_catalog` :
         # l'omettre ferait échouer le truncate sur la contrainte, dans un test
-        # qui n'a rien à voir.
+        # qui n'a rien à voir. Les tables de notation référencent tmdb_catalog
+        # et rubric : mêmes obligations.
         await connection.execute(
             "truncate sourcing.raw_source, sourcing.fetch_state, sourcing.tmdb_catalog,"
-            " sourcing.riche_source, sourcing.oeuvre, admin.admin_user"
+            " sourcing.riche_source, sourcing.oeuvre, admin.admin_user,"
+            " notation.score, notation.weights, notation.embedding"
         )
+        # Les barèmes de test disparaissent, le `v1` semé par la migration
+        # reste : c'est lui que la page d'entraînement propose par défaut.
+        await connection.execute("delete from notation.rubric where version <> 'v1'")
         await connection.execute("set search_path to sourcing, admin, public")
         yield connection

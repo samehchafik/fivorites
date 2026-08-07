@@ -275,3 +275,81 @@ export interface SeasonDetail {
   posterPath: string | null
   episodes: Episode[]
 }
+
+// ------------------------------------------------------------- entraînement
+
+/** Le barème : la consigne envoyée aux juges, versionnée. Une note sans
+ *  version de barème est ininterprétable — la version EST la provenance. */
+export interface Rubric {
+  version: string
+  prompt: string
+  axes: string[]
+  note: string | null
+  created_at: string
+}
+
+/** Le dossier de notation : le texte anglais réellement soumis aux juges. */
+export interface Dossier {
+  idTmdb: number
+  title: string
+  text: string
+  sha256: string
+  chars: number
+  /** Faux quand le dossier est trop maigre pour produire des notes fiables. */
+  enough: boolean
+  sections: {
+    overviewChars: number
+    episodeCount: number
+    episodeChars: number
+    wikipediaChars: number
+    keywords: number
+  }
+}
+
+/** La note d'un juge sur un axe. `score` null = « pas assez de matière ». */
+export interface AxisScore {
+  score: number | null
+  confidence: number | null
+}
+
+/** Les écarts entre deux jeux de notes — la mesure de toute la boucle. */
+export interface Gaps {
+  perAxis: Record<string, number | null>
+  mean: number | null
+  scored: number
+}
+
+export interface Phase1Result {
+  id: number
+  dossier: { sha256: string; chars: number; title: string; sections: Dossier['sections'] }
+  openai: { model: string; scores: Record<string, AxisScore> }
+  haiku: { model: string; scores: Record<string, AxisScore> }
+  gaps: Gaps
+}
+
+export interface TrainResult {
+  rubricVersion: string
+  works: number
+  axes: { axe: string; trainedOn: number; maeFit?: number; skipped?: boolean }[]
+}
+
+export interface Phase2Result {
+  id: number
+  dossier: { sha256: string; chars: number; title: string }
+  internal: Record<string, { score: number; trainedOn: number; maeFit: number | null }>
+  llm: {
+    scores: Record<string, AxisScore>
+    origin: { model: string; fresh: boolean; scoredAt?: string } | null
+  }
+  gaps: Gaps | null
+}
+
+/** Une ligne de l'historique des notes d'une œuvre. */
+export interface StoredScore {
+  axe: string
+  valeur: number | null
+  confiance: number | null
+  rubric_version: string
+  modele: string
+  scored_at: string
+}

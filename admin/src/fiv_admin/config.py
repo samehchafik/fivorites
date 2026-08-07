@@ -73,6 +73,20 @@ class Settings(BaseSettings):
     login_max_attempts: int = 5
     login_lockout_seconds: int = 300
 
+    # L'entraînement de la notation (pages Training 1 et 2). Deux familles de
+    # modèles, exprès : OpenAI note, Haiku contredit — un contre-juge d'une
+    # autre lignée est le seul à voir un biais que toute la chaîne partagerait.
+    # Les identifiants de modèles sont des réglages : ils périment plus vite
+    # que le code.
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    openai_model: str = "gpt-5.4-mini"
+    anthropic_model: str = "claude-haiku-4-5"
+    openai_embed_model: str = "text-embedding-3-small"
+    # 256 dimensions (réduction Matryoshka côté OpenAI) : largement assez pour
+    # une ridge sur quelques centaines d'œuvres, six fois moins de coefficients.
+    embed_dimensions: int = 256
+
     # Les compteurs d'en-tête agrègent `raw_source` en entier. À l'échelle du
     # catalogue complet ça se compte en secondes : on les garde en mémoire un
     # court instant plutôt que de les recalculer à chaque affichage.

@@ -115,6 +115,7 @@ export function SeriesGrid({
   page,
   onPage,
   onOpen,
+  onTraining,
   onRefreshProjection,
   refreshing,
 }: {
@@ -127,6 +128,7 @@ export function SeriesGrid({
   page: number
   onPage: (page: number) => void
   onOpen: (id: number) => void
+  onTraining: (id: number, phase: 1 | 2) => void
   onRefreshProjection: () => void
   refreshing: boolean
 }) {
@@ -272,6 +274,7 @@ export function SeriesGrid({
               languages={languages}
               lang={lang}
               onOpen={() => onOpen(card.id)}
+              onTraining={(phase) => onTraining(card.id, phase)}
             />
           ))}
         </SimpleGrid>

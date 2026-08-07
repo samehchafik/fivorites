@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from fiv_admin.config import Settings, get_settings
 from fiv_admin.db import build_pool
 from fiv_admin.queries import SummaryCache
-from fiv_admin.routes import acquisition, auth, catalog
+from fiv_admin.routes import acquisition, auth, catalog, training
 from fiv_admin.security import LoginThrottle
 
 log = logging.getLogger(__name__)
@@ -124,6 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(acquisition.router, prefix="/api", tags=["acquisition"])
     app.include_router(catalog.router, prefix="/api", tags=["catalogue"])
+    app.include_router(training.router, prefix="/api", tags=["entraînement"])
 
     @app.get("/api/health", tags=["service"])
     async def health() -> dict[str, str]:

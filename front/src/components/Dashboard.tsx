@@ -31,6 +31,7 @@ import { LanguagePicker } from './LanguagePicker'
 import { SeriesGrid, type GridState } from './SeriesGrid'
 import { SeriesModal } from './SeriesModal'
 import { SummaryCards } from './SummaryCards'
+import { TrainingPage } from './TrainingPage'
 
 const DEFAULT_FILTERS: FilterState = {
   status: 'all',
@@ -96,6 +97,11 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   })
   const [gridPage, setGridPage] = useState(1)
   const [modalId, setModalId] = useState<number | null>(depuisUrl.id)
+
+  // L'atelier d'entraînement de la notation. Il remplace tout le contenu tant
+  // qu'il est ouvert : c'est une page de travail, pas une fenêtre par-dessus
+  // la grille — on y passe du temps, on y revient, on compare.
+  const [training, setTraining] = useState<{ id: number; phase: 1 | 2 } | null>(null)
 
   // Une frappe ne doit pas lancer une requête par caractère sur 228 000 lignes.
   const [tableSearch] = useDebouncedValue(filters.search, 350)
@@ -323,7 +329,13 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       </AppShell.Header>
 
       <AppShell.Main>
-        {available && !available.available ? (
+        {training ? (
+          <TrainingPage
+            id={training.id}
+            phase={training.phase}
+            onBack={() => setTraining(null)}
+          />
+        ) : available && !available.available ? (
           <Alert
             color="yellow"
             variant="light"
@@ -350,6 +362,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
                 page={gridPage}
                 onPage={setGridPage}
                 onOpen={setModalId}
+                onTraining={(id, phase) => setTraining({ id, phase })}
                 onRefreshProjection={() => refresh.mutate()}
                 refreshing={refresh.isPending}
               />

@@ -1,5 +1,5 @@
-import { Badge, Card, Group, Image, Progress, Stack, Text, Tooltip } from '@mantine/core'
-import { IconStar } from '@tabler/icons-react'
+import { Badge, Button, Card, Group, Image, Progress, Stack, Text, Tooltip } from '@mantine/core'
+import { IconScale, IconSchool, IconStar } from '@tabler/icons-react'
 
 import { tmdbImage } from '../api'
 import { POSTER_FALLBACK, formatPercent } from '../display'
@@ -19,11 +19,14 @@ export function SeriesCard({
   languages,
   lang,
   onOpen,
+  onTraining,
 }: {
   card: CardData
   languages: Language[]
   lang: string
   onOpen: () => void
+  /** Ouvre l'atelier d'entraînement de la notation sur cette série. */
+  onTraining: (phase: 1 | 2) => void
 }) {
   const poster = tmdbImage(card.posterPath, 'w185')
   const covered = languages.filter((language) => (card.coverage[language.code]?.ok ?? 0) > 0)
@@ -107,6 +110,39 @@ export function SeriesCard({
           <Text size="xs" c="dimmed" lineClamp={3} dir="auto">
             {card.overview || 'Pas de synopsis dans le brut collecté.'}
           </Text>
+
+          {/* L'atelier de notation. `stopPropagation` : ces boutons vivent sur
+              une carte entièrement cliquable, et ouvrir la fiche par-dessus la
+              page d'entraînement serait le contraire de ce qu'on a demandé. */}
+          <Group gap={6}>
+            <Tooltip label="Phase 1 — stabiliser le barème : OpenAI note, Haiku contre-note">
+              <Button
+                size="compact-xs"
+                variant="light"
+                leftSection={<IconSchool size={13} />}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onTraining(1)
+                }}
+              >
+                Training 1
+              </Button>
+            </Tooltip>
+            <Tooltip label="Phase 2 — régler les poids : la régression interne face au LLM">
+              <Button
+                size="compact-xs"
+                variant="light"
+                color="grape"
+                leftSection={<IconScale size={13} />}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onTraining(2)
+                }}
+              >
+                Training 2
+              </Button>
+            </Tooltip>
+          </Group>
 
           <Stack gap={4} mt="auto">
             <Group gap={4} justify="space-between" wrap="nowrap">
