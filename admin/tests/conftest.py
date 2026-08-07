@@ -83,7 +83,7 @@ async def conn(settings: Settings) -> AsyncIterator[psycopg.AsyncConnection]:
             "truncate sourcing.raw_source, sourcing.fetch_state, sourcing.tmdb_catalog,"
             " sourcing.riche_source, sourcing.oeuvre, admin.admin_user,"
             " notation.score, notation.weights, notation.embedding, notation.media_caption,"
-            " notation.training_run"
+            " notation.training_run, notation.training_weights"
         )
         # Les barèmes de test disparaissent, le `v1` semé par la migration
         # reste : c'est lui que la page d'entraînement propose par défaut.

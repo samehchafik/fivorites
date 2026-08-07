@@ -341,12 +341,31 @@ async def test_entrainement_puis_prediction_interne(
     bilan = entrainement.json()
     assert bilan["works"] == 12
     assert all(axe["trainedOn"] == 12 for axe in bilan["axes"])
+    assert bilan["weightsId"] is not None
+
+    # Le journal des poids : une ligne par prompt — réentraîner le même
+    # prompt redate sa ligne au lieu d'en empiler une seconde.
+    second = await client.post("/api/training/weights/train", json={"rubricVersion": "v-poids"})
+    assert second.json()["weightsId"] == bilan["weightsId"]
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select prompt, weights, works from notation.training_weights"
+            " where rubric_version = 'v-poids'"
+        )
+        journaux = await cur.fetchall()
+    assert len(journaux) == 1
+    prompt_journal, poids_json, works = journaux[0]
+    assert prompt_journal == "p" * 60
+    assert works == 12
+    assert set(poids_json.keys()) == set(AXES)
+    assert all("intercept" in entry and "coef" in entry for entry in poids_json.values())
 
     prediction = await client.post(
         "/api/training/phase2", json={"id": 1399, "rubricVersion": "v-poids"}
     )
     assert prediction.status_code == 200
     body = prediction.json()
+    assert body["weights"]["works"] == 12, "la version de poids utilisée est identifiée"
     for axe in AXES:
         assert 1.0 <= body["internal"][axe]["score"] <= 10.0
 

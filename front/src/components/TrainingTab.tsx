@@ -745,6 +745,10 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
 
       {result && (
         <Paper withBorder radius="md" p="sm">
+          <Text size="xs" c="dimmed" mb={4}>
+            Poids du {new Date(result.weights.trainedAt).toLocaleString('fr-FR')} — la version la
+            plus récente du journal, entraînée sur {result.weights.works} œuvre(s).
+          </Text>
           {result.gaps ? (
             <GapSummary gaps={result.gaps} />
           ) : (

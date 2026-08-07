@@ -606,6 +606,7 @@ async def train_weights(
                 raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
     trained: list[dict[str, Any]] = []
+    weights_json: dict[str, Any] = {}
     async with conn.cursor() as cur:
         for axe in axes:
             pairs = [
@@ -641,8 +642,50 @@ async def train_weights(
                 ),
             )
             trained.append({"axe": axe, "trainedOn": result.trained_on, "maeFit": result.mae_fit})
+            weights_json[axe] = {
+                "intercept": result.intercept,
+                "coef": result.coef,
+                "trainedOn": result.trained_on,
+                "maeFit": result.mae_fit,
+            }
 
-    return {"rubricVersion": body.rubricVersion, "works": len(by_work), "axes": trained}
+        # Le journal des poids : tous les axes dans une ligne, datée — c'est
+        # la version. Une ligne par prompt : réentraîner le même prompt la
+        # redate et la remet en tête, donc en version par défaut.
+        weights_id = None
+        trained_at = None
+        if weights_json:
+            await cur.execute(
+                """
+                insert into notation.training_weights
+                    (rubric_version, prompt, prompt_sha256, embedder, weights, works)
+                values (%s, %s, %s, %s, %s, %s)
+                on conflict (prompt_sha256) do update set
+                    rubric_version = excluded.rubric_version,
+                    embedder = excluded.embedder,
+                    weights = excluded.weights,
+                    works = excluded.works,
+                    trained_at = now()
+                returning id, trained_at
+                """,
+                (
+                    body.rubricVersion,
+                    rubric["prompt"],
+                    _prompt_sha(rubric["prompt"]),
+                    embedder,
+                    Jsonb(weights_json),
+                    len(by_work),
+                ),
+            )
+            weights_id, trained_at = await cur.fetchone()
+
+    return {
+        "rubricVersion": body.rubricVersion,
+        "works": len(by_work),
+        "axes": trained,
+        "weightsId": weights_id,
+        "trainedAt": trained_at,
+    }
 
 
 class Phase2In(BaseModel):
@@ -662,19 +705,25 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
     rubric = await _rubric(conn, body.rubricVersion)
     axes: list[str] = rubric["axes"]
 
+    # La version par défaut des poids : la ligne la plus récente du journal
+    # pour ce barème. Chaque prompt a la sienne ; réentraîner redate et remet
+    # en tête.
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
-            "select axe, intercept, coef, trained_on, mae_fit, trained_at"
-            " from notation.weights where rubric_version = %s",
+            """
+            select id, weights, works, trained_at from notation.training_weights
+            where rubric_version = %s order by trained_at desc limit 1
+            """,
             (body.rubricVersion,),
         )
-        weight_rows = {row["axe"]: row for row in await cur.fetchall()}
-    if not weight_rows:
+        weights_row = await cur.fetchone()
+    if weights_row is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "aucun poids entraîné pour ce barème — lancer d'abord l'entraînement "
             "(il faut au moins 10 œuvres notées en phase 1).",
         )
+    weight_rows: dict[str, dict[str, Any]] = weights_row["weights"]
 
     built = await build_dossier(conn, body.id)
     if built is None:
@@ -699,8 +748,8 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
     internal = {
         axe: {
             "score": predict(vector, row["intercept"], row["coef"]),
-            "trainedOn": row["trained_on"],
-            "maeFit": row["mae_fit"],
+            "trainedOn": row["trainedOn"],
+            "maeFit": row["maeFit"],
         }
         for axe, row in weight_rows.items()
     }
@@ -759,6 +808,11 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
     return {
         "id": body.id,
         "dossier": {key: built[key] for key in ("sha256", "chars", "title")},
+        "weights": {
+            "id": weights_row["id"],
+            "trainedAt": weights_row["trained_at"],
+            "works": weights_row["works"],
+        },
         "internal": internal,
         "llm": {"scores": llm_scores, "origin": llm_origin},
         "gaps": _gaps(internal_scores, llm_scores, axes) if llm_scores else None,

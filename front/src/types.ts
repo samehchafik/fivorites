@@ -367,11 +367,17 @@ export interface TrainResult {
   rubricVersion: string
   works: number
   axes: { axe: string; trainedOn: number; maeFit?: number; skipped?: boolean }[]
+  /** La ligne du journal notation.training_weights — une par prompt, la plus
+   *  récente est la version par défaut de la phase 2. */
+  weightsId: number | null
+  trainedAt: string | null
 }
 
 export interface Phase2Result {
   id: number
   dossier: { sha256: string; chars: number; title: string }
+  /** La version de poids qui a produit la prédiction — la plus récente du journal. */
+  weights: { id: number; trainedAt: string; works: number }
   internal: Record<string, { score: number; trainedOn: number; maeFit: number | null }>
   llm: {
     scores: Record<string, AxisScore>
