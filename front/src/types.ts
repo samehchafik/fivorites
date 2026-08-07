@@ -244,8 +244,12 @@ export interface Work {
   gallery: { backdrops: string[]; posters: string[] }
   cast: CastMember[]
   /** Ce que la langue choisie a réellement apporté : la fiche n'est
-   *  téléchargée qu'en `fr-FR`, seules ses traductions varient. */
-  translated: { lang: string; name: boolean; overview: boolean }
+   *  téléchargée qu'en `fr-FR`, seules ses traductions varient.
+   *
+   *  **Facultatif à dessein** : une API plus ancienne que le front ne le
+   *  renvoie pas, et le typage oblige alors à traiter l'absence plutôt qu'à
+   *  blanchir la page sur un `undefined.name`. */
+  translated?: { lang: string; name: boolean; overview: boolean }
   watch: Watch
   seasons: SeasonSummary[]
   raw: { fetchedAt: string; httpStatus: number }

@@ -164,8 +164,9 @@ export function SeriesModal({
                     manque, le texte affiché est le français — le dire vaut
                     mieux que de laisser croire à une collecte complète, ce que
                     ce tableau de bord a précisément pour rôle de mesurer. */}
-                {(!data.translated.name || !data.translated.overview) &&
-                  data.translated.lang !== 'fr-FR' && (
+                {data.translated &&
+                  data.translated.lang !== 'fr-FR' &&
+                  (!data.translated.name || !data.translated.overview) && (
                     <Text size="xs" c="dimmed">
                       {data.translated.name || data.translated.overview
                         ? `Traduction partielle en ${langLabel} — ${

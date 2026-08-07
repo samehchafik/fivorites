@@ -2,6 +2,7 @@ import { Center, Loader } from '@mantine/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { ApiError, api } from './api'
+import { Boundary } from './components/Boundary'
 import { Dashboard } from './components/Dashboard'
 import { LoginPage } from './components/LoginPage'
 import type { Account } from './types'
@@ -42,14 +43,19 @@ export function App() {
   }
 
   return (
-    <Dashboard
-      account={session.data}
-      onSignedOut={() => {
-        // Tout le cache est purgé, pas seulement la session : les chiffres
-        // d'acquisition ne doivent pas réapparaître au prochain compte connecté.
-        client.clear()
-        client.setQueryData(['session'], null)
-      }}
-    />
+    // Le filet est ici et non au-dessus de la session : une erreur de rendu du
+    // tableau de bord ne doit pas faire perdre la connexion.
+    <Boundary>
+      <Dashboard
+        account={session.data}
+        onSignedOut={() => {
+          // Tout le cache est purgé, pas seulement la session : les chiffres
+          // d'acquisition ne doivent pas réapparaître au prochain compte
+          // connecté.
+          client.clear()
+          client.setQueryData(['session'], null)
+        }}
+      />
+    </Boundary>
   )
 }
