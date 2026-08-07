@@ -183,8 +183,18 @@ async def _auto_captions(conn: Any, settings: Any, work_id: int) -> None:
         await _caption_missing(conn, settings, work_id)
 
 
-async def works_a_noter(conn: Any, rubric_version: str, limit: int) -> list[dict[str, Any]]:
+async def works_a_noter(
+    conn: Any, rubric_version: str, limit: int, *, inedites: bool = False
+) -> list[dict[str, Any]]:
     """Les séries collectées qu'aucun juge n'a encore notées sur ce barème.
+
+    « Sur ce barème », et c'est tout le sujet : l'entraînement des poids filtre
+    par `rubric_version`, donc une note rendue sous un barème précédent ne
+    nourrit pas le suivant. Une œuvre déjà jugée en v1 est donc une candidate
+    légitime pour v2 — surprenant à la lecture, nécessaire au fond. La colonne
+    `deja` dit sous quels barèmes elle a été vue, pour que la liste s'explique
+    d'elle-même ; `inedites` restreint aux œuvres jamais jugées, quand on
+    cherche à élargir plutôt qu'à compléter.
 
     L'ordre est celui du catalogue : popularité d'abord, note des votants pour
     départager. Entraîner sur les œuvres les plus vues n'est pas un biais de
@@ -198,25 +208,29 @@ async def works_a_noter(conn: Any, rubric_version: str, limit: int) -> list[dict
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
-            select id_tmdb, titre, popularity, note from (
-                select distinct on (r.source_id)
-                       c.id                                          as id_tmdb,
-                       coalesce(r.payload ->> 'name',
-                                r.payload ->> 'original_name')       as titre,
-                       c.popularity                                  as popularity,
-                       nullif(r.payload ->> 'vote_average', '')::real as note
-                from raw_source r
-                join tmdb_catalog c on c.id = r.source_id::int
-                where r.source = %(source)s and r.kind = %(kind)s
-                  and r.http_status between 200 and 299 and r.payload is not null
-                order by r.source_id, r.fetched_at desc
-            ) candidates
-            where not exists (
-                select 1 from notation.score s
-                where s.id_tmdb = candidates.id_tmdb
-                  and s.rubric_version = %(rubric)s
-                  and s.modele <> %(interne)s and s.modele not like 'claude%%'
-            )
+            select id_tmdb, titre, popularity, note, deja from (
+                select candidates.*, (
+                    select array_agg(distinct s.rubric_version order by s.rubric_version)
+                    from notation.score s
+                    where s.id_tmdb = candidates.id_tmdb
+                      and s.modele <> %(interne)s and s.modele not like 'claude%%'
+                ) as deja
+                from (
+                    select distinct on (r.source_id)
+                           c.id                                          as id_tmdb,
+                           coalesce(r.payload ->> 'name',
+                                    r.payload ->> 'original_name')       as titre,
+                           c.popularity                                  as popularity,
+                           nullif(r.payload ->> 'vote_average', '')::real as note
+                    from raw_source r
+                    join tmdb_catalog c on c.id = r.source_id::int
+                    where r.source = %(source)s and r.kind = %(kind)s
+                      and r.http_status between 200 and 299 and r.payload is not null
+                    order by r.source_id, r.fetched_at desc
+                ) candidates
+            ) vues
+            where not (%(rubric)s = any (coalesce(deja, '{}')))
+              and (not %(inedites)s or deja is null)
             order by popularity desc nulls last, note desc nulls last
             limit %(limit)s
             """,
@@ -225,6 +239,7 @@ async def works_a_noter(conn: Any, rubric_version: str, limit: int) -> list[dict
                 "kind": KIND_SERIES,
                 "rubric": rubric_version,
                 "interne": INTERNAL_MODEL,
+                "inedites": inedites,
                 "limit": limit,
             },
         )

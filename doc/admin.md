@@ -230,6 +230,13 @@ docker compose run --rm admin training note -n 50 --apercu   # ce qu'on s'apprê
 docker compose run --rm admin training note -n 50            # puis pour de vrai
 ```
 
+« Pas encore jugées » s'entend **sur le barème courant** : l'entraînement des
+poids filtre par version, donc une note rendue sous un barème précédent ne
+nourrit pas le suivant. Une œuvre déjà vue en v1 revient donc dans la liste
+pour v2, avec la mention « déjà v1 » pour que ça se lise. `--inedites`
+restreint aux œuvres jamais jugées, quand on cherche à élargir le catalogue
+plutôt qu'à compléter un barème.
+
 L'ordre est celui du catalogue — popularité, puis note des votants. Ce n'est
 pas un biais de confort : les œuvres les plus vues ont les dossiers les plus
 fournis (Wikipédia, synopsis d'épisodes, visuels), donc apprennent le plus par

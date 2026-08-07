@@ -36,16 +36,23 @@ def training_note(
     limit: Annotated[int, typer.Option("--limit", "-n", min=1, max=500)] = 10,
     bareme: Annotated[str | None, typer.Option("--bareme")] = None,
     sans_legende: Annotated[bool, typer.Option("--sans-legende")] = False,
+    inedites: Annotated[bool, typer.Option("--inedites")] = False,
     apercu: Annotated[bool, typer.Option("--apercu")] = False,
     pause: Annotated[float, typer.Option("--pause", min=0.0)] = 0.0,
 ) -> None:
-    """Note les N séries les plus populaires qu'aucun juge n'a encore vues.
+    """Note les N séries les plus populaires pas encore jugées sur le barème.
 
     C'est le remplissage de la phase 1 : la page Training note une œuvre à la
     fois, ce que soixante œuvres rendent intenable. Même chemin exactement —
     même dossier, mêmes juges, même journal — seule l'échelle change.
 
-    Les œuvres déjà notées sur ce barème sont sautées, donc relancer la
+    « Pas encore jugées SUR LE BARÈME » : l'entraînement des poids filtre par
+    version, donc une note rendue sous un barème précédent ne nourrit pas le
+    suivant. Une œuvre déjà vue en v1 revient donc dans la liste pour v2, et
+    la mention « déjà v1 » le dit en clair. `--inedites` restreint aux œuvres
+    jamais jugées, quand on cherche à élargir plutôt qu'à compléter.
+
+    Les œuvres déjà notées sur ce barème-ci sont sautées, donc relancer la
     commande continue le lot au lieu de le refaire : c'est un appel payant par
     œuvre, et on ne paie jamais deux fois la même.
 
@@ -91,7 +98,7 @@ def training_note(
                 raise typer.Exit(1)
             version, prompt, axes = row
 
-            candidates = await works_a_noter(conn, version, limit)
+            candidates = await works_a_noter(conn, version, limit, inedites=inedites)
             if not candidates:
                 typer.echo(f"aucune série à noter sur le barème {version} — tout est déjà jugé.")
                 return 0
@@ -101,9 +108,13 @@ def training_note(
                 for n, c in enumerate(candidates, start=1):
                     pop = f"{c['popularity']:.1f}" if c["popularity"] is not None else "—"
                     note = f"{c['note']:.1f}" if c["note"] is not None else "—"
+                    # « déjà v1 » : l'œuvre a été jugée sous un autre barème.
+                    # Sans cette mention, la liste paraît proposer des séries
+                    # déjà notées — elle propose en fait de les noter ICI.
+                    vu = f"  [déjà {', '.join(c['deja'])}]" if c["deja"] else ""
                     typer.echo(
                         f"  {n:3d}. {c['id_tmdb']:>8}  pop {pop:>7}  note {note:>4}  "
-                        f"{(c['titre'] or '')[:50]}"
+                        f"{(c['titre'] or '')[:45]}{vu}"
                     )
                 # L'ordre de grandeur, pas une facture : le dossier et les
                 # légendes varient d'une série à l'autre. Assez pour décider.
