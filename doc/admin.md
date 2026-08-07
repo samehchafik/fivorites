@@ -250,6 +250,11 @@ descriptif n'entre pas dans le filtre : le champ est présent ou absent selon la
 langue interrogée, donc mal calibré pour trancher — c'est la taille du dossier
 assemblé qui décide en aval.
 
+La liste lit `admin.tv_card`, comme la grille : interroger le brut obligeait à
+déplier le JSON de chaque fiche collectée pour n'en garder que vingt, d'où
+plusieurs secondes sur un simple aperçu. Contrepartie, la même que pour la
+grille — une série fraîchement collectée n'apparaît qu'après `catalog refresh`.
+
 L'ordre est celui du catalogue — popularité, puis note des votants. Ce n'est
 pas un biais de confort : les œuvres les plus vues ont les dossiers les plus
 fournis (Wikipédia, synopsis d'épisodes, visuels), donc apprennent le plus par

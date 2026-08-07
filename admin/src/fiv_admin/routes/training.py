@@ -29,7 +29,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 from fiv_admin.deps import Config, Conn, CurrentUser
-from fiv_admin.dossier import KIND_SERIES, SOURCE, build_dossier, load_fiche, load_seasons
+from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
 from fiv_admin.llm import LlmError, caption_openai, embed_openai, score_anthropic, score_openai
 from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
@@ -224,40 +224,45 @@ async def works_a_noter(
     œuvres notables et en laissait passer d'autres sans matière. Le vrai
     garde-fou reste en aval, sur la taille du dossier assemblé, qui mesure ce
     qui compte vraiment plutôt qu'un champ pris isolément.
+
+    La lecture passe par `admin.tv_card`, comme la grille. Interroger le brut
+    obligeait à déplier le JSON de chaque fiche collectée pour n'en garder que
+    vingt : quelques secondes d'attente sur un simple aperçu. La contrepartie
+    est celle de la grille — une série fraîchement collectée n'apparaît
+    qu'après `catalog refresh`.
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
-            select id_tmdb, titre, popularity, note, deja from (
-                select candidates.*, (
-                    select array_agg(distinct t.rubric_version order by t.rubric_version)
-                    from notation.training_run t
-                    where t.id_tmdb = candidates.id_tmdb
-                ) as deja
-                from (
-                    select distinct on (r.source_id)
-                           c.id                                          as id_tmdb,
-                           coalesce(r.payload ->> 'name',
-                                    r.payload ->> 'original_name')       as titre,
-                           c.popularity                                  as popularity,
-                           nullif(r.payload ->> 'vote_average', '')::real as note
-                    from raw_source r
-                    join tmdb_catalog c on c.id = r.source_id::int
-                    where r.source = %(source)s and r.kind = %(kind)s
-                      and r.http_status between 200 and 299 and r.payload is not null
-                      and (not %(filtres)s
-                           or nullif(r.payload ->> 'poster_path', '') is not null)
-                    order by r.source_id, r.fetched_at desc
-                ) candidates
-            ) vues
-            where (%(rejouer)s or not (%(rubric)s = any (coalesce(deja, '{}'))))
-              and (not %(inedites)s or deja is null)
+            with page as (
+                select v.id                                as id_tmdb,
+                       coalesce(v.name, v.original_name)   as titre,
+                       c.popularity                        as popularity,
+                       v.vote_average                      as note
+                from admin.tv_card v
+                join tmdb_catalog c on c.id = v.id
+                where (not %(filtres)s or nullif(v.poster_path, '') is not null)
+                  and (%(rejouer)s or not exists (
+                      select 1 from notation.training_run t
+                      where t.id_tmdb = v.id and t.rubric_version = %(rubric)s
+                  ))
+                  and (not %(inedites)s or not exists (
+                      select 1 from notation.training_run t where t.id_tmdb = v.id
+                  ))
+                order by c.popularity desc nulls last, v.vote_average desc nulls last
+                limit %(limit)s
+            )
+            -- L'inventaire des barèmes déjà vus ne sert qu'à l'affichage : il
+            -- se calcule sur la page retenue, pas sur les vingt-huit mille
+            -- candidates qu'on vient d'écarter.
+            select p.*, (
+                select array_agg(distinct t.rubric_version order by t.rubric_version)
+                from notation.training_run t where t.id_tmdb = p.id_tmdb
+            ) as deja
+            from page p
             order by popularity desc nulls last, note desc nulls last
-            limit %(limit)s
             """,
             {
-                "source": SOURCE,
-                "kind": KIND_SERIES,
                 "rubric": rubric_version,
                 "inedites": inedites,
                 "filtres": filtres,
