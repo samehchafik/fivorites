@@ -115,10 +115,10 @@ export function SeriesCard({
               une carte entièrement cliquable, et ouvrir la fiche par-dessus la
               page d'entraînement serait le contraire de ce qu'on a demandé. */}
           <Group gap={6}>
-            <Tooltip label="Phase 1 — stabiliser le barème : OpenAI note, Haiku contre-note">
+            <Tooltip label="Phase 1 — stabiliser le barème : OpenAI note, le contre-juge contredit">
               <Button
                 size="compact-xs"
-                variant="light"
+                variant="default"
                 leftSection={<IconSchool size={13} />}
                 onClick={(event) => {
                   event.stopPropagation()
@@ -131,8 +131,7 @@ export function SeriesCard({
             <Tooltip label="Phase 2 — régler les poids : la régression interne face au LLM">
               <Button
                 size="compact-xs"
-                variant="light"
-                color="grape"
+                variant="default"
                 leftSection={<IconScale size={13} />}
                 onClick={(event) => {
                   event.stopPropagation()

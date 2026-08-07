@@ -429,6 +429,14 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
         languages={languages}
         onLang={setLang}
         onClose={() => setModalId(null)}
+        onTraining={(phase) => {
+          // La fiche se ferme quand l'atelier s'ouvre : deux surfaces de
+          // travail empilées, c'est celle du dessous qu'on croit cassée.
+          if (modalId !== null) {
+            setTraining({ id: modalId, phase })
+            setModalId(null)
+          }
+        }}
       />
 
       <DetailDrawer

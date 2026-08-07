@@ -5,6 +5,7 @@ import {
   Avatar,
   Badge,
   Box,
+  Button,
   Center,
   Divider,
   Group,
@@ -25,6 +26,8 @@ import {
   IconDeviceTv,
   IconExternalLink,
   IconPhoto,
+  IconScale,
+  IconSchool,
   IconStar,
   IconUsers,
 } from '@tabler/icons-react'
@@ -59,6 +62,7 @@ export function SeriesModal({
   languages,
   onLang,
   onClose,
+  onTraining,
 }: {
   id: number | null
   lang: string
@@ -68,6 +72,9 @@ export function SeriesModal({
    *  différentes selon l'écran seraient impossibles à tenir dans l'URL. */
   onLang: (code: string) => void
   onClose: () => void
+  /** Ouvre l'atelier d'entraînement — la fiche se ferme, l'atelier prend
+   *  l'écran : le parent orchestre, la fiche ne fait que demander. */
+  onTraining: (phase: 1 | 2) => void
 }) {
   const [openSeason, setOpenSeason] = useState<string | null>(null)
   // Le visuel agrandi, s'il y en a un. Un seul état pour toute la fiche : les
@@ -179,6 +186,29 @@ export function SeriesModal({
                       {genre}
                     </Badge>
                   ))}
+                </Group>
+
+                {/* L'atelier de notation, aussi accessible depuis la fiche :
+                    c'est ici qu'on juge si une série vaut un entraînement —
+                    synopsis, saisons, langues — autant pouvoir y aller
+                    directement. */}
+                <Group gap={6}>
+                  <Button
+                    size="compact-xs"
+                    variant="default"
+                    leftSection={<IconSchool size={13} />}
+                    onClick={() => onTraining(1)}
+                  >
+                    Training 1
+                  </Button>
+                  <Button
+                    size="compact-xs"
+                    variant="default"
+                    leftSection={<IconScale size={13} />}
+                    onClick={() => onTraining(2)}
+                  >
+                    Training 2
+                  </Button>
                 </Group>
 
                 <Text size="sm" dir="auto">
