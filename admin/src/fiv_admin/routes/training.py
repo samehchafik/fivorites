@@ -183,12 +183,18 @@ class Phase1In(BaseModel):
 
 @router.post("/training/phase1")
 async def phase1(user: CurrentUser, conn: Conn, settings: Config, body: Phase1In) -> dict[str, Any]:
-    """Une œuvre, deux juges, l'écart par axe. Le cœur de la boucle manuelle."""
-    if not settings.openai_api_key or not settings.anthropic_api_key:
+    """Une œuvre, un juge OpenAI — et un contre-juge si sa clé est là.
+
+    Le contre-jugement automatique (Haiku) est **facultatif** : sans clé
+    Anthropic, il se fait à la main — le bouton du front copie consigne +
+    dossier pour claude.ai, et la contre-note se saisit via `/training/manual`.
+    Même boucle, même provenance ; seul l'exécutant change.
+    """
+    if not settings.openai_api_key:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "OPENAI_API_KEY et ANTHROPIC_API_KEY doivent être renseignées dans le .env "
-            "de l'admin pour lancer un entraînement.",
+            "OPENAI_API_KEY doit être renseignée dans le .env de l'admin "
+            "pour lancer un entraînement.",
         )
     await _rubric(conn, body.rubricVersion)
 
@@ -204,7 +210,7 @@ async def phase1(user: CurrentUser, conn: Conn, settings: Config, body: Phase1In
 
     async with httpx.AsyncClient() as http:
         try:
-            openai_result, haiku_result = await asyncio.gather(
+            calls = [
                 score_openai(
                     http,
                     api_key=settings.openai_api_key,
@@ -212,21 +218,28 @@ async def phase1(user: CurrentUser, conn: Conn, settings: Config, body: Phase1In
                     prompt=body.prompt,
                     dossier=built["text"],
                     axes=body.axes,
-                ),
-                score_anthropic(
-                    http,
-                    api_key=settings.anthropic_api_key,
-                    model=settings.anthropic_model,
-                    prompt=body.prompt,
-                    dossier=built["text"],
-                    axes=body.axes,
-                ),
-            )
+                )
+            ]
+            if settings.anthropic_api_key:
+                calls.append(
+                    score_anthropic(
+                        http,
+                        api_key=settings.anthropic_api_key,
+                        model=settings.anthropic_model,
+                        prompt=body.prompt,
+                        dossier=built["text"],
+                        axes=body.axes,
+                    )
+                )
+            results = await asyncio.gather(*calls)
         except LlmError as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
+    openai_result = results[0]
+    haiku_result = results[1] if len(results) > 1 else None
+
     prompt_sha = _prompt_sha(body.prompt)
-    for result in (openai_result, haiku_result):
+    for result in results:
         await _store_scores(
             conn,
             id_tmdb=body.id,
@@ -242,8 +255,56 @@ async def phase1(user: CurrentUser, conn: Conn, settings: Config, body: Phase1In
         "dossier": {key: built[key] for key in ("sha256", "chars", "sections", "title")},
         "openai": openai_result,
         "haiku": haiku_result,
-        "gaps": _gaps(openai_result["scores"], haiku_result["scores"], body.axes),
+        "gaps": (
+            _gaps(openai_result["scores"], haiku_result["scores"], body.axes)
+            if haiku_result
+            else None
+        ),
     }
+
+
+class ManualIn(BaseModel):
+    id: int
+    rubricVersion: str
+    prompt: str = Field(min_length=50)
+    # La contre-note saisie à la main — obtenue en collant consigne + dossier
+    # dans claude.ai. `score` null = « le contre-juge ne sait pas », comme
+    # pour les juges automatiques.
+    scores: dict[str, dict[str, float | int | None]]
+
+
+@router.post("/training/manual")
+async def manual_scores(
+    user: CurrentUser, conn: Conn, settings: Config, body: ManualIn
+) -> dict[str, Any]:
+    """Enregistre une contre-note faite à la main, avec la même provenance
+    qu'un appel automatique : empreinte du dossier, empreinte du prompt."""
+    await _rubric(conn, body.rubricVersion)
+    built = await build_dossier(conn, body.id)
+    if built is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {body.id} non collectée")
+
+    cleaned = {
+        axe: {
+            "score": (
+                int(min(10, max(1, round(entry["score"]))))
+                if isinstance(entry.get("score"), int | float)
+                else None
+            ),
+            "confidence": entry.get("confidence"),
+        }
+        for axe, entry in body.scores.items()
+    }
+    await _store_scores(
+        conn,
+        id_tmdb=body.id,
+        scores=cleaned,
+        rubric_version=body.rubricVersion,
+        modele="claude-web-manuel",
+        input_sha256=built["sha256"],
+        prompt_sha256=_prompt_sha(body.prompt),
+    )
+    return {"stored": len(cleaned), "modele": "claude-web-manuel"}
 
 
 @router.get("/training/works/{work_id}/scores")

@@ -177,6 +177,64 @@ async def test_phase1_note_avec_les_deux_juges_et_mesure_l_ecart(
     assert prompts == 1
 
 
+async def test_phase1_sans_cle_anthropic_note_avec_openai_seul(
+    conn: psycopg.AsyncConnection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le contre-jugement est facultatif : sans clé Anthropic, OpenAI note et
+    le contre-juge est l'humain, via claude.ai et la contre-note manuelle."""
+    await conn.execute(
+        "insert into admin_user (username, password_hash) values (%s, %s)",
+        ("sameh", hash_password(PASSWORD)),
+    )
+    await seed_series(conn)
+
+    async def fake_openai(http, *, api_key, model, prompt, dossier, axes):
+        return {
+            "model": "gpt-test",
+            "scores": {axe: {"score": 6, "confidence": 0.7} for axe in axes},
+        }
+
+    monkeypatch.setattr(routes.training, "score_openai", fake_openai)
+
+    app = create_app(
+        settings.model_copy(update={"openai_api_key": "sk-test", "anthropic_api_key": ""})
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http,
+    ):
+        await http.post("/api/auth/login", json={"username": "sameh", "password": PASSWORD})
+
+        reponse = await http.post(
+            "/api/training/phase1",
+            json={"id": 1399, "rubricVersion": "v1", "prompt": "p" * 60, "axes": AXES},
+        )
+        assert reponse.status_code == 200
+        body = reponse.json()
+        assert body["haiku"] is None
+        assert body["gaps"] is None
+
+        # La contre-note manuelle prend le relais, même provenance.
+        manuel = await http.post(
+            "/api/training/manual",
+            json={
+                "id": 1399,
+                "rubricVersion": "v1",
+                "prompt": "p" * 60,
+                "scores": {"luminosite": {"score": 4}, "intensite": {"score": None}},
+            },
+        )
+        assert manuel.status_code == 200
+        assert manuel.json() == {"stored": 2, "modele": "claude-web-manuel"}
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select modele, count(*) from notation.score where id_tmdb = 1399"
+            " group by modele order by modele"
+        )
+        assert await cur.fetchall() == [("claude-web-manuel", 2), ("gpt-test", len(AXES))]
+
+
 async def test_phase1_refuse_un_bareme_inconnu(client: httpx.AsyncClient) -> None:
     reponse = await client.post(
         "/api/training/phase1",

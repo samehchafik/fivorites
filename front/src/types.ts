@@ -323,8 +323,10 @@ export interface Phase1Result {
   id: number
   dossier: { sha256: string; chars: number; title: string; sections: Dossier['sections'] }
   openai: { model: string; scores: Record<string, AxisScore> }
-  haiku: { model: string; scores: Record<string, AxisScore> }
-  gaps: Gaps
+  /** Null sans clé Anthropic : le contre-jugement se fait alors à la main,
+   *  en collant consigne + dossier dans claude.ai. */
+  haiku: { model: string; scores: Record<string, AxisScore> } | null
+  gaps: Gaps | null
 }
 
 export interface TrainResult {

@@ -4,6 +4,7 @@ import {
   Button,
   Group,
   Loader,
+  NumberInput,
   Paper,
   ScrollArea,
   Select,
@@ -17,7 +18,7 @@ import {
   Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconArrowLeft, IconPlayerPlay, IconScale, IconSchool } from '@tabler/icons-react'
+import { IconArrowLeft, IconCopy, IconPlayerPlay, IconScale, IconSchool } from '@tabler/icons-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
@@ -188,6 +189,9 @@ function Phase1({
   const [prompt, setPrompt] = useState('')
   const [newVersion, setNewVersion] = useState('')
   const [result, setResult] = useState<Phase1Result | null>(null)
+  // La contre-note saisie à la main — le verdict de claude.ai, recopié axe par
+  // axe. Vide tant qu'on n'a rien collé.
+  const [manual, setManual] = useState<Record<string, number | null>>({})
 
   const selected = rubrics.find((entry) => entry.version === version) ?? rubrics[0] ?? null
 
@@ -206,10 +210,53 @@ function Phase1({
         prompt,
         axes: selected?.axes ?? [],
       }),
-    onSuccess: setResult,
+    onSuccess: (next) => {
+      setResult(next)
+      setManual({})
+    },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Notation échouée', message: error.message }),
   })
+
+  const saveManual = useMutation({
+    mutationFn: () =>
+      api.manualScores({
+        id,
+        rubricVersion: selected?.version ?? 'v1',
+        prompt,
+        scores: Object.fromEntries(
+          Object.entries(manual)
+            .filter(([, score]) => score !== null && score !== undefined)
+            .map(([axe, score]) => [axe, { score }]),
+        ),
+      }),
+    onSuccess: (stored) =>
+      notifications.show({
+        color: 'teal',
+        title: 'Contre-note enregistrée',
+        message: `${stored.stored} axe(s) sous « ${stored.modele} » — même provenance qu'un juge automatique.`,
+      }),
+    onError: (error: Error) =>
+      notifications.show({ color: 'red', title: 'Enregistrement refusé', message: error.message }),
+  })
+
+  /** Consigne + dossier, prêts à coller dans claude.ai — le contre-jugement
+   *  manuel quand il n'y a pas de clé Anthropic. */
+  const copyForClaude = () => {
+    const axesList = (selected?.axes ?? []).join(', ')
+    void navigator.clipboard
+      .writeText(
+        `${prompt}\n\nReply with one line per axis, format "axis: score" (${axesList}).` +
+          `\n\n----- DOSSIER -----\n\n${dossierText ?? ''}`,
+      )
+      .then(() =>
+        notifications.show({
+          color: 'teal',
+          title: 'Copié',
+          message: 'Consigne + dossier dans le presse-papier — à coller dans claude.ai.',
+        }),
+      )
+  }
 
   const save = useMutation({
     mutationFn: () =>
@@ -271,8 +318,22 @@ function Phase1({
             loading={run.isPending}
             disabled={!selected || prompt.length < 50}
           >
-            Noter avec les deux juges
+            Noter (OpenAI)
           </Button>
+          <Tooltip
+            label="Copie consigne + dossier — à coller dans claude.ai pour le contre-jugement manuel"
+            multiline
+            w={260}
+          >
+            <Button
+              variant="default"
+              leftSection={<IconCopy size={16} />}
+              onClick={copyForClaude}
+              disabled={!dossierText || prompt.length < 50}
+            >
+              Copier pour Claude.ai
+            </Button>
+          </Tooltip>
           {edited && (
             <Badge color="yellow" variant="light">
               prompt édité, non figé
@@ -313,41 +374,92 @@ function Phase1({
 
         {run.isPending && (
           <Alert color="blue" variant="light">
-            Les deux juges lisent le dossier — une vingtaine de secondes.
+            Le juge lit le dossier — une vingtaine de secondes.
           </Alert>
         )}
 
         {result && (
           <Paper withBorder radius="md" p="sm">
-            <GapSummary gaps={result.gaps} />
+            {result.gaps ? (
+              <GapSummary gaps={result.gaps} />
+            ) : (
+              <Text size="xs" c="dimmed">
+                Contre-jugement manuel : « Copier pour Claude.ai », coller la réponse axe par axe
+                ci-dessous — l'écart se calcule, « Enregistrer » lui donne la même provenance
+                qu'un juge automatique. ≤ 1 : au niveau du bruit, le prompt tient · &gt; 2 : le
+                prompt est ambigu sur les axes rouges.
+              </Text>
+            )}
             <Table mt="xs" verticalSpacing={6}>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Axe</Table.Th>
                   <Table.Th>OpenAI ({result.openai.model})</Table.Th>
-                  <Table.Th>Haiku ({result.haiku.model})</Table.Th>
+                  <Table.Th>
+                    {result.haiku ? `Haiku (${result.haiku.model})` : 'Claude.ai (à la main)'}
+                  </Table.Th>
                   <Table.Th>Écart</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {axes.map((axe) => (
-                  <Table.Tr key={axe}>
-                    <Table.Td>
-                      <Text size="sm">{axe}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <ScoreCell entry={result.openai.scores[axe]} />
-                    </Table.Td>
-                    <Table.Td>
-                      <ScoreCell entry={result.haiku.scores[axe]} />
-                    </Table.Td>
-                    <Table.Td>
-                      <GapBadge gap={result.gaps.perAxis[axe]} />
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
+                {axes.map((axe) => {
+                  const openaiScore = result.openai.scores[axe]?.score ?? null
+                  const counterScore = result.haiku
+                    ? (result.haiku.scores[axe]?.score ?? null)
+                    : (manual[axe] ?? null)
+                  const gap =
+                    openaiScore !== null && counterScore !== null
+                      ? Math.abs(openaiScore - counterScore)
+                      : null
+                  return (
+                    <Table.Tr key={axe}>
+                      <Table.Td>
+                        <Text size="sm">{axe}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <ScoreCell entry={result.openai.scores[axe]} />
+                      </Table.Td>
+                      <Table.Td>
+                        {result.haiku ? (
+                          <ScoreCell entry={result.haiku.scores[axe]} />
+                        ) : (
+                          <NumberInput
+                            size="xs"
+                            w={80}
+                            min={1}
+                            max={10}
+                            placeholder="1-10"
+                            value={manual[axe] ?? ''}
+                            onChange={(next) =>
+                              setManual((current) => ({
+                                ...current,
+                                [axe]: typeof next === 'number' ? next : null,
+                              }))
+                            }
+                          />
+                        )}
+                      </Table.Td>
+                      <Table.Td>
+                        <GapBadge gap={gap} />
+                      </Table.Td>
+                    </Table.Tr>
+                  )
+                })}
               </Table.Tbody>
             </Table>
+            {!result.haiku && (
+              <Group justify="flex-end" mt="xs">
+                <Button
+                  size="xs"
+                  variant="default"
+                  onClick={() => saveManual.mutate()}
+                  loading={saveManual.isPending}
+                  disabled={Object.values(manual).every((score) => score === null)}
+                >
+                  Enregistrer la contre-note
+                </Button>
+              </Group>
+            )}
           </Paper>
         )}
       </Stack>

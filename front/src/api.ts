@@ -122,6 +122,18 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  /** Contre-note saisie à la main — le verdict de claude.ai, recopié. */
+  manualScores: (body: {
+    id: number
+    rubricVersion: string
+    prompt: string
+    scores: Record<string, { score: number | null; confidence?: number | null }>
+  }) =>
+    request<{ stored: number; modele: string }>('/api/training/manual', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   /** Réentraîne la régression interne sur toutes les notes du barème. */
   trainWeights: (rubricVersion: string) =>
     request<TrainResult>('/api/training/weights/train', {
