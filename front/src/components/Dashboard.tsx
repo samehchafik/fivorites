@@ -101,6 +101,11 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     withOverview: depuisUrl.withOverview,
   })
   const [gridPage, setGridPage] = useState(1)
+  // Le passage d'une page à l'autre par les flèches de la fiche. On ne peut pas
+  // ouvrir la voisine tout de suite : elle est sur la page suivante, qui n'est
+  // pas encore chargée. On note donc quelle page on attend et par quel bout la
+  // prendre, et l'effet plus bas ouvre la bonne fiche quand elle arrive.
+  const [saut, setSaut] = useState<{ page: number; bord: 'premier' | 'dernier' } | null>(null)
   const [modalId, setModalId] = useState<number | null>(depuisUrl.id)
 
   // L'onglet de la fiche : présentation, ou l'un des deux ateliers
@@ -176,6 +181,57 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     enabled: enabled && view === 'cards' && media === 'tv',
     placeholderData: keepPreviousData,
   })
+
+  // La fiche attendue arrive : on l'ouvre. Le test sur `page` n'est pas
+  // superflu — `keepPreviousData` fait que `cards.data` contient encore la page
+  // précédente pendant le chargement, et sans lui on rouvrirait la fiche d'où
+  // l'on vient.
+  useEffect(() => {
+    if (!saut || cards.data?.page !== saut.page) return
+    const { items } = cards.data
+    setSaut(null)
+    if (items.length === 0) return
+    setModalId(saut.bord === 'premier' ? items[0].id : items[items.length - 1].id)
+  }, [saut, cards.data])
+
+  /**
+   * Les voisines de la fiche ouverte, dans l'ordre affiché par la grille.
+   *
+   * L'ordre de référence est celui de la grille — tri, second critère et
+   * filtres compris. « Suivante » veut donc dire « la carte d'après telle
+   * qu'elle est classée à l'écran », pas « l'id d'après » : c'est le seul sens
+   * qui corresponde à ce qu'on voit.
+   *
+   * Aux bords de la page, on change de page plutôt que de s'arrêter : une
+   * pagination de vingt-quatre ferait buter tous les quelques clics, et
+   * l'utilisateur n'a pas à savoir où tombent les coupures.
+   */
+  const voisines = useMemo(() => {
+    const page = cards.data
+    // Une fiche ouverte par `?id=` peut très bien ne pas être dans la page
+    // courante — ni même dans le filtre. Aucune navigation alors : mieux vaut
+    // pas de flèches que des flèches qui sautent ailleurs.
+    const rang = page?.items.findIndex((carte) => carte.id === modalId) ?? -1
+    if (!page || rang === -1) return { position: undefined }
+
+    const pages = Math.max(1, Math.ceil(page.total / page.pageSize))
+    const aller = (pas: -1 | 1) => () => {
+      const cible = rang + pas
+      if (cible >= 0 && cible < page.items.length) {
+        setModalId(page.items[cible].id)
+        return
+      }
+      const suivante = gridPage + pas
+      setGridPage(suivante)
+      setSaut({ page: suivante, bord: pas === 1 ? 'premier' : 'dernier' })
+    }
+
+    return {
+      onPrev: rang > 0 || gridPage > 1 ? aller(-1) : undefined,
+      onNext: rang < page.items.length - 1 || gridPage < pages ? aller(1) : undefined,
+      position: `${formatNumber((gridPage - 1) * page.pageSize + rang + 1)} / ${formatNumber(page.total)}`,
+    }
+  }, [cards.data, modalId, gridPage])
 
   const items = useQuery<ItemsResponse>({
     queryKey: [
@@ -446,6 +502,9 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       <SeriesModal
         id={modalId}
         tab={modalTab}
+        onPrev={voisines.onPrev}
+        onNext={voisines.onNext}
+        position={voisines.position}
         lang={lang}
         languages={languages}
         onLang={setLang}

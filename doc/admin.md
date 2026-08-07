@@ -137,6 +137,13 @@ une série de huit saisons en porte deux cents —, la galerie de visuels, la
 distribution, et un onglet technique. Un clic sur n'importe quelle image
 l'agrandit en 800 × 600.
 
+Deux flèches en haut de la fenêtre passent à l'œuvre précédente ou suivante,
+**dans l'ordre affiché par la grille** — tri, second critère et filtres
+compris — avec le rang courant à côté (« 37 / 1 240 »). Aux bords de la page
+elles changent de page : la pagination est une commodité d'affichage, pas une
+frontière que l'utilisateur ait à connaître. Une fiche ouverte par `?id=` sans
+que la grille la contienne n'a pas de flèches, faute de voisines à désigner.
+
 ### La langue
 
 Le sélecteur est dans l'en-tête **et** dans la fiche : c'est le même état, pas

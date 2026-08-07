@@ -1,5 +1,6 @@
 import {
   Accordion,
+  ActionIcon,
   Alert,
   Anchor,
   Avatar,
@@ -19,9 +20,12 @@ import {
   Tabs,
   Text,
   Title,
+  Tooltip,
 } from '@mantine/core'
 import {
   IconAlertTriangle,
+  IconChevronLeft,
+  IconChevronRight,
   IconDeviceTv,
   IconExternalLink,
   IconId,
@@ -66,6 +70,9 @@ export function SeriesModal({
   onLang,
   onTab,
   onClose,
+  onPrev,
+  onNext,
+  position,
 }: {
   id: number | null
   /** L'onglet affiché — présentation ou l'un des deux ateliers. L'état vit
@@ -80,6 +87,16 @@ export function SeriesModal({
   onLang: (code: string) => void
   onTab: (tab: ModalTab) => void
   onClose: () => void
+  /** Passer à la fiche précédente / suivante, dans l'ordre de la grille.
+   *
+   *  Absent quand il n'y a pas de voisine : dernière de la dernière page, ou
+   *  fiche ouverte par `?id=` sans que la grille la contienne. Un bouton qui ne
+   *  peut rien faire vaut mieux absent que désactivé sans explication. */
+  onPrev?: () => void
+  onNext?: () => void
+  /** « 37 / 1 240 » — le rang dans le classement courant, filtres compris.
+   *  Sans lui, les deux flèches ne disent pas où l'on est. */
+  position?: string
 }) {
   const [openSeason, setOpenSeason] = useState<string | null>(null)
   // Le visuel agrandi, s'il y en a un. Un seul état pour toute la fiche : les
@@ -110,7 +127,42 @@ export function SeriesModal({
       size="72rem"
       padding={0}
       scrollAreaComponent={ScrollArea.Autosize}
-      title={null}
+      // L'en-tête existe déjà pour la croix de fermeture : la navigation s'y
+      // loge à l'opposé, plutôt que de flotter au-dessus du décor où elle
+      // deviendrait illisible sur les visuels clairs.
+      title={
+        (onPrev || onNext) && (
+          <Group gap="xs" pl="md" wrap="nowrap">
+            <Tooltip label="Œuvre précédente" disabled={!onPrev}>
+              <ActionIcon
+                variant="default"
+                size="lg"
+                disabled={!onPrev}
+                onClick={onPrev}
+                aria-label="Œuvre précédente"
+              >
+                <IconChevronLeft size={18} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="Œuvre suivante" disabled={!onNext}>
+              <ActionIcon
+                variant="default"
+                size="lg"
+                disabled={!onNext}
+                onClick={onNext}
+                aria-label="Œuvre suivante"
+              >
+                <IconChevronRight size={18} />
+              </ActionIcon>
+            </Tooltip>
+            {position && (
+              <Text size="sm" c="dimmed">
+                {position}
+              </Text>
+            )}
+          </Group>
+        )
+      }
       withCloseButton
       styles={CROIX}
     >
