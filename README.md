@@ -51,5 +51,6 @@ et les facettes — restent à construire.
 | [`doc/v2-acquisition-series.md`](doc/v2-acquisition-series.md) | le plan d'acquisition, les décisions et les lots |
 | [`doc/serveur-debian11.md`](doc/serveur-debian11.md) | la mise en place du serveur, une fois pour toutes |
 | [`doc/exploitation.md`](doc/exploitation.md) | lancer, surveiller, diagnostiquer — au quotidien |
+| [`doc/contrat-donnees-admin.md`](doc/contrat-donnees-admin.md) | comment l'admin lit le sourcing — les langues, les nouvelles tables |
 | [`doc/etude-couverture-marche-arabe.md`](doc/etude-couverture-marche-arabe.md) | ce que valent les catalogues arabe, golfe et turc |
 | [`doc/etude-sources-complementaires.md`](doc/etude-sources-complementaires.md) | ce qu'apportent Wikidata et TVmaze — et pourquoi IMDb est écartée |

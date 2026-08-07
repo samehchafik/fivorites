@@ -4,7 +4,10 @@ Front d'administration de Fivorites V2 : consulter ce qui a été collecté, et
 suivre ce qu'il reste à collecter — par univers et **par langue**.
 
 React + Mantine devant, FastAPI + Postgres derrière. Le module lit la base de
-[`sourcing`](../sourcing) ; il ne collecte rien.
+[`sourcing`](../sourcing) ; il ne collecte rien. Le contrat de lecture — ce que
+veut dire `lang`, où vivent les synopsis d'épisode traduits, les tables
+récentes (`oeuvre`, `riche_source`) — est dans
+[`doc/contrat-donnees-admin.md`](../doc/contrat-donnees-admin.md).
 
 Le partage des requêtes tient en deux lignes et ne varie pas, du poste de dev au
 serveur :
