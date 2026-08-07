@@ -20,6 +20,7 @@ from fiv_admin import routes
 from fiv_admin.app import create_app
 from fiv_admin.config import Settings
 from fiv_admin.dossier import build_dossier
+from fiv_admin.llm import LlmError
 from fiv_admin.security import hash_password
 from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
@@ -148,6 +149,46 @@ async def test_le_dossier_est_anglais_et_deterministe(conn: psycopg.AsyncConnect
     assert "Noble families fight" in premier["text"], "l'overview vient de la traduction en"
     assert "Winter approaches" in premier["text"], "les synopsis d'épisodes en-US sont là"
     assert premier["sha256"] == second["sha256"], "même base, même texte, même empreinte"
+    assert (
+        "MATERIAL: overview, 1 season overview(s), 5 sampled episode synopses." in premier["text"]
+    )
+
+
+async def test_le_dossier_signale_la_matiere_disponible(conn: psycopg.AsyncConnection) -> None:
+    """Le signal qui manquait : sans lui, un synopsis de trois phrases peut se
+    lire comme un dossier complet — c'est exactement ce qui a fait diverger
+    Haiku (null, prudent) et OpenAI (des scores confiants) sur une série dont
+    le seul brut collecté est la fiche."""
+    id_tmdb = 2200
+    await conn.execute(
+        "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+        " values (%s, 'Matiere maigre', 1, current_date)",
+        (id_tmdb,),
+    )
+    payload = {
+        "original_name": "Matiere maigre",
+        "translations": {
+            "translations": [
+                {
+                    "iso_639_1": "en",
+                    "iso_3166_1": "US",
+                    "data": {"name": "Thin Material", "overview": "A short premise, nothing more."},
+                }
+            ]
+        },
+    }
+    await conn.execute(
+        "insert into raw_source (source, kind, source_id, lang, http_status, payload,"
+        " payload_sha256) values ('tmdb', 'tv', %s, 'fr-FR', 200, %s, sha256(%s::bytea))",
+        (str(id_tmdb), Jsonb(payload), str(id_tmdb)),
+    )
+
+    built = await build_dossier(conn, id_tmdb)
+
+    assert built is not None
+    assert "MATERIAL: overview." in built["text"], (
+        "rien d'autre que l'overview : le dit sans détour"
+    )
 
 
 async def test_le_dossier_d_une_serie_non_collectee_est_none(
@@ -447,6 +488,8 @@ async def test_le_dossier_integre_saisons_et_legendes(conn: psycopg.AsyncConnect
     built = await build_dossier(conn, 2100)
 
     assert built is not None
+    assert "MATERIAL: overview, 1 season overview(s), 5 sampled episode synopses," in built["text"]
+    assert "2 visual caption(s)." in built["text"]
     assert "SEASON OVERVIEWS:\nSeason 1: Two great houses collide" in built["text"]
     assert "MEDIA (what the official images show" in built["text"]
     assert built["text"].index("backdrop 1: dark castle") < built["text"].index(
@@ -454,6 +497,50 @@ async def test_le_dossier_integre_saisons_et_legendes(conn: psycopg.AsyncConnect
     ), "les backdrops avant les stills — l'ordre de l'index, donc de l'empreinte"
     assert built["sections"]["seasonOverviews"] == 1
     assert built["sections"]["mediaLines"] == 2
+
+
+async def test_le_dossier_legende_les_visuels_manquants_tout_seul(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La donnée visuelle ne bouge pas : la légende se crée à la première
+    lecture du dossier, puis se relit — sans qu'on ait rien à cliquer."""
+    appels: list[int] = []
+
+    async def fake_caption(http, *, api_key, model, images):
+        appels.append(len(images))
+        return {
+            "model": "gpt-vision-test",
+            "captions": [f"dark moody frame ({image['label']})" for image in images],
+        }
+
+    monkeypatch.setattr(routes.training, "caption_openai", fake_caption)
+
+    premier = await client.get("/api/training/works/1399/dossier")
+    assert premier.status_code == 200
+    assert "dark moody frame (backdrop 1)" in premier.json()["text"]
+    assert premier.json()["sections"]["mediaLines"] == 7
+    assert appels == [7]
+
+    second = await client.get("/api/training/works/1399/dossier")
+    assert second.json()["sha256"] == premier.json()["sha256"], "même dossier, même empreinte"
+    assert appels == [7], "les légendes sont relues, jamais repayées"
+
+
+async def test_le_dossier_se_lit_meme_si_la_vision_echoue(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un modèle de vision en panne ne doit pas rendre une série innotable :
+    le dossier se construit, simplement sans section MEDIA."""
+
+    async def fake_caption(http, *, api_key, model, images):
+        raise LlmError("OpenAI vision 500 : boom")
+
+    monkeypatch.setattr(routes.training, "caption_openai", fake_caption)
+
+    reponse = await client.get("/api/training/works/1399/dossier")
+    assert reponse.status_code == 200
+    assert reponse.json()["sections"]["mediaLines"] == 0
+    assert "MEDIA (" not in reponse.json()["text"]
 
 
 async def test_legender_paye_une_fois_puis_relit(

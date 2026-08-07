@@ -49,8 +49,9 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
   })
   const rubrics = useQuery({ queryKey: ['rubrics'], queryFn: api.rubrics })
 
-  // Les légendes visuelles : payées une fois, figées en base, relues par le
-  // dossier — d'où l'invalidation, qui fait apparaître la section MEDIA.
+  // Le rattrapage manuel : les légendes se créent d'elles-mêmes à la lecture
+  // du dossier, ce bouton ne sert qu'après une re-collecte qui aurait apporté
+  // de nouvelles images — ou quand la vision a échoué au premier passage.
   const caption = useMutation({
     mutationFn: () => api.captionWork(id),
     onSuccess: (result) => {
@@ -80,15 +81,15 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
               {dossier.data.sections.episodeCount} synopsis d'épisodes ·{' '}
               {dossier.data.sections.mediaLines > 0
                 ? `${dossier.data.sections.mediaLines} visuels légendés`
-                : 'visuels non légendés'}{' '}
+                : 'aucun visuel à légender'}{' '}
               · {dossier.data.sections.wikipediaChars > 0
                 ? 'Wikipédia en'
                 : 'pas de Wikipédia — enrichir aiderait'}
             </Text>
             <Tooltip
-              label="Décrit les backdrops et stills d'épisodes avec le modèle de vision, une fois pour toutes — la section MEDIA du dossier."
+              label="Les visuels se légendent d'eux-mêmes à la première lecture du dossier. Ce bouton rattrape le reste : images apportées par une re-collecte, ou modèle de vision indisponible au premier passage."
               multiline
-              w={280}
+              w={300}
             >
               <Button
                 size="compact-sm"
@@ -97,7 +98,7 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
                 loading={caption.isPending}
                 onClick={() => caption.mutate()}
               >
-                Légender les visuels
+                Relégender
               </Button>
             </Tooltip>
           </Group>

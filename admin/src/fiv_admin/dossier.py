@@ -206,6 +206,25 @@ async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str
         f"network {', '.join(networks)}" if networks else None,
     ]
     parts.append("FACTS: " + "; ".join(f for f in facts if f))
+
+    # Ce que le dossier contient réellement, en clair — factuel, pas une
+    # consigne. `MIN_CHARS` ne compte que des caractères : un synopsis seul
+    # dépasse le seuil sans qu'aucune section ne porte le ton de l'œuvre dans
+    # la durée (synopsis d'épisodes, de saison, Wikipédia). Sans ce signal
+    # explicite, un juge peut lire un synopsis de trois phrases et noter avec
+    # la même assurance qu'un dossier complet — observé sur des séries au
+    # catalogue pauvre (obscures, ou dont la saison en-US n'a jamais été
+    # collectée). Le prompt décide comment réagir ; le dossier se contente de
+    # dire ce qui est là.
+    material = [
+        "overview" if overview else "no overview",
+        f"{len(season_overviews)} season overview(s)" if season_overviews else None,
+        f"{len(episodes)} sampled episode synopses" if episodes else None,
+        "Wikipedia article" if wikipedia else None,
+        f"{len(captions)} visual caption(s)" if captions else None,
+    ]
+    parts.append("MATERIAL: " + ", ".join(m for m in material if m) + ".")
+
     if genres:
         parts.append("GENRES: " + ", ".join(genres))
     if keywords:

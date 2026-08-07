@@ -18,6 +18,7 @@ réentraîner (le bouton) ; divergence au niveau du bruit → les poids tiennent
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 from typing import Any
 
@@ -113,51 +114,25 @@ def _gaps(
     }
 
 
-# ---------------------------------------------------------------- le dossier
-
-
-@router.get("/training/works/{work_id}/dossier")
-async def dossier(user: CurrentUser, conn: Conn, work_id: int) -> dict[str, Any]:
-    built = await build_dossier(conn, work_id)
-    if built is None:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"aucune fiche collectée pour {work_id} — impossible de construire un dossier.",
-        )
-    return built
-
-
 # ---------------------------------------------------------------- les visuels
 
 
-@router.post("/training/works/{work_id}/captions")
-async def caption_work(
-    user: CurrentUser, conn: Conn, settings: Config, work_id: int
-) -> dict[str, Any]:
-    """Légende les visuels d'une série et les fige dans `notation.media_caption`.
+async def _caption_missing(conn: Any, settings: Any, work_id: int) -> dict[str, Any]:
+    """Légende ce qui ne l'est pas encore, et seulement ça.
 
-    Idempotent par construction : une image déjà légendée n'est jamais
-    renvoyée au modèle — la légende est payée une fois, puis relue par le
-    dossier pour toujours. Relancer le bouton après une re-collecte ne
-    légende donc que les images nouvelles.
+    Le cœur du légendage, partagé entre le bouton et le chemin automatique :
+    sélection déterministe des visuels, un appel vision pour les images
+    inconnues, insertion figée. `total` à 0 = rien à légender (série non
+    collectée, ou brut sans visuel). Les erreurs vision remontent en LlmError.
     """
-    if not settings.openai_api_key:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "OPENAI_API_KEY doit être renseignée dans le .env de l'admin "
-            "pour légender les visuels.",
-        )
+    model = settings.openai_model
+    bilan = {"captioned": 0, "already": 0, "total": 0, "model": model}
     fiche = await load_fiche(conn, work_id)
     if fiche is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {work_id} non collectée")
-
+        return bilan
     images = select_images(fiche["payload"], await load_seasons(conn, work_id))
     if not images:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "aucun visuel dans le brut collecté — ni backdrop sur la fiche, "
-            "ni still d'épisode sur les saisons en-US.",
-        )
+        return bilan
 
     async with conn.cursor() as cur:
         await cur.execute("select url from notation.media_caption where id_tmdb = %s", (work_id,))
@@ -165,15 +140,11 @@ async def caption_work(
     fresh = [image for image in images if image["url"] not in known]
 
     captioned = 0
-    model = settings.openai_model
     if fresh:
         async with httpx.AsyncClient() as http:
-            try:
-                result = await caption_openai(
-                    http, api_key=settings.openai_api_key, model=model, images=fresh
-                )
-            except LlmError as exc:
-                raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+            result = await caption_openai(
+                http, api_key=settings.openai_api_key, model=model, images=fresh
+            )
         model = result["model"]
         async with conn.cursor() as cur:
             for image, caption in zip(fresh, result["captions"], strict=True):
@@ -191,12 +162,74 @@ async def caption_work(
                 captioned += 1
 
     return {
-        "id": work_id,
         "captioned": captioned,
         "already": len(images) - len(fresh),
         "total": len(images),
         "model": model,
     }
+
+
+async def _auto_captions(conn: Any, settings: Any, work_id: int) -> None:
+    """Le chemin automatique : les légendes se créent à la première lecture.
+
+    La donnée visuelle ne bouge pratiquement pas — une fois payée, la légende
+    est là pour toujours ; il n'y a donc aucune raison d'attendre un clic.
+    Silencieux par choix : sans clé OpenAI ou si la vision tousse, le dossier
+    doit quand même se lire — simplement sans section MEDIA.
+    """
+    if not settings.openai_api_key:
+        return
+    with contextlib.suppress(LlmError):
+        await _caption_missing(conn, settings, work_id)
+
+
+# ---------------------------------------------------------------- le dossier
+
+
+@router.get("/training/works/{work_id}/dossier")
+async def dossier(user: CurrentUser, conn: Conn, settings: Config, work_id: int) -> dict[str, Any]:
+    await _auto_captions(conn, settings, work_id)
+    built = await build_dossier(conn, work_id)
+    if built is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"aucune fiche collectée pour {work_id} — impossible de construire un dossier.",
+        )
+    return built
+
+
+@router.post("/training/works/{work_id}/captions")
+async def caption_work(
+    user: CurrentUser, conn: Conn, settings: Config, work_id: int
+) -> dict[str, Any]:
+    """Le légendage à la demande — utile après une re-collecte, pour ne pas
+    attendre la prochaine lecture de dossier.
+
+    Idempotent par construction : une image déjà légendée n'est jamais
+    renvoyée au modèle — la légende est payée une fois, puis relue par le
+    dossier pour toujours.
+    """
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "OPENAI_API_KEY doit être renseignée dans le .env de l'admin "
+            "pour légender les visuels.",
+        )
+    fiche = await load_fiche(conn, work_id)
+    if fiche is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {work_id} non collectée")
+    if not select_images(fiche["payload"], await load_seasons(conn, work_id)):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "aucun visuel dans le brut collecté — ni backdrop sur la fiche, "
+            "ni still d'épisode sur les saisons en-US.",
+        )
+
+    try:
+        bilan = await _caption_missing(conn, settings, work_id)
+    except LlmError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return {"id": work_id, **bilan}
 
 
 # ---------------------------------------------------------------- le barème
@@ -271,6 +304,9 @@ async def phase1(user: CurrentUser, conn: Conn, settings: Config, body: Phase1In
         )
     await _rubric(conn, body.rubricVersion)
 
+    # Les légendes avant le dossier : le juge doit lire la section MEDIA, pas
+    # découvrir qu'elle manquait une fois la note rendue.
+    await _auto_captions(conn, settings, body.id)
     built = await build_dossier(conn, body.id)
     if built is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {body.id} non collectée")
