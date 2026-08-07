@@ -595,6 +595,7 @@ def _predict_all(vector: list[float], weights: dict[str, dict[str, Any]]) -> dic
             "score": predict(vector, row["intercept"], row["coef"]),
             "trainedOn": row["trainedOn"],
             "maeFit": row["maeFit"],
+            "maeLoo": row.get("maeLoo"),
         }
         for axe, row in weights.items()
     }

@@ -345,7 +345,10 @@ export interface TrainingRun {
   /** Le vecteur prédit par la régression, écrit par « Générer » ou par
    *  l'entraînement. C'est lui qui permet à Training 2 de s'afficher sans
    *  qu'on ait rien à recliquer. */
-  interne?: Record<string, { score: number; trainedOn: number; maeFit: number | null }> | null
+  interne?: Record<
+    string,
+    { score: number; trainedOn: number; maeFit: number | null; maeLoo?: number | null }
+  > | null
   createdAt: string
   claudeAt: string | null
   interneAt?: string | null
@@ -381,7 +384,19 @@ export interface Phase1Result {
 export interface TrainResult {
   rubricVersion: string
   works: number
-  axes: { axe: string; trainedOn: number; maeFit?: number; skipped?: boolean }[]
+  axes: {
+    axe: string
+    trainedOn: number
+    maeFit?: number
+    /** L'erreur de validation croisée (leave-one-out) — la métrique
+     *  honnête : maeFit baisse toujours avec plus de paramètres, maeLoo dit
+     *  ce que le modèle ferait sur une œuvre qu'il n'a pas vue. C'est elle
+     *  qu'il faut regarder lot après lot pour savoir si l'interne a assez
+     *  d'œuvres pour cesser de diverger avec le juge. */
+    maeLoo?: number
+    lambda?: number
+    skipped?: boolean
+  }[]
   /** La ligne du journal notation.training_weights — une par prompt, la plus
    *  récente est la version par défaut de la phase 2. */
   weightsId?: number | null
@@ -402,7 +417,10 @@ export interface Phase2Result {
   dossier: { sha256: string; chars: number; title: string }
   /** La version de poids qui a produit la prédiction — la plus récente du journal. */
   weights?: { id: number; trainedAt: string; works: number }
-  internal: Record<string, { score: number; trainedOn: number; maeFit: number | null }>
+  internal: Record<
+    string,
+    { score: number; trainedOn: number; maeFit: number | null; maeLoo?: number | null }
+  >
   llm: {
     scores: Record<string, AxisScore>
     origin: { model: string; fresh: boolean; scoredAt?: string } | null

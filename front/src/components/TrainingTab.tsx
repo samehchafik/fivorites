@@ -672,7 +672,7 @@ function parseClaudeReply(text: string, axes: string[]): Record<string, number> 
  *  génération de l'instant, ou un essai relu du journal. `storedAt` distingue
  *  les deux — non nul, c'est du relu. */
 interface ShownPhase2 {
-  internal: Record<string, { score: number; trainedOn: number; maeFit: number | null }>
+  internal: Phase2Result['internal']
   llm: Phase2Result['llm']
   claude?: Phase2Result['claude']
   weights?: Phase2Result['weights']
@@ -700,9 +700,12 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
         title:
           `Poids entraînés sur ${bilan.works} œuvre(s)` +
           (bilan.generated === undefined ? '' : ` · ${bilan.generated} vecteur(s) régénéré(s)`),
+        // MAE loo, pas MAE fit : l'ajustement baisse toujours avec plus de
+        // paramètres et ne dit rien de ce que le modèle ferait sur une
+        // œuvre qu'il n'a pas vue — la validation croisée, si.
         message: bilan.axes
           .map((axe) =>
-            axe.skipped ? `${axe.axe} : trop peu de notes` : `${axe.axe} : MAE ${axe.maeFit}`,
+            axe.skipped ? `${axe.axe} : trop peu de notes` : `${axe.axe} : MAE loo ${axe.maeLoo}`,
           )
           .join(' · '),
       })
@@ -874,7 +877,9 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
                       <Group gap={6} wrap="nowrap">
                         <Text fw={600}>{shown.internal[axe].score}</Text>
                         <Tooltip
-                          label={`entraîné sur ${shown.internal[axe].trainedOn} œuvre(s) — MAE d'ajustement ${shown.internal[axe].maeFit ?? '—'}`}
+                          label={`entraîné sur ${shown.internal[axe].trainedOn} œuvre(s) — MAE loo ${shown.internal[axe].maeLoo ?? '—'} (ajustement ${shown.internal[axe].maeFit ?? '—'}, toujours plus bas — pas la mesure de généralisation)`}
+                          multiline
+                          w={280}
                         >
                           <Text size="xs" c="dimmed">
                             n={shown.internal[axe].trainedOn}
