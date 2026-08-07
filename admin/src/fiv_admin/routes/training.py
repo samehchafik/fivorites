@@ -29,7 +29,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 from fiv_admin.deps import Config, Conn, CurrentUser
-from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
+from fiv_admin.dossier import KIND_SERIES, SOURCE, build_dossier, load_fiche, load_seasons
 from fiv_admin.llm import LlmError, caption_openai, embed_openai, score_anthropic, score_openai
 from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
@@ -183,6 +183,170 @@ async def _auto_captions(conn: Any, settings: Any, work_id: int) -> None:
         await _caption_missing(conn, settings, work_id)
 
 
+async def works_a_noter(conn: Any, rubric_version: str, limit: int) -> list[dict[str, Any]]:
+    """Les séries collectées qu'aucun juge n'a encore notées sur ce barème.
+
+    L'ordre est celui du catalogue : popularité d'abord, note des votants pour
+    départager. Entraîner sur les œuvres les plus vues n'est pas un biais de
+    confort — ce sont celles dont les dossiers sont les plus fournis (Wikipédia,
+    synopsis d'épisodes, visuels), donc celles qui apprennent le plus par appel
+    payé. La longue traîne obscure viendra quand le barème tiendra.
+
+    Les prédictions internes et les contre-notes ne comptent pas comme « déjà
+    notée » : seule une note de juge, celle qui entraîne, ferme une œuvre.
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select id_tmdb, titre, popularity, note from (
+                select distinct on (r.source_id)
+                       c.id                                          as id_tmdb,
+                       coalesce(r.payload ->> 'name',
+                                r.payload ->> 'original_name')       as titre,
+                       c.popularity                                  as popularity,
+                       nullif(r.payload ->> 'vote_average', '')::real as note
+                from raw_source r
+                join tmdb_catalog c on c.id = r.source_id::int
+                where r.source = %(source)s and r.kind = %(kind)s
+                  and r.http_status between 200 and 299 and r.payload is not null
+                order by r.source_id, r.fetched_at desc
+            ) candidates
+            where not exists (
+                select 1 from notation.score s
+                where s.id_tmdb = candidates.id_tmdb
+                  and s.rubric_version = %(rubric)s
+                  and s.modele <> %(interne)s and s.modele not like 'claude%%'
+            )
+            order by popularity desc nulls last, note desc nulls last
+            limit %(limit)s
+            """,
+            {
+                "source": SOURCE,
+                "kind": KIND_SERIES,
+                "rubric": rubric_version,
+                "interne": INTERNAL_MODEL,
+                "limit": limit,
+            },
+        )
+        return list(await cur.fetchall())
+
+
+class NonCollectee(RuntimeError):
+    """Aucune fiche collectée pour cette série : il n'y a rien à noter."""
+
+
+class DossierMaigre(RuntimeError):
+    """Le dossier existe mais ne porte pas de quoi juger.
+
+    Distincte de `NonCollectee` parce que la conduite à tenir diffère : l'une
+    demande une collecte, l'autre un enrichissement.
+    """
+
+    def __init__(self, chars: int) -> None:
+        super().__init__(f"dossier trop maigre ({chars} caractères)")
+        self.chars = chars
+
+
+async def note_work(
+    conn: Any,
+    settings: Any,
+    *,
+    id_tmdb: int,
+    rubric_version: str,
+    prompt: str,
+    axes: list[str],
+    captions: bool = True,
+) -> dict[str, Any]:
+    """Note une œuvre et journalise l'essai — le chemin commun au bouton et au lot.
+
+    Une seule fonction pour les deux entrées : la page Training 1 note une
+    œuvre à la fois, la commande `training note` en enchaîne cinquante, et il
+    serait fâcheux que la seconde produise des notes subtilement différentes
+    de la première. Même dossier, mêmes juges, même provenance.
+
+    Les erreurs remontent telles quelles — `NonCollectee`, `DossierMaigre`,
+    `LlmError` — pour que chaque appelant décide : la route en fait des codes
+    HTTP, le lot saute l'œuvre et poursuit.
+    """
+    if captions:
+        # Les légendes avant le dossier : le juge doit lire la section MEDIA,
+        # pas découvrir qu'elle manquait une fois la note rendue.
+        await _auto_captions(conn, settings, id_tmdb)
+
+    built = await build_dossier(conn, id_tmdb)
+    if built is None:
+        raise NonCollectee(f"série {id_tmdb} non collectée")
+    if not built["enough"]:
+        raise DossierMaigre(built["chars"])
+
+    async with httpx.AsyncClient() as http:
+        calls = [
+            score_openai(
+                http,
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                prompt=prompt,
+                dossier=built["text"],
+                axes=axes,
+            )
+        ]
+        if settings.anthropic_api_key:
+            calls.append(
+                score_anthropic(
+                    http,
+                    api_key=settings.anthropic_api_key,
+                    model=settings.anthropic_model,
+                    prompt=prompt,
+                    dossier=built["text"],
+                    axes=axes,
+                )
+            )
+        results = await asyncio.gather(*calls)
+
+    openai_result = results[0]
+    haiku_result = results[1] if len(results) > 1 else None
+
+    prompt_sha = _prompt_sha(prompt)
+    for result in results:
+        await _store_scores(
+            conn,
+            id_tmdb=id_tmdb,
+            scores=result["scores"],
+            rubric_version=rubric_version,
+            modele=result["model"],
+            input_sha256=built["sha256"],
+            prompt_sha256=prompt_sha,
+        )
+
+    # Le journal de bord : l'essai entier sur une ligne — prompt en clair,
+    # fiche brute référencée, verdicts côte à côte. `notation.score` reste la
+    # table de travail des poids ; celle-ci est celle qu'on relit.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into notation.training_run
+                (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256,
+                 openai, claude, claude_at)
+            values (%(id)s, %(raw)s, %(rubric)s, %(prompt)s, %(sha)s,
+                    %(openai)s, %(claude)s,
+                    case when %(claude)s::jsonb is not null then now() end)
+            returning id
+            """,
+            {
+                "id": id_tmdb,
+                "raw": built["rawSourceId"],
+                "rubric": rubric_version,
+                "prompt": prompt,
+                "sha": built["sha256"],
+                "openai": Jsonb(openai_result),
+                "claude": Jsonb(haiku_result) if haiku_result else None,
+            },
+        )
+        run_id = (await cur.fetchone())[0]
+
+    return {"runId": run_id, "built": built, "openai": openai_result, "haiku": haiku_result}
+
+
 # ---------------------------------------------------------------- le dossier
 
 
@@ -304,90 +468,30 @@ async def phase1(user: CurrentUser, conn: Conn, settings: Config, body: Phase1In
         )
     await _rubric(conn, body.rubricVersion)
 
-    # Les légendes avant le dossier : le juge doit lire la section MEDIA, pas
-    # découvrir qu'elle manquait une fois la note rendue.
-    await _auto_captions(conn, settings, body.id)
-    built = await build_dossier(conn, body.id)
-    if built is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {body.id} non collectée")
-    if not built["enough"]:
+    try:
+        essai = await note_work(
+            conn,
+            settings,
+            id_tmdb=body.id,
+            rubric_version=body.rubricVersion,
+            prompt=body.prompt,
+            axes=body.axes,
+        )
+    except NonCollectee as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except DossierMaigre as exc:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"dossier trop maigre ({built['chars']} caractères) — noter cette série "
+            f"dossier trop maigre ({exc.chars} caractères) — noter cette série "
             "produirait des nombres sans valeur. L'enrichir d'abord (enrich --id).",
-        )
+        ) from exc
+    except LlmError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
-    async with httpx.AsyncClient() as http:
-        try:
-            calls = [
-                score_openai(
-                    http,
-                    api_key=settings.openai_api_key,
-                    model=settings.openai_model,
-                    prompt=body.prompt,
-                    dossier=built["text"],
-                    axes=body.axes,
-                )
-            ]
-            if settings.anthropic_api_key:
-                calls.append(
-                    score_anthropic(
-                        http,
-                        api_key=settings.anthropic_api_key,
-                        model=settings.anthropic_model,
-                        prompt=body.prompt,
-                        dossier=built["text"],
-                        axes=body.axes,
-                    )
-                )
-            results = await asyncio.gather(*calls)
-        except LlmError as exc:
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-
-    openai_result = results[0]
-    haiku_result = results[1] if len(results) > 1 else None
-
-    prompt_sha = _prompt_sha(body.prompt)
-    for result in results:
-        await _store_scores(
-            conn,
-            id_tmdb=body.id,
-            scores=result["scores"],
-            rubric_version=body.rubricVersion,
-            modele=result["model"],
-            input_sha256=built["sha256"],
-            prompt_sha256=prompt_sha,
-        )
-
-    # Le journal de bord : l'essai entier sur une ligne — prompt en clair,
-    # fiche brute référencée, verdicts côte à côte. `notation.score` reste la
-    # table de travail des poids ; celle-ci est celle qu'on relit.
-    async with conn.cursor() as cur:
-        await cur.execute(
-            """
-            insert into notation.training_run
-                (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256,
-                 openai, claude, claude_at)
-            values (%(id)s, %(raw)s, %(rubric)s, %(prompt)s, %(sha)s,
-                    %(openai)s, %(claude)s,
-                    case when %(claude)s::jsonb is not null then now() end)
-            returning id
-            """,
-            {
-                "id": body.id,
-                "raw": built["rawSourceId"],
-                "rubric": body.rubricVersion,
-                "prompt": body.prompt,
-                "sha": built["sha256"],
-                "openai": Jsonb(openai_result),
-                "claude": Jsonb(haiku_result) if haiku_result else None,
-            },
-        )
-        run_id = (await cur.fetchone())[0]
-
+    built, openai_result, haiku_result = essai["built"], essai["openai"], essai["haiku"]
     return {
         "id": body.id,
-        "runId": run_id,
+        "runId": essai["runId"],
         "dossier": {key: built[key] for key in ("sha256", "chars", "sections", "title")},
         "openai": openai_result,
         "haiku": haiku_result,

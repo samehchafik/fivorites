@@ -216,6 +216,24 @@ rafraîchie — et le front doit pouvoir les distinguer.
 | `user disable <login>` | le désactive — effet immédiat, pas au bout des 12 h du jeton |
 | `user list` | les liste |
 | `catalog refresh` | recalcule la projection |
+| `training note -n <N>` | note les N séries les plus populaires pas encore jugées |
+
+`training note` est le remplissage de la phase 1 : la page Training note une
+œuvre à la fois, ce que soixante œuvres rendent intenable. Elle emprunte
+exactement le même chemin — même dossier, mêmes juges, même journal — et saute
+les œuvres déjà notées sur le barème, si bien que relancer continue le lot au
+lieu de le refaire. C'est un appel payant par œuvre : `--apercu` montre la
+liste et l'ordre de grandeur du coût sans rien appeler.
+
+```bash
+docker compose run --rm admin training note -n 50 --apercu   # ce qu'on s'apprête à payer
+docker compose run --rm admin training note -n 50            # puis pour de vrai
+```
+
+L'ordre est celui du catalogue — popularité, puis note des votants. Ce n'est
+pas un biais de confort : les œuvres les plus vues ont les dossiers les plus
+fournis (Wikipédia, synopsis d'épisodes, visuels), donc apprennent le plus par
+appel payé. La longue traîne viendra quand le barème tiendra.
 
 Il n'y a **pas d'inscription** depuis le front : un front d'administration qui
 sait fabriquer des administrateurs n'en est plus un. Et le mot de passe n'est

@@ -24,9 +24,138 @@ app = typer.Typer(help="Administration Fivorites V2 — suivi de l'acquisition",
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
 user_app = typer.Typer(help="Comptes d'administration", no_args_is_help=True)
 catalog_app = typer.Typer(help="Projection d'affichage du catalogue", no_args_is_help=True)
+training_app = typer.Typer(help="Entraînement de la notation", no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
 app.add_typer(catalog_app, name="catalog")
+app.add_typer(training_app, name="training")
+
+
+@training_app.command("note")
+def training_note(
+    limit: Annotated[int, typer.Option("--limit", "-n", min=1, max=500)] = 10,
+    bareme: Annotated[str | None, typer.Option("--bareme")] = None,
+    sans_legende: Annotated[bool, typer.Option("--sans-legende")] = False,
+    apercu: Annotated[bool, typer.Option("--apercu")] = False,
+    pause: Annotated[float, typer.Option("--pause", min=0.0)] = 0.0,
+) -> None:
+    """Note les N séries les plus populaires qu'aucun juge n'a encore vues.
+
+    C'est le remplissage de la phase 1 : la page Training note une œuvre à la
+    fois, ce que soixante œuvres rendent intenable. Même chemin exactement —
+    même dossier, mêmes juges, même journal — seule l'échelle change.
+
+    Les œuvres déjà notées sur ce barème sont sautées, donc relancer la
+    commande continue le lot au lieu de le refaire : c'est un appel payant par
+    œuvre, et on ne paie jamais deux fois la même.
+
+    `--apercu` montre la liste et le coût estimé sans rien appeler. À utiliser
+    la première fois : c'est la seule façon de voir ce qu'on s'apprête à payer.
+    """
+    import time
+
+    from fiv_admin.llm import LlmError
+    from fiv_admin.routes.training import (
+        DossierMaigre,
+        NonCollectee,
+        note_work,
+        works_a_noter,
+    )
+
+    settings = get_settings()
+    if not settings.openai_api_key and not apercu:
+        typer.echo("ERREUR : OPENAI_API_KEY absente — rien à noter sans juge.")
+        typer.echo("→ la renseigner dans le .env, à côté du docker-compose.yml")
+        raise typer.Exit(1)
+
+    async def run() -> int:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            async with conn.cursor() as cur:
+                if bareme:
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric where version = %s",
+                        (bareme,),
+                    )
+                else:
+                    # Sans précision, le barème le plus récent : c'est celui que
+                    # l'atelier propose par défaut, et deux entrées qui
+                    # noteraient sur des barèmes différents rendraient les
+                    # écarts incomparables.
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric"
+                        " order by created_at desc limit 1"
+                    )
+                row = await cur.fetchone()
+            if row is None:
+                typer.echo(f"barème introuvable : {bareme or 'aucun barème en base'}")
+                raise typer.Exit(1)
+            version, prompt, axes = row
+
+            candidates = await works_a_noter(conn, version, limit)
+            if not candidates:
+                typer.echo(f"aucune série à noter sur le barème {version} — tout est déjà jugé.")
+                return 0
+
+            typer.echo(f"barème {version} · {len(candidates)} série(s) à noter")
+            if apercu:
+                for n, c in enumerate(candidates, start=1):
+                    pop = f"{c['popularity']:.1f}" if c["popularity"] is not None else "—"
+                    note = f"{c['note']:.1f}" if c["note"] is not None else "—"
+                    typer.echo(
+                        f"  {n:3d}. {c['id_tmdb']:>8}  pop {pop:>7}  note {note:>4}  "
+                        f"{(c['titre'] or '')[:50]}"
+                    )
+                # L'ordre de grandeur, pas une facture : le dossier et les
+                # légendes varient d'une série à l'autre. Assez pour décider.
+                typer.echo(
+                    f"\naperçu seul, rien n'a été appelé — coût estimé "
+                    f"~{len(candidates) * 0.004:.2f} $ "
+                    f"({'légendes comprises' if not sans_legende else 'sans légendes'})"
+                )
+                return 0
+
+            notees = sautees = 0
+            for n, c in enumerate(candidates, start=1):
+                titre = (c["titre"] or str(c["id_tmdb"]))[:45]
+                try:
+                    essai = await note_work(
+                        conn,
+                        settings,
+                        id_tmdb=c["id_tmdb"],
+                        rubric_version=version,
+                        prompt=prompt,
+                        axes=axes,
+                        captions=not sans_legende,
+                    )
+                except DossierMaigre as exc:
+                    typer.echo(f"  {n:3d}/{len(candidates)} ⨯ {titre} — {exc}")
+                    sautees += 1
+                    continue
+                except (NonCollectee, LlmError) as exc:
+                    # Une œuvre qui échoue ne doit pas emporter le lot : les
+                    # précédentes sont déjà payées et écrites.
+                    typer.echo(f"  {n:3d}/{len(candidates)} ⨯ {titre} — {exc}")
+                    sautees += 1
+                    continue
+
+                scores = essai["openai"]["scores"]
+                resume = " ".join(
+                    f"{axe[:3]}:{scores.get(axe, {}).get('score') or '∅'}" for axe in axes
+                )
+                typer.echo(f"  {n:3d}/{len(candidates)} ✓ {titre:<45} {resume}")
+                notees += 1
+                if pause:
+                    time.sleep(pause)
+
+            typer.echo(f"\n{notees} notée(s), {sautees} sautée(s) sur le barème {version}.")
+            if notees:
+                typer.echo(
+                    "→ prochaine étape : le bouton « Entraînement » de Training 2, "
+                    "qui refait les poids et régénère les vecteurs."
+                )
+            return notees
+
+    _run(run())
 
 
 @catalog_app.command("refresh")
