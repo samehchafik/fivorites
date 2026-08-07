@@ -101,6 +101,45 @@ class CardQuery:
         return ((self.sort, self.descending),)
 
 
+# Le titre et le synopsis dans la langue demandée, pour les seules séries de la
+# page affichée.
+#
+# C'est la seule entorse à la règle « aucune liste ne lit `payload` », et elle
+# est bornée : au plus `pageSize` payloads ouverts, jamais le catalogue entier.
+# L'alternative était de porter les traductions dans la projection — de l'ordre
+# de deux cents mégaoctets, et une liste de langues figée dans une migration
+# alors que le contrat de données rappelle qu'elle est un réglage.
+_TRADUCTIONS = sql.SQL("""
+                , traductions as (
+                    select distinct on (r.source_id)
+                           r.source_id as sid,
+                           (
+                               select jsonb_build_object(
+                                   'name', t -> 'data' ->> 'name',
+                                   'overview', t -> 'data' ->> 'overview'
+                               )
+                               from jsonb_array_elements(
+                                   coalesce(
+                                       r.payload -> 'translations' -> 'translations',
+                                       '[]'::jsonb
+                                   )
+                               ) t
+                               where t ->> 'iso_639_1' = %(lang2)s
+                               -- La variante régionale d'abord : TMDB renvoie
+                               -- ar-AE et ar-SA, et prendre la première venue
+                               -- donnerait un ordre instable.
+                               order by (t ->> 'iso_3166_1' = %(region)s) desc
+                               limit 1
+                           ) as data
+                    from raw_source r
+                    where r.source = %(source)s and r.kind = %(kind)s
+                      and r.http_status between 200 and 299 and r.payload is not null
+                      and r.source_id = any (array(select id::text from page))
+                    order by r.source_id, r.fetched_at desc
+                )
+""")
+
+
 def _order_by(
     criteria: tuple[tuple[str, bool], ...], columns: dict[str, sql.SQL], tiebreak: sql.SQL
 ) -> sql.SQL:
@@ -247,9 +286,9 @@ async def fetch_cards(
                 order_page=order_page,
                 traductions=_TRADUCTIONS if traduire else sql.SQL(""),
                 traduction=(
-                    sql.SQL("coalesce(x.data, '{{}}'::jsonb) as traduction")
+                    sql.SQL("coalesce(x.data, '{}'::jsonb) as traduction")
                     if traduire
-                    else sql.SQL("'{{}}'::jsonb as traduction")
+                    else sql.SQL("'{}'::jsonb as traduction")
                 ),
                 jointure=(
                     sql.SQL("left join traductions x on x.sid = p.id::text")

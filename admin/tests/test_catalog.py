@@ -276,6 +276,34 @@ async def test_card_carries_what_the_vignette_shows(conn: psycopg.AsyncConnectio
     assert got["coverage"]["ar-SA"] == {"ok": 1, "failed": 1}
 
 
+async def test_the_cards_are_translated_too(conn: psycopg.AsyncConnection) -> None:
+    """La grille lit la projection, qui ne stocke que le titre français. Les
+    traductions viennent du payload de la fiche, ouvert pour les seules séries
+    de la page — jamais pour le catalogue entier."""
+    await seed(conn)
+
+    arabe, _ = await fetch_cards(conn, CardQuery(lang="ar-SA"))
+    got = next(row for row in arabe if row["id"] == 1399)
+    assert got["name"] == "لعبة العروش"
+    assert got["overview"].startswith("تسع عائلات")
+
+    francais, _ = await fetch_cards(conn, CardQuery(lang="fr-FR"))
+    got = next(row for row in francais if row["id"] == 1399)
+    assert got["name"] == "Le Trône de fer"
+
+    # Le turc n'a qu'un titre traduit : le synopsis se replie sur le français,
+    # sans mention sur la vignette — c'est la fiche qui l'annonce.
+    turc, _ = await fetch_cards(conn, CardQuery(lang="tr-TR"))
+    got = next(row for row in turc if row["id"] == 1399)
+    assert got["name"] == "Taht Oyunları"
+    assert got["overview"].startswith("Neuf familles")
+
+    # Une langue absente des traductions : tout reste français.
+    espagnol, _ = await fetch_cards(conn, CardQuery(lang="es-ES"))
+    got = next(row for row in espagnol if row["id"] == 1399)
+    assert got["name"] == "Le Trône de fer"
+
+
 async def test_cards_sort_and_search(conn: psycopg.AsyncConnection) -> None:
     await seed(conn)
 

@@ -65,8 +65,13 @@ le texte traduit. Quand celle de la langue choisie manque, le français est
 affiché et la fiche le dit : laisser croire à une collecte complète serait le
 contraire de ce que ce tableau de bord mesure.
 
-Les **vignettes de la grille**, elles, restent en français : elles viennent de
-la projection `admin.tv_card`, qui ne stocke que le titre de la fiche.
+Les **vignettes de la grille** sont traduites elles aussi. La projection
+`admin.tv_card` ne stocke que le titre français ; la traduction vient du payload
+de la fiche, ouvert pour les seules séries de la page affichée. C'est la seule
+entorse à la règle « aucune liste ne lit `payload` », et elle est bornée : au
+plus `pageSize` payloads, jamais le catalogue entier. Porter les traductions
+dans la projection aurait coûté de l'ordre de deux cents mégaoctets et figé la
+liste des langues dans une migration, alors qu'elle est un réglage.
 
 Au clic sur une carte : la fiche complète — **où regarder la série**, un
 accordéon par saison (épisodes chargés à l'ouverture du volet), la galerie de
