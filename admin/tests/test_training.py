@@ -715,6 +715,34 @@ def test_la_ridge_apprend_une_relation_lineaire() -> None:
     assert abs(predict([20.0, 1.0], poids.intercept, poids.coef) - 6.0) < 1.0
 
 
+def test_la_ridge_discrimine_des_embeddings_normalises() -> None:
+    """Le bug du premier lot réel : un λ fixé à 10 face à des embeddings de
+    norme 1 écrasait ~97 % du signal — treize œuvres très différentes
+    recevaient le même vecteur, la moyenne d'entraînement. λ se choisit
+    maintenant par validation croisée : sur des vecteurs de ce gabarit, les
+    prédictions doivent séparer les deux groupes, pas les confondre."""
+    vectors, values = [], []
+    for i in range(20):
+        sign = 1.0 if i < 10 else -1.0
+        v = [0.0] * 8
+        v[0] = 0.15 * sign  # le signal, faible comme dans un vrai embedding
+        v[1] = 0.98  # la composante partagée qui domine la norme
+        v[2 + (i % 5)] = 0.05  # un peu de variation, pour une matrice honnête
+        vectors.append(v)
+        values.append(8.0 if i < 10 else 3.0)
+
+    poids = train_axis("test", vectors, values)
+    preds = [predict(v, poids.intercept, poids.coef) for v in vectors]
+    hauts = sum(preds[:10]) / 10
+    bas = sum(preds[10:]) / 10
+
+    assert hauts - bas > 3.0, (
+        f"les groupes 8 et 3 doivent rester séparés ({hauts:.1f} vs {bas:.1f}) — "
+        "des prédictions plates signifient que λ écrase le signal"
+    )
+    assert poids.mae_loo < 1.0, "la validation croisée doit trouver un λ qui généralise ici"
+
+
 def test_la_prediction_est_bornee_a_l_echelle() -> None:
     assert predict([1000.0], 0.0, [1.0]) == 10.0
     assert predict([-1000.0], 0.0, [1.0]) == 1.0

@@ -750,12 +750,22 @@ async def train_weights(
                     result.mae_fit,
                 ),
             )
-            trained.append({"axe": axe, "trainedOn": result.trained_on, "maeFit": result.mae_fit})
+            trained.append(
+                {
+                    "axe": axe,
+                    "trainedOn": result.trained_on,
+                    "maeFit": result.mae_fit,
+                    "maeLoo": result.mae_loo,
+                    "lambda": result.lam,
+                }
+            )
             weights_json[axe] = {
                 "intercept": result.intercept,
                 "coef": result.coef,
                 "trainedOn": result.trained_on,
                 "maeFit": result.mae_fit,
+                "maeLoo": result.mae_loo,
+                "lambda": result.lam,
             }
 
         # Le journal des poids : tous les axes dans une ligne, datée — c'est
