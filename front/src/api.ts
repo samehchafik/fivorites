@@ -13,6 +13,7 @@ import type {
   SeasonDetail,
   StoredScore,
   Summary,
+  TrainingRun,
   TrainResult,
   Work,
 } from './types'
@@ -107,6 +108,9 @@ export const api = {
   trainingDossier: (id: number) => request<Dossier>(`/api/training/works/${id}/dossier`),
 
   trainingScores: (id: number) => request<StoredScore[]>(`/api/training/works/${id}/scores`),
+
+  /** Les derniers essais du journal — ce qui rend la page rechargeable. */
+  trainingRuns: (id: number) => request<TrainingRun[]>(`/api/training/works/${id}/runs`),
 
   /** Légende les visuels (backdrops + stills) via le modèle de vision, une
    *  fois pour toutes : les images déjà légendées ne sont jamais repayées. */

@@ -21,7 +21,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
 import { ApiError, api } from '../api'
-import type { AxisScore, Gaps, Phase1Result, Phase2Result, Rubric } from '../types'
+import type { AxisScore, Gaps, Phase1Result, Phase2Result, Rubric, TrainingRun } from '../types'
 
 /**
  * L'atelier d'entraînement de la notation — le contenu des onglets Training 1
@@ -253,6 +253,29 @@ function Phase1({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.version])
 
+  // Le journal des essais : c'est lui qui rend la page rechargeable. Sans
+  // lui, les verdicts ne vivaient que dans l'état du navigateur et un F5
+  // faisait croire que la notation n'avait jamais eu lieu.
+  const runs = useQuery({ queryKey: ['training-runs', id], queryFn: () => api.trainingRuns(id) })
+  const lastRun = runs.data?.[0] ?? null
+
+  // L'essai affiché : celui qu'on vient de lancer, sinon le dernier du
+  // journal. Régénérer écrase l'affichage — le journal, lui, garde tout.
+  const shown =
+    result !== null
+      ? { ...result, storedAt: null as string | null }
+      : lastRun?.openai
+        ? {
+            runId: lastRun.id,
+            openai: lastRun.openai,
+            haiku: lastRun.claude,
+            gaps: lastRun.claude
+              ? computeGaps(lastRun.openai.scores, lastRun.claude.scores, axesOf(lastRun))
+              : null,
+            storedAt: lastRun.createdAt,
+          }
+        : null
+
   const run = useMutation({
     mutationFn: () =>
       api.phase1({
@@ -264,6 +287,7 @@ function Phase1({
     onSuccess: (next) => {
       setResult(next)
       setManual({})
+      void client.invalidateQueries({ queryKey: ['training-runs', id] })
     },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Notation échouée', message: error.message }),
@@ -280,16 +304,18 @@ function Phase1({
             .filter(([, score]) => score !== null && score !== undefined)
             .map(([axe, score]) => [axe, { score }]),
         ),
-        // L'essai auquel la contre-note répond, si la page s'en souvient
-        // encore ; sinon le serveur retrouve le dernier essai de ce prompt.
-        runId: result?.runId ?? null,
+        // L'essai auquel la contre-note répond — celui qui est affiché,
+        // qu'il soit tout frais ou relu du journal.
+        runId: shown?.runId ?? null,
       }),
-    onSuccess: (stored) =>
+    onSuccess: (stored) => {
       notifications.show({
         color: 'teal',
         title: 'Contre-note enregistrée',
         message: `${stored.stored} axe(s) sous « ${stored.modele} » — même provenance qu'un juge automatique.`,
-      }),
+      })
+      void client.invalidateQueries({ queryKey: ['training-runs', id] })
+    },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Enregistrement refusé', message: error.message }),
   })
@@ -437,10 +463,16 @@ function Phase1({
           </Alert>
         )}
 
-        {result && (
+        {shown && (
           <Paper withBorder radius="md" p="sm">
-            {result.gaps ? (
-              <GapSummary gaps={result.gaps} />
+            {shown.storedAt && (
+              <Text size="xs" c="dimmed" mb={4}>
+                Relu du journal — essai du {new Date(shown.storedAt).toLocaleString('fr-FR')}.
+                « Noter (OpenAI) » régénère et prend sa place.
+              </Text>
+            )}
+            {shown.gaps ? (
+              <GapSummary gaps={shown.gaps} />
             ) : (
               <Text size="xs" c="dimmed">
                 Contre-jugement manuel : « Copier pour Claude.ai », coller la réponse axe par axe
@@ -453,18 +485,22 @@ function Phase1({
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Axe</Table.Th>
-                  <Table.Th>OpenAI ({result.openai.model})</Table.Th>
+                  <Table.Th>OpenAI ({shown.openai.model})</Table.Th>
                   <Table.Th>
-                    {result.haiku ? `Haiku (${result.haiku.model})` : 'Claude.ai (à la main)'}
+                    {!shown.haiku
+                      ? 'Claude.ai (à la main)'
+                      : shown.haiku.model.includes('web-manuel')
+                        ? 'Claude.ai (recopié)'
+                        : `Haiku (${shown.haiku.model})`}
                   </Table.Th>
                   <Table.Th>Écart</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {axes.map((axe) => {
-                  const openaiScore = result.openai.scores[axe]?.score ?? null
-                  const counterScore = result.haiku
-                    ? (result.haiku.scores[axe]?.score ?? null)
+                  const openaiScore = shown.openai.scores[axe]?.score ?? null
+                  const counterScore = shown.haiku
+                    ? (shown.haiku.scores[axe]?.score ?? null)
                     : (manual[axe] ?? null)
                   const gap =
                     openaiScore !== null && counterScore !== null
@@ -476,11 +512,11 @@ function Phase1({
                         <Text size="sm">{axe}</Text>
                       </Table.Td>
                       <Table.Td>
-                        <ScoreCell entry={result.openai.scores[axe]} />
+                        <ScoreCell entry={shown.openai.scores[axe]} />
                       </Table.Td>
                       <Table.Td>
-                        {result.haiku ? (
-                          <ScoreCell entry={result.haiku.scores[axe]} />
+                        {shown.haiku ? (
+                          <ScoreCell entry={shown.haiku.scores[axe]} />
                         ) : (
                           <NumberInput
                             size="xs"
@@ -572,6 +608,41 @@ function Phase1({
       </Stack>
     </Group>
   )
+}
+
+/** Les axes d'un essai stocké — ceux que son juge OpenAI a réellement notés. */
+function axesOf(run: TrainingRun): string[] {
+  return run.openai ? Object.keys(run.openai.scores) : []
+}
+
+/**
+ * Les écarts entre deux verdicts, même calcul que le serveur : par axe, et en
+ * moyenne sur les axes notés des deux côtés. Refait ici parce que le journal
+ * stocke les verdicts bruts, pas leur comparaison — c'est un affichage.
+ */
+function computeGaps(
+  left: Record<string, AxisScore>,
+  right: Record<string, AxisScore>,
+  axes: string[],
+): Gaps {
+  const perAxis: Record<string, number | null> = {}
+  const diffs: number[] = []
+  for (const axe of axes) {
+    const a = left[axe]?.score ?? null
+    const b = right[axe]?.score ?? null
+    if (a === null || b === null) {
+      perAxis[axe] = null
+    } else {
+      const gap = Math.abs(a - b)
+      perAxis[axe] = gap
+      diffs.push(gap)
+    }
+  }
+  return {
+    perAxis,
+    mean: diffs.length ? Math.round((diffs.reduce((s, g) => s + g, 0) / diffs.length) * 100) / 100 : null,
+    scored: diffs.length,
+  }
 }
 
 /**

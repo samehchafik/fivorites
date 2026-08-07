@@ -323,6 +323,20 @@ export interface CaptionResult {
   model: string
 }
 
+/** Un essai du journal `notation.training_run` : le prompt en clair, la
+ *  fiche brute référencée, et les deux verdicts côte à côte. `claude` reste
+ *  null tant que la contre-note (Haiku ou claude.ai recopié) n'est pas là. */
+export interface TrainingRun {
+  id: number
+  rubricVersion: string
+  prompt: string
+  dossierSha256: string
+  openai: { model: string; scores: Record<string, AxisScore> } | null
+  claude: { model: string; scores: Record<string, AxisScore> } | null
+  createdAt: string
+  claudeAt: string | null
+}
+
 /** La note d'un juge sur un axe. `score` null = « pas assez de matière ». */
 export interface AxisScore {
   score: number | null

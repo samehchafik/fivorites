@@ -364,6 +364,27 @@ async def test_phase2_sans_poids_explique_le_prealable(client: httpx.AsyncClient
     assert "poids" in reponse.json()["detail"]
 
 
+async def test_le_journal_se_relit_du_plus_recent_au_plus_ancien(
+    client: httpx.AsyncClient,
+) -> None:
+    """Recharger la page ne perd rien : les essais se relisent du journal."""
+    for _ in range(2):
+        essai = await client.post(
+            "/api/training/phase1",
+            json={"id": 1399, "rubricVersion": "v1", "prompt": "p" * 60, "axes": AXES},
+        )
+        assert essai.status_code == 200
+
+    reponse = await client.get("/api/training/works/1399/runs")
+    assert reponse.status_code == 200
+    runs = reponse.json()
+    assert len(runs) == 2
+    assert runs[0]["id"] > runs[1]["id"], "le plus récent d'abord"
+    assert runs[0]["prompt"] == "p" * 60
+    assert runs[0]["openai"]["scores"]["luminosite"]["score"] == 7
+    assert runs[0]["claude"]["scores"]["luminosite"]["score"] == 5
+
+
 # ---------------------------------------------------------------- les visuels
 
 

@@ -462,6 +462,41 @@ async def manual_scores(
     return {"stored": len(cleaned), "modele": "claude-web-manuel", "runId": run_id}
 
 
+@router.get("/training/works/{work_id}/runs")
+async def work_runs(
+    user: CurrentUser, conn: Conn, work_id: int, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Les derniers essais du journal, le plus récent d'abord.
+
+    C'est ce qui rend la page Training 1 rechargeable : les verdicts ne
+    vivent pas dans l'état du navigateur, ils se relisent d'ici.
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select id, rubric_version, prompt, dossier_sha256, openai, claude,
+                   created_at, claude_at
+            from notation.training_run
+            where id_tmdb = %s order by created_at desc limit %s
+            """,
+            (work_id, min(max(limit, 1), 50)),
+        )
+        rows = await cur.fetchall()
+    return [
+        {
+            "id": row["id"],
+            "rubricVersion": row["rubric_version"],
+            "prompt": row["prompt"],
+            "dossierSha256": row["dossier_sha256"],
+            "openai": row["openai"],
+            "claude": row["claude"],
+            "createdAt": row["created_at"],
+            "claudeAt": row["claude_at"],
+        }
+        for row in rows
+    ]
+
+
 @router.get("/training/works/{work_id}/scores")
 async def work_scores(user: CurrentUser, conn: Conn, work_id: int) -> list[dict[str, Any]]:
     """L'historique des notes d'une œuvre — tous modèles, tous barèmes."""
