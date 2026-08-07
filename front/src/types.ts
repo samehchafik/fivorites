@@ -342,8 +342,13 @@ export interface TrainingRun {
   dossierSha256: string
   openai: { model: string; scores: Record<string, AxisScore> } | null
   claude: { model: string; scores: Record<string, AxisScore> } | null
+  /** Le vecteur prédit par la régression, écrit par « Générer » ou par
+   *  l'entraînement. C'est lui qui permet à Training 2 de s'afficher sans
+   *  qu'on ait rien à recliquer. */
+  interne?: Record<string, { score: number; trainedOn: number; maeFit: number | null }> | null
   createdAt: string
   claudeAt: string | null
+  interneAt?: string | null
 }
 
 /** La note d'un juge sur un axe. `score` null = « pas assez de matière ». */

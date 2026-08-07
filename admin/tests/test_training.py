@@ -506,6 +506,47 @@ async def test_le_journal_se_relit_du_plus_recent_au_plus_ancien(
     assert runs[0]["prompt"] == "p" * 60
     assert runs[0]["openai"]["scores"]["luminosite"]["score"] == 7
     assert runs[0]["claude"]["scores"]["luminosite"]["score"] == 5
+    assert runs[0]["interne"] is None, "rien de généré tant que la phase 2 n'est pas passée"
+
+
+async def test_le_journal_expose_le_vecteur_genere(
+    client: httpx.AsyncClient, conn: psycopg.AsyncConnection
+) -> None:
+    """Training 2 s'affiche à l'ouverture : le vecteur généré se relit du
+    journal, sans qu'on ait à recliquer « Générer »."""
+    creation = await client.post(
+        "/api/training/rubrics",
+        json={"version": "v-relu", "prompt": "u" * 60, "axes": AXES},
+    )
+    assert creation.status_code == 201
+
+    for n in range(12):
+        id_tmdb = 6000 + n
+        await seed_series(conn, id_tmdb)
+        async with conn.cursor() as cur:
+            for axe in AXES:
+                await cur.execute(
+                    "insert into notation.score (id_tmdb, axe, valeur, confiance,"
+                    " rubric_version, modele, input_sha256, prompt_sha256)"
+                    " values (%s, %s, %s, 0.8, 'v-relu', 'gpt-test', 'sha-in', 'sha-p')",
+                    (id_tmdb, axe, 4 + (n % 5)),
+                )
+
+    assert (
+        await client.post("/api/training/weights/train", json={"rubricVersion": "v-relu"})
+    ).status_code == 200
+    assert (
+        await client.post("/api/training/phase2", json={"id": 1399, "rubricVersion": "v-relu"})
+    ).status_code == 200
+
+    # Rien de plus n'est cliqué : le journal porte déjà tout ce qu'il faut.
+    reponse = await client.get("/api/training/works/1399/runs")
+
+    assert reponse.status_code == 200
+    run = reponse.json()[0]
+    assert set(run["interne"].keys()) == set(AXES)
+    assert all(1.0 <= entry["score"] <= 10.0 for entry in run["interne"].values())
+    assert run["interneAt"] is not None
 
 
 # ---------------------------------------------------------------- les visuels

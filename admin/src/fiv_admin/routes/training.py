@@ -504,14 +504,15 @@ async def work_runs(
 ) -> list[dict[str, Any]]:
     """Les derniers essais du journal, le plus récent d'abord.
 
-    C'est ce qui rend la page Training 1 rechargeable : les verdicts ne
-    vivent pas dans l'état du navigateur, ils se relisent d'ici.
+    C'est ce qui rend les deux pages Training rechargeables : ni les verdicts
+    ni le vecteur généré ne vivent dans l'état du navigateur, ils se relisent
+    d'ici.
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
             select id, rubric_version, prompt, dossier_sha256, openai, claude,
-                   created_at, claude_at
+                   interne, created_at, claude_at, interne_at
             from notation.training_run
             where id_tmdb = %s order by created_at desc limit %s
             """,
@@ -526,8 +527,10 @@ async def work_runs(
             "dossierSha256": row["dossier_sha256"],
             "openai": row["openai"],
             "claude": row["claude"],
+            "interne": row["interne"],
             "createdAt": row["created_at"],
             "claudeAt": row["claude_at"],
+            "interneAt": row["interne_at"],
         }
         for row in rows
     ]

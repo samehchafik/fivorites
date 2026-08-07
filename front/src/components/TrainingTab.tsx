@@ -668,11 +668,29 @@ function parseClaudeReply(text: string, axes: string[]): Record<string, number> 
 
 // ------------------------------------------------------------------ phase 2
 
+/** Ce que le tableau de la phase 2 affiche, quelle qu'en soit la source : une
+ *  génération de l'instant, ou un essai relu du journal. `storedAt` distingue
+ *  les deux — non nul, c'est du relu. */
+interface ShownPhase2 {
+  internal: Record<string, { score: number; trainedOn: number; maeFit: number | null }>
+  llm: Phase2Result['llm']
+  claude?: Phase2Result['claude']
+  weights?: Phase2Result['weights']
+  gaps: Gaps | null
+  storedAt: string | null
+}
+
 function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
+  const client = useQueryClient()
   const [version, setVersion] = useState<string | null>(null)
   const [result, setResult] = useState<Phase2Result | null>(null)
 
   const selected = rubrics.find((entry) => entry.version === version) ?? rubrics[0] ?? null
+
+  // Le journal, comme en phase 1 : ce qui a déjà été généré pour cette œuvre
+  // s'affiche à l'ouverture. Sans ça, un vecteur pourtant calculé et stocké
+  // donnait un écran vide, et « Générer » semblait obligatoire pour le voir.
+  const runs = useQuery({ queryKey: ['training-runs', id], queryFn: () => api.trainingRuns(id) })
 
   const train = useMutation({
     mutationFn: () => api.trainWeights(selected?.version ?? 'v1'),
@@ -688,8 +706,10 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
           )
           .join(' · '),
       })
-      // Les poids qui viennent de changer ont périmé le tableau affiché.
+      // Les poids qui viennent de changer ont périmé le tableau affiché — mais
+      // l'entraînement a régénéré le journal, qui reprend la main.
       setResult(null)
+      void client.invalidateQueries({ queryKey: ['training-runs', id] })
     },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Entraînement refusé', message: error.message }),
@@ -698,12 +718,42 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
   const compare = useMutation({
     mutationFn: (runLlm: boolean) =>
       api.phase2({ id, rubricVersion: selected?.version ?? 'v1', runLlm }),
-    onSuccess: setResult,
+    onSuccess: (next) => {
+      setResult(next)
+      void client.invalidateQueries({ queryKey: ['training-runs', id] })
+    },
     onError: (error: Error) =>
-      notifications.show({ color: 'red', title: 'Comparaison échouée', message: error.message }),
+      notifications.show({ color: 'red', title: 'Génération échouée', message: error.message }),
   })
 
   const axes = selected?.axes ?? []
+
+  // L'essai à afficher : celui qu'on vient de générer, sinon le plus récent du
+  // journal qui porte un vecteur interne pour ce barème.
+  const stored = runs.data?.find(
+    (run) => run.interne && (!selected || run.rubricVersion === selected.version),
+  )
+  const shown: ShownPhase2 | null = result
+    ? { ...result, storedAt: null }
+    : stored?.interne
+      ? {
+          internal: stored.interne,
+          llm: { scores: stored.openai?.scores ?? {}, origin: null },
+          claude: stored.claude
+            ? { scores: stored.claude.scores, origin: { model: stored.claude.model, scoredAt: '' } }
+            : undefined,
+          gaps: stored.openai
+            ? computeGaps(
+                Object.fromEntries(
+                  Object.entries(stored.interne).map(([axe, entry]) => [axe, { score: entry.score }]),
+                ) as Record<string, AxisScore>,
+                stored.openai.scores,
+                axes,
+              )
+            : null,
+          storedAt: stored.interneAt ?? null,
+        }
+      : null
 
   return (
     <Stack gap="sm">
@@ -766,16 +816,30 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
         journal de l'essai.
       </Text>
 
-      {result && (
+      {!shown && !runs.isLoading && (
+        <Alert color="blue" variant="light">
+          Aucun vecteur généré pour cette œuvre sur ce barème — « Générer » le calcule depuis les
+          poids et l'écrit dans le journal.
+        </Alert>
+      )}
+
+      {shown && (
         <Paper withBorder radius="md" p="sm">
-          {result.weights && (
+          {shown.storedAt && (
             <Text size="xs" c="dimmed" mb={4}>
-              Poids du {new Date(result.weights.trainedAt).toLocaleString('fr-FR')} — la version la
-              plus récente du journal, entraînée sur {result.weights.works} œuvre(s).
+              Relu du journal — vecteur généré le{' '}
+              {new Date(shown.storedAt).toLocaleString('fr-FR')}. « Générer » le recalcule avec
+              les poids actuels.
             </Text>
           )}
-          {result.gaps ? (
-            <GapSummary gaps={result.gaps} />
+          {shown.weights && (
+            <Text size="xs" c="dimmed" mb={4}>
+              Poids du {new Date(shown.weights.trainedAt).toLocaleString('fr-FR')} — la version la
+              plus récente du journal, entraînée sur {shown.weights.works} œuvre(s).
+            </Text>
+          )}
+          {shown.gaps ? (
+            <GapSummary gaps={shown.gaps} />
           ) : (
             <Alert color="yellow" variant="light">
               Aucune note LLM stockée pour cette œuvre sur ce barème — « Comparer (note fraîche) »
@@ -789,12 +853,12 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
                 <Table.Th>Interne (poids)</Table.Th>
                 <Table.Th>
                   OpenAI{' '}
-                  {result.llm.origin
-                    ? `(${result.llm.origin.model}${result.llm.origin.fresh ? ', fraîche' : ', stockée'})`
+                  {shown.llm.origin
+                    ? `(${shown.llm.origin.model}${shown.llm.origin.fresh ? ', fraîche' : ', stockée'})`
                     : ''}
                 </Table.Th>
                 <Table.Th>
-                  Claude {result.claude?.origin ? `(${result.claude.origin.model})` : ''}
+                  Claude {shown.claude?.origin ? `(${shown.claude.origin.model})` : ''}
                 </Table.Th>
                 <Table.Th>Écart interne / OpenAI</Table.Th>
               </Table.Tr>
@@ -806,14 +870,14 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
                     <Text size="sm">{axe}</Text>
                   </Table.Td>
                   <Table.Td>
-                    {result.internal[axe] ? (
+                    {shown.internal[axe] ? (
                       <Group gap={6} wrap="nowrap">
-                        <Text fw={600}>{result.internal[axe].score}</Text>
+                        <Text fw={600}>{shown.internal[axe].score}</Text>
                         <Tooltip
-                          label={`entraîné sur ${result.internal[axe].trainedOn} œuvre(s) — MAE d'ajustement ${result.internal[axe].maeFit ?? '—'}`}
+                          label={`entraîné sur ${shown.internal[axe].trainedOn} œuvre(s) — MAE d'ajustement ${shown.internal[axe].maeFit ?? '—'}`}
                         >
                           <Text size="xs" c="dimmed">
-                            n={result.internal[axe].trainedOn}
+                            n={shown.internal[axe].trainedOn}
                           </Text>
                         </Tooltip>
                       </Group>
@@ -824,19 +888,19 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
                     )}
                   </Table.Td>
                   <Table.Td>
-                    <ScoreCell entry={result.llm.scores[axe]} />
+                    <ScoreCell entry={shown.llm.scores[axe]} />
                   </Table.Td>
                   <Table.Td>
-                    <ScoreCell entry={result.claude?.scores[axe]} />
+                    <ScoreCell entry={shown.claude?.scores[axe]} />
                   </Table.Td>
                   <Table.Td>
-                    <GapBadge gap={result.gaps?.perAxis[axe]} />
+                    <GapBadge gap={shown.gaps?.perAxis[axe]} />
                   </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>
-          {!result.claude?.origin && (
+          {!shown.claude?.origin && (
             <Text size="xs" c="dimmed" mt={6}>
               Aucune contre-note Claude sur ce barème — la colonne se remplit depuis Training 1,
               « Copier pour Claude.ai » puis « Enregistrer la contre-note ».
