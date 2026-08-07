@@ -206,13 +206,12 @@ async def works_a_noter(
     synopsis d'épisodes, visuels), donc celles qui apprennent le plus par appel
     payé. La longue traîne obscure viendra quand le barème tiendra.
 
-    `filtres` reprend les deux cases de la grille — affiche et descriptif — et
-    les rend obligatoires par défaut. Le descriptif exigé est **l'anglais**,
-    celui que lira le juge : sans lui le dossier n'a pas de section OVERVIEW,
-    la commande le refuserait comme « trop maigre » après avoir payé le
-    légendage, et la liste ne ressemblerait pas à ce que la grille montre à
-    réglages égaux. Une téléréalité sans synopsis anglais disparaît ainsi
-    d'elle-même, sans qu'on ait à juger les genres à sa place.
+    `filtres` exige une affiche, et rien d'autre. Filtrer aussi sur le
+    descriptif a été essayé puis retiré : le champ est mal calibré pour cet
+    usage — présent ou absent selon la langue interrogée, il écartait des
+    œuvres notables et en laissait passer d'autres sans matière. Le vrai
+    garde-fou reste en aval, sur la taille du dossier assemblé, qui mesure ce
+    qui compte vraiment plutôt qu'un champ pris isolément.
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
@@ -234,16 +233,8 @@ async def works_a_noter(
                     join tmdb_catalog c on c.id = r.source_id::int
                     where r.source = %(source)s and r.kind = %(kind)s
                       and r.http_status between 200 and 299 and r.payload is not null
-                      and (not %(filtres)s or (
-                          nullif(r.payload ->> 'poster_path', '') is not null
-                          and exists (
-                              select 1 from jsonb_array_elements(
-                                  coalesce(r.payload -> 'translations' -> 'translations',
-                                           '[]'::jsonb)) t
-                              where t ->> 'iso_639_1' = 'en'
-                                and nullif(btrim(t -> 'data' ->> 'overview'), '') is not null
-                          )
-                      ))
+                      and (not %(filtres)s
+                           or nullif(r.payload ->> 'poster_path', '') is not null)
                     order by r.source_id, r.fetched_at desc
                 ) candidates
             ) vues

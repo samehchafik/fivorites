@@ -57,10 +57,9 @@ def training_note(
     commande continue le lot au lieu de le refaire : c'est un appel payant par
     œuvre, et on ne paie jamais deux fois la même.
 
-    Comme la grille, la liste exige une affiche et un descriptif anglais —
-    celui que lira le juge. Sans lui le dossier n'a pas de section OVERVIEW et
-    serait refusé comme trop maigre, après avoir payé le légendage.
-    `--sans-filtre` lève ces deux conditions.
+    La liste exige une affiche ; `--sans-filtre` lève cette condition. Le
+    descriptif n'entre pas dans le filtre : le champ est mal calibré pour cet
+    usage, et c'est la taille du dossier assemblé qui décide en aval.
 
     `--apercu` montre la liste et le coût estimé sans rien appeler. À utiliser
     la première fois : c'est la seule façon de voir ce qu'on s'apprête à payer.
