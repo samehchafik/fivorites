@@ -185,6 +185,23 @@ async def test_phase1_note_avec_les_deux_juges_et_mesure_l_ecart(
     assert modeles == 2
     assert prompts == 1
 
+    # Et le journal garde l'essai entier sur une ligne : prompt en clair,
+    # fiche brute référencée, les deux verdicts côte à côte.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id, raw_source_id, prompt, openai, claude, claude_at"
+            " from notation.training_run where id_tmdb = 1399"
+        )
+        runs = await cur.fetchall()
+    assert len(runs) == 1
+    run_id, raw_id, run_prompt, openai_json, claude_json, claude_at = runs[0]
+    assert body["runId"] == run_id
+    assert raw_id is not None, "la fiche brute qui a nourri le dossier est référencée"
+    assert run_prompt == "p" * 60
+    assert openai_json["scores"]["luminosite"]["score"] == 7
+    assert claude_json["scores"]["luminosite"]["score"] == 5
+    assert claude_at is not None
+
 
 async def test_phase1_sans_cle_anthropic_note_avec_openai_seul(
     conn: psycopg.AsyncConnection, settings: Settings, monkeypatch: pytest.MonkeyPatch
@@ -234,7 +251,10 @@ async def test_phase1_sans_cle_anthropic_note_avec_openai_seul(
             },
         )
         assert manuel.status_code == 200
-        assert manuel.json() == {"stored": 2, "modele": "claude-web-manuel"}
+        corps = manuel.json()
+        assert corps["stored"] == 2
+        assert corps["modele"] == "claude-web-manuel"
+        assert corps["runId"] is not None
 
     async with conn.cursor() as cur:
         await cur.execute(
@@ -242,6 +262,22 @@ async def test_phase1_sans_cle_anthropic_note_avec_openai_seul(
             " group by modele order by modele"
         )
         assert await cur.fetchall() == [("claude-web-manuel", 2), ("gpt-test", len(AXES))]
+
+    # Le journal : l'essai OpenAI (sans contre-note à sa création, faute de
+    # clé) a été complété après coup par la contre-note manuelle — une seule
+    # ligne, les deux verdicts dessus.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select openai, claude, claude_at from notation.training_run where id_tmdb = 1399"
+        )
+        runs = await cur.fetchall()
+    assert len(runs) == 1
+    openai_json, claude_json, claude_at = runs[0]
+    assert openai_json["scores"]["luminosite"]["score"] == 6
+    assert claude_json["model"] == "claude-web-manuel"
+    assert claude_json["scores"]["luminosite"]["score"] == 4
+    assert claude_json["scores"]["intensite"]["score"] is None
+    assert claude_at is not None
 
 
 async def test_phase1_refuse_un_bareme_inconnu(client: httpx.AsyncClient) -> None:

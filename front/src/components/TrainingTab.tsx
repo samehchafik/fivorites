@@ -240,6 +240,9 @@ function Phase1({
   // La contre-note saisie à la main — le verdict de claude.ai, recopié axe par
   // axe. Vide tant qu'on n'a rien collé.
   const [manual, setManual] = useState<Record<string, number | null>>({})
+  // La réponse de claude.ai, collée telle quelle : les lignes « axe: note »
+  // remplissent la contre-note toutes seules.
+  const [reply, setReply] = useState('')
 
   const selected = rubrics.find((entry) => entry.version === version) ?? rubrics[0] ?? null
 
@@ -277,6 +280,9 @@ function Phase1({
             .filter(([, score]) => score !== null && score !== undefined)
             .map(([axe, score]) => [axe, { score }]),
         ),
+        // L'essai auquel la contre-note répond, si la page s'en souvient
+        // encore ; sinon le serveur retrouve le dernier essai de ce prompt.
+        runId: result?.runId ?? null,
       }),
     onSuccess: (stored) =>
       notifications.show({
@@ -500,24 +506,92 @@ function Phase1({
                 })}
               </Table.Tbody>
             </Table>
-            {!result.haiku && (
-              <Group justify="flex-end" mt="xs">
-                <Button
+          </Paper>
+        )}
+
+        {/* La contre-note claude.ai — toujours visible, exprès : la réponse
+            revient du site web bien après le clic « Noter », parfois après un
+            rechargement de page. Elle ne doit dépendre d'aucun état fugace. */}
+        {axes.length > 0 && (
+          <Paper withBorder radius="md" p="sm">
+            <Text size="sm" fw={600}>
+              Contre-note claude.ai
+            </Text>
+            <Text size="xs" c="dimmed" mb={6}>
+              « Copier pour Claude.ai », coller dans claude.ai, puis coller sa réponse ici — les
+              lignes « axe: note » remplissent les cases toutes seules. Ajuster au besoin, puis
+              enregistrer : la contre-note rejoint le journal de l'essai.
+            </Text>
+            <Textarea
+              placeholder={axes.map((axe) => `${axe}: 5`).join('\n')}
+              value={reply}
+              onChange={(event) => {
+                const next = event.currentTarget.value
+                setReply(next)
+                const parsed = parseClaudeReply(next, axes)
+                if (Object.keys(parsed).length > 0) {
+                  setManual((current) => ({ ...current, ...parsed }))
+                }
+              }}
+              autosize
+              minRows={3}
+              maxRows={8}
+              styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+            />
+            <Group gap="xs" mt="xs" align="flex-end" wrap="wrap">
+              {axes.map((axe) => (
+                <NumberInput
+                  key={axe}
+                  label={axe}
                   size="xs"
-                  variant="default"
-                  onClick={() => saveManual.mutate()}
-                  loading={saveManual.isPending}
-                  disabled={Object.values(manual).every((score) => score === null)}
-                >
-                  Enregistrer la contre-note
-                </Button>
-              </Group>
-            )}
+                  w={110}
+                  min={1}
+                  max={10}
+                  placeholder="1-10"
+                  value={manual[axe] ?? ''}
+                  onChange={(next) =>
+                    setManual((current) => ({
+                      ...current,
+                      [axe]: typeof next === 'number' ? next : null,
+                    }))
+                  }
+                />
+              ))}
+              <Button
+                size="xs"
+                variant="default"
+                onClick={() => saveManual.mutate()}
+                loading={saveManual.isPending}
+                disabled={Object.values(manual).every((score) => score === null)}
+              >
+                Enregistrer la contre-note
+              </Button>
+            </Group>
           </Paper>
         )}
       </Stack>
     </Group>
   )
+}
+
+/**
+ * Lit la réponse de claude.ai : une note par ligne, au format demandé par la
+ * consigne copiée — `luminosite: 7`. Tolérant sur l'habillage (tirets de
+ * liste, majuscules, `=`, décimales) mais strict sur les noms d'axes : une
+ * ligne qui ne correspond à aucun axe du barème est ignorée, jamais devinée.
+ */
+function parseClaudeReply(text: string, axes: string[]): Record<string, number> {
+  const scores: Record<string, number> = {}
+  for (const line of text.split('\n')) {
+    const match = line.match(/^\s*[-*•]?\s*"?([\p{L}_-]+)"?\s*[:=]\s*(\d+(?:[.,]\d+)?)/u)
+    if (!match) continue
+    const name = match[1].toLowerCase()
+    const axe = axes.find((candidate) => candidate.toLowerCase() === name)
+    if (!axe) continue
+    const value = Math.round(Number(match[2].replace(',', '.')))
+    if (value >= 1 && value <= 10) scores[axe] = value
+  }
+  return scores
 }
 
 // ------------------------------------------------------------------ phase 2

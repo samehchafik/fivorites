@@ -134,6 +134,7 @@ export const api = {
     rubricVersion: string
     prompt: string
     scores: Record<string, { score: number | null; confidence?: number | null }>
+    runId?: number | null
   }) =>
     request<{ stored: number; modele: string }>('/api/training/manual', {
       method: 'POST',

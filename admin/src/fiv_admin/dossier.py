@@ -101,19 +101,20 @@ def _truncate_sentence(text: str, limit: int) -> str:
 
 
 async def load_fiche(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str, Any] | None:
-    """La fiche TMDB la plus récente d'une série, ou None si rien de collecté."""
+    """La fiche TMDB la plus récente d'une série — `{"id", "payload"}` — ou
+    None si rien de collecté. L'`id` est celui de la ligne de brut : c'est la
+    référence de provenance que le journal d'entraînement conserve."""
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
-            select payload from raw_source
+            select id, payload from raw_source
             where source = %(source)s and kind = %(kind)s and source_id = %(id)s
               and http_status between 200 and 299 and payload is not null
             order by fetched_at desc limit 1
             """,
             {"source": SOURCE, "kind": KIND_SERIES, "id": str(id_tmdb)},
         )
-        head = await cur.fetchone()
-    return head["payload"] if head else None
+        return await cur.fetchone()
 
 
 async def load_seasons(
@@ -142,9 +143,10 @@ async def load_seasons(
 
 async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str, Any] | None:
     """Le dossier anglais d'une série, ou None si elle n'est pas collectée."""
-    payload = await load_fiche(conn, id_tmdb)
-    if payload is None:
+    fiche = await load_fiche(conn, id_tmdb)
+    if fiche is None:
         return None
+    payload = fiche["payload"]
     season_payloads = await load_seasons(conn, id_tmdb)
 
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -231,6 +233,7 @@ async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str
     text = "\n\n".join(parts)
     return {
         "idTmdb": id_tmdb,
+        "rawSourceId": fiche["id"],
         "title": title,
         "text": text,
         "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),

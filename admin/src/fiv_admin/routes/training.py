@@ -151,7 +151,7 @@ async def caption_work(
     if fiche is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {work_id} non collectée")
 
-    images = select_images(fiche, await load_seasons(conn, work_id))
+    images = select_images(fiche["payload"], await load_seasons(conn, work_id))
     if not images:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -323,8 +323,35 @@ async def phase1(user: CurrentUser, conn: Conn, settings: Config, body: Phase1In
             prompt_sha256=prompt_sha,
         )
 
+    # Le journal de bord : l'essai entier sur une ligne — prompt en clair,
+    # fiche brute référencée, verdicts côte à côte. `notation.score` reste la
+    # table de travail des poids ; celle-ci est celle qu'on relit.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into notation.training_run
+                (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256,
+                 openai, claude, claude_at)
+            values (%(id)s, %(raw)s, %(rubric)s, %(prompt)s, %(sha)s,
+                    %(openai)s, %(claude)s,
+                    case when %(claude)s::jsonb is not null then now() end)
+            returning id
+            """,
+            {
+                "id": body.id,
+                "raw": built["rawSourceId"],
+                "rubric": body.rubricVersion,
+                "prompt": body.prompt,
+                "sha": built["sha256"],
+                "openai": Jsonb(openai_result),
+                "claude": Jsonb(haiku_result) if haiku_result else None,
+            },
+        )
+        run_id = (await cur.fetchone())[0]
+
     return {
         "id": body.id,
+        "runId": run_id,
         "dossier": {key: built[key] for key in ("sha256", "chars", "sections", "title")},
         "openai": openai_result,
         "haiku": haiku_result,
@@ -344,6 +371,10 @@ class ManualIn(BaseModel):
     # dans claude.ai. `score` null = « le contre-juge ne sait pas », comme
     # pour les juges automatiques.
     scores: dict[str, dict[str, float | int | None]]
+    # L'essai auquel cette contre-note répond, si la page s'en souvient. Sans
+    # lui (page rechargée entre-temps), le dernier essai de la série sur ce
+    # même prompt fait foi.
+    runId: int | None = None
 
 
 @router.post("/training/manual")
@@ -377,7 +408,58 @@ async def manual_scores(
         input_sha256=built["sha256"],
         prompt_sha256=_prompt_sha(body.prompt),
     )
-    return {"stored": len(cleaned), "modele": "claude-web-manuel"}
+
+    # Le journal : la contre-note rejoint son essai. Trois chemins, dans
+    # l'ordre — l'essai désigné, sinon le dernier essai de ce prompt encore
+    # sans contre-note, sinon une ligne nouvelle (contre-note sans essai
+    # OpenAI préalable : autorisé, le journal le montre tel quel).
+    claude_json = Jsonb({"model": "claude-web-manuel", "scores": cleaned})
+    async with conn.cursor() as cur:
+        run_id: int | None = None
+        if body.runId is not None:
+            await cur.execute(
+                "update notation.training_run set claude = %s, claude_at = now()"
+                " where id = %s and id_tmdb = %s returning id",
+                (claude_json, body.runId, body.id),
+            )
+            row = await cur.fetchone()
+            run_id = row[0] if row else None
+        if run_id is None:
+            await cur.execute(
+                """
+                update notation.training_run set claude = %(claude)s, claude_at = now()
+                where id = (
+                    select id from notation.training_run
+                    where id_tmdb = %(id)s and prompt = %(prompt)s and claude is null
+                    order by created_at desc limit 1
+                )
+                returning id
+                """,
+                {"claude": claude_json, "id": body.id, "prompt": body.prompt},
+            )
+            row = await cur.fetchone()
+            run_id = row[0] if row else None
+        if run_id is None:
+            await cur.execute(
+                """
+                insert into notation.training_run
+                    (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256,
+                     claude, claude_at)
+                values (%s, %s, %s, %s, %s, %s, now())
+                returning id
+                """,
+                (
+                    body.id,
+                    built["rawSourceId"],
+                    body.rubricVersion,
+                    body.prompt,
+                    built["sha256"],
+                    claude_json,
+                ),
+            )
+            run_id = (await cur.fetchone())[0]
+
+    return {"stored": len(cleaned), "modele": "claude-web-manuel", "runId": run_id}
 
 
 @router.get("/training/works/{work_id}/scores")

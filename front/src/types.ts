@@ -338,6 +338,9 @@ export interface Gaps {
 
 export interface Phase1Result {
   id: number
+  /** L'essai dans le journal `notation.training_run` — à renvoyer avec la
+   *  contre-note manuelle pour qu'elle rejoigne la bonne ligne. */
+  runId: number
   dossier: { sha256: string; chars: number; title: string; sections: Dossier['sections'] }
   openai: { model: string; scores: Record<string, AxisScore> }
   /** Null sans clé Anthropic : le contre-jugement se fait alors à la main,
