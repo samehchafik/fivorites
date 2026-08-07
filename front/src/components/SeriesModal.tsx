@@ -37,6 +37,7 @@ import { useEffect, useState } from 'react'
 import { api, tmdbImage } from '../api'
 import { POSTER_FALLBACK, formatDate, formatNumber } from '../display'
 import type { Language, ModalTab, Work } from '../types'
+import { AxisVector } from './AxisVector'
 import { SeasonPanel } from './SeasonPanel'
 import { TrainingTab } from './TrainingTab'
 import { WatchPanel } from './WatchPanel'
@@ -213,6 +214,17 @@ export function SeriesModal({
                     </Badge>
                   ))}
                 </Group>
+
+                {/* Le vecteur de goût — absent tant que la série n'a jamais
+                    été jugée : pas de panneau vide à expliquer. */}
+                {data.axisScores && (
+                  <Stack gap={2}>
+                    <Text size="xs" c="dimmed">
+                      Vecteur de goût
+                    </Text>
+                    <AxisVector scores={data.axisScores} size="md" />
+                  </Stack>
+                )}
 
                 <Text size="sm" dir="auto">
                   {data.overview || 'Pas de synopsis dans le brut collecté.'}

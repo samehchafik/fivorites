@@ -4,6 +4,7 @@ import { IconScale, IconSchool, IconStar } from '@tabler/icons-react'
 import { tmdbImage } from '../api'
 import { POSTER_FALLBACK, formatPercent } from '../display'
 import type { Card as CardData, Language } from '../types'
+import { AxisVector } from './AxisVector'
 
 const POSTER_WIDTH = 104
 
@@ -106,6 +107,10 @@ export function SeriesCard({
               </Badge>
             ))}
           </Group>
+
+          {/* Le vecteur de goût — absent tant que rien n'est noté, donc pas de
+              ligne ni d'espace réservé sur les cartes qui ne l'ont pas encore. */}
+          <AxisVector scores={card.axisScores} size="sm" />
 
           <Text size="xs" c="dimmed" lineClamp={3} dir="auto">
             {card.overview || 'Pas de synopsis dans le brut collecté.'}

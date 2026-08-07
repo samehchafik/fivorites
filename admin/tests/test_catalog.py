@@ -284,6 +284,36 @@ async def test_card_carries_what_the_vignette_shows(conn: psycopg.AsyncConnectio
     assert got["expectedParts"] == 2
     assert got["selected"] == {"lang": "fr-FR", "ok": 2, "failed": 0, "ratio": 1.0}
     assert got["coverage"]["ar-SA"] == {"ok": 1, "failed": 1}
+    assert got["axisScores"] is None, "jamais notée : pas de vecteur, pas de zéros"
+
+
+async def test_card_carries_the_axis_vector_when_scored(conn: psycopg.AsyncConnection) -> None:
+    """Le vecteur de goût sur la vignette : le dernier verdict du juge par
+    axe — jamais la contre-note manuelle, jamais la prédiction interne."""
+    await seed(conn)
+    await conn.execute(
+        """
+        insert into notation.score
+            (id_tmdb, axe, valeur, confiance, rubric_version, modele,
+             input_sha256, prompt_sha256, scored_at)
+        values
+            (1399, 'luminosite', 3, 0.8, 'v1', 'gpt-test',
+             'sha-in', 'sha-p', now() - interval '1 day'),
+            (1399, 'luminosite', 4, 0.8, 'v1', 'gpt-test', 'sha-in', 'sha-p', now()),
+            (1399, 'intensite',  9, 0.8, 'v1', 'interne-ridge', 'sha-in', 'sha-p', now()),
+            (1399, 'humour',     2, 0.8, 'v1', 'claude-web-manuel', 'sha-in', 'sha-p', now())
+        """
+    )
+
+    rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR"))
+    notee = next(row for row in rows if row["id"] == 1399)
+    non_notee = next(row for row in rows if row["id"] == 2000)
+
+    assert notee["axisScores"] == {"luminosite": 4.0}, (
+        "le plus récent gagne sur luminosite ; intensite et humour n'ont que des "
+        "notes exclues (interne, manuelle) et n'apparaissent donc pas"
+    )
+    assert non_notee["axisScores"] is None
 
 
 async def test_the_cards_are_translated_too(conn: psycopg.AsyncConnection) -> None:
@@ -679,6 +709,24 @@ async def test_work_detail_flattens_the_payload(conn: psycopg.AsyncConnection) -
     assert work["createdBy"] == ["David Benioff"]
     assert work["externalIds"]["wikidata_id"] == "Q23572"
     assert work["catalog"]["popularity"] == 400.0
+    assert work["axisScores"] is None, "jamais notée : pas de vecteur, pas de zéros"
+
+
+async def test_work_detail_carries_the_axis_vector(conn: psycopg.AsyncConnection) -> None:
+    await seed(conn)
+    await conn.execute(
+        """
+        insert into notation.score
+            (id_tmdb, axe, valeur, confiance, rubric_version, modele,
+             input_sha256, prompt_sha256, scored_at)
+        values (1399, 'sensoriel', 7, 0.9, 'v1', 'gpt-test', 'sha-in', 'sha-p', now())
+        """
+    )
+
+    work = await fetch_work(conn, 1399, "fr-FR")
+
+    assert work is not None
+    assert work["axisScores"] == {"sensoriel": 7.0}
 
 
 async def test_the_fiche_is_shown_in_the_chosen_language(
