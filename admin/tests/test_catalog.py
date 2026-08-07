@@ -86,6 +86,16 @@ SERIES_1399 = {
     },
     "translations": {
         "translations": [
+            # Reproduit ce que TMDB renvoie réellement : un `name` vide veut
+            # dire « pas de titre localisé », et chaque champ peut venir d'une
+            # région différente de la même langue. Sur la vraie fiche 1399, le
+            # titre français vient de fr-CA et le synopsis de fr-FR.
+            {"iso_639_1": "fr", "iso_3166_1": "CA", "data": {"name": "Le trône de fer"}},
+            {
+                "iso_639_1": "de",
+                "iso_3166_1": "DE",
+                "data": {"name": "", "overview": "Die Handlung…"},
+            },
             {"iso_639_1": "fr", "iso_3166_1": "FR", "data": {}},
             # Deux variantes d'arabe : la requête doit préférer celle dont la
             # région correspond à la langue choisie (ar-SA), pas la première
@@ -298,10 +308,13 @@ async def test_the_cards_are_translated_too(conn: psycopg.AsyncConnection) -> No
     assert got["name"] == "Taht Oyunları"
     assert got["overview"].startswith("Neuf familles")
 
-    # Une langue absente des traductions : tout reste français.
+    # Une langue absente des traductions retombe sur le titre **original**, pas
+    # sur le français : c'est ce que fait TMDB, et afficher « Le Trône de fer »
+    # à un lecteur hispanophone serait le tromper sur deux langues à la fois.
     espagnol, _ = await fetch_cards(conn, CardQuery(lang="es-ES"))
     got = next(row for row in espagnol if row["id"] == 1399)
-    assert got["name"] == "Le Trône de fer"
+    assert got["name"] == "Game of Thrones"
+    assert got["overview"].startswith("Neuf familles"), "le synopsis, lui, n'a que le français"
 
 
 async def test_cards_sort_and_search(conn: psycopg.AsyncConnection) -> None:
@@ -611,11 +624,27 @@ async def test_a_missing_translation_falls_back_and_says_so(
     assert turc["overview"].startswith("Neuf familles")  # replié sur le français
     assert turc["translated"] == {"lang": "tr-TR", "name": True, "overview": False}
 
-    # Une langue absente des traductions : tout se replie.
+    # Une langue absente des traductions : le titre retombe sur l'original — ce
+    # que fait TMDB — et le synopsis sur le français, faute de mieux.
     espagnol = await fetch_work(conn, 1399, "es-ES")
     assert espagnol is not None
-    assert espagnol["name"] == "Le Trône de fer"
+    assert espagnol["name"] == "Game of Thrones"
     assert espagnol["translated"] == {"lang": "es-ES", "name": False, "overview": False}
+
+
+async def test_an_empty_field_falls_through_to_another_region(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Observé sur la fiche réelle de *Game of Thrones* : `de-DE` a un `name`
+    vide et un `overview` rempli. Prendre l'entrée telle quelle afficherait un
+    titre blanc ; il faut le premier champ **non vide**, champ par champ."""
+    await seed(conn)
+    allemand = await fetch_work(conn, 1399, "de-DE")
+
+    assert allemand is not None
+    assert allemand["overview"] == "Die Handlung…", "le synopsis allemand existe"
+    assert allemand["name"] == "Game of Thrones", "le titre non traduit retombe sur l'original"
+    assert allemand["translated"] == {"lang": "de-DE", "name": False, "overview": True}
 
 
 async def test_the_regional_variant_decides(conn: psycopg.AsyncConnection) -> None:

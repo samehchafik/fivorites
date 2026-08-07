@@ -101,43 +101,65 @@ class CardQuery:
         return ((self.sort, self.descending),)
 
 
-# Le titre et le synopsis dans la langue demandée, pour les seules séries de la
-# page affichée.
+# Les traductions de la langue demandée, ordonnées : la région demandée
+# d'abord, les autres ensuite.
+#
+# Deux points appris des données réelles, et non de la documentation de TMDB.
+#
+# **Un champ vide veut dire « pas de version localisée ».** Sur *Game of
+# Thrones*, `en-US`, `de-DE` et `fr-FR` ont un `name` vide alors que leur
+# `overview` est rempli : le titre n'est simplement pas traduit dans ces
+# langues.
+#
+# **Chaque champ se résout indépendamment.** Toujours sur cette série, le titre
+# français vient de `fr-CA` (« Le trône de fer ») pendant que le synopsis vient
+# de `fr-FR`. Prendre une seule entrée pour les deux ferait perdre l'un ou
+# l'autre — d'où une liste rendue par le SQL, et le choix fait en Python, champ
+# par champ.
+_TRADUCTIONS_LANGUE = """
+                       coalesce((
+                           select jsonb_agg(
+                               t -> 'data' order by (t ->> 'iso_3166_1' = %(region)s) desc
+                           )
+                           from jsonb_array_elements(
+                               coalesce(
+                                   r.payload -> 'translations' -> 'translations', '[]'::jsonb
+                               )
+                           ) t
+                           where t ->> 'iso_639_1' = %(lang2)s
+                       ), '[]'::jsonb)"""
+
+
+def _premier_non_vide(traductions: list[dict[str, Any]] | None, champ: str) -> str | None:
+    """La première valeur non vide de ce champ, dans l'ordre rendu par le SQL."""
+    for entree in traductions or []:
+        valeur = (entree.get(champ) or "").strip()
+        if valeur:
+            return valeur
+    return None
+
+
+# Les traductions des seules séries de la page affichée.
 #
 # C'est la seule entorse à la règle « aucune liste ne lit `payload` », et elle
 # est bornée : au plus `pageSize` payloads ouverts, jamais le catalogue entier.
 # L'alternative était de porter les traductions dans la projection — de l'ordre
 # de deux cents mégaoctets, et une liste de langues figée dans une migration
 # alors que le contrat de données rappelle qu'elle est un réglage.
-_TRADUCTIONS = sql.SQL("""
+_TRADUCTIONS = sql.SQL(
+    """
                 , traductions as (
-                    select distinct on (r.source_id)
-                           r.source_id as sid,
-                           (
-                               select jsonb_build_object(
-                                   'name', t -> 'data' ->> 'name',
-                                   'overview', t -> 'data' ->> 'overview'
-                               )
-                               from jsonb_array_elements(
-                                   coalesce(
-                                       r.payload -> 'translations' -> 'translations',
-                                       '[]'::jsonb
-                                   )
-                               ) t
-                               where t ->> 'iso_639_1' = %(lang2)s
-                               -- La variante régionale d'abord : TMDB renvoie
-                               -- ar-AE et ar-SA, et prendre la première venue
-                               -- donnerait un ordre instable.
-                               order by (t ->> 'iso_3166_1' = %(region)s) desc
-                               limit 1
-                           ) as data
+                    select distinct on (r.source_id) r.source_id as sid,"""
+    + _TRADUCTIONS_LANGUE
+    + """ as data
                     from raw_source r
                     where r.source = %(source)s and r.kind = %(kind)s
                       and r.http_status between 200 and 299 and r.payload is not null
                       and r.source_id = any (array(select id::text from page))
                     order by r.source_id, r.fetched_at desc
                 )
-""")
+"""
+)
 
 
 def _order_by(
@@ -286,9 +308,9 @@ async def fetch_cards(
                 order_page=order_page,
                 traductions=_TRADUCTIONS if traduire else sql.SQL(""),
                 traduction=(
-                    sql.SQL("coalesce(x.data, '{}'::jsonb) as traduction")
+                    sql.SQL("coalesce(x.data, '[]'::jsonb) as traduction")
                     if traduire
-                    else sql.SQL("'{}'::jsonb as traduction")
+                    else sql.SQL("'[]'::jsonb as traduction")
                 ),
                 jointure=(
                     sql.SQL("left join traductions x on x.sid = p.id::text")
@@ -303,14 +325,21 @@ async def fetch_cards(
     return [_shape_card(row, q.lang) for row in rows], total
 
 
+def _repli_titre(row: dict[str, Any], lang: str) -> str | None:
+    """Le titre à montrer faute de traduction : l'original, sauf en français."""
+    if lang.split("-")[0] == "fr":
+        return row["name"] or row["original_name"]
+    return row["original_name"] or row["name"]
+
+
 def _shape_card(row: dict[str, Any], lang: str) -> dict[str, Any]:
     # Le texte traduit s'il existe, le français sinon. La vignette ne dit pas
     # lequel des deux elle montre : sur une grille de vingt-quatre cartes, la
     # mention serait du bruit — c'est la fiche qui l'annonce, à l'endroit où on
     # lit vraiment le texte.
-    traduit: dict[str, Any] = row.get("traduction") or {}
-    nom = (traduit.get("name") or "").strip() or None
-    synopsis = (traduit.get("overview") or "").strip() or None
+    traduites = row.get("traduction")
+    nom = _premier_non_vide(traduites, "name")
+    synopsis = _premier_non_vide(traduites, "overview")
 
     coverage: dict[str, Any] = row["coverage"] or {}
     expected = int(row["parts_expected"] or 0)
@@ -319,7 +348,16 @@ def _shape_card(row: dict[str, Any], lang: str) -> dict[str, Any]:
 
     return {
         "id": row["id"],
-        "name": nom or row["name"] or row["original_name"],
+        # Quand le titre n'est pas traduit, TMDB affiche le titre **original**,
+        # pas la version française : un `name` vide dans les traductions veut
+        # dire « cette langue n'a pas de titre à elle ». Retomber sur le
+        # français afficherait « Le Trône de fer » à un lecteur arabophone dont
+        # la série s'appelle « Game of Thrones » partout ailleurs.
+        #
+        # Le français fait exception, et c'est le seul : la fiche ayant été
+        # demandée en `fr-FR`, la racine du payload porte déjà son titre
+        # d'affichage — traductions comprises.
+        "name": nom or _repli_titre(row, lang),
         "originalName": row["original_name"],
         "overview": synopsis or row["overview"],
         "posterPath": row["poster_path"],
@@ -416,19 +454,17 @@ async def fetch_work(
                    -- en renvoie plusieurs (ar-AE, ar-SA…) et prendre la
                    -- première venue donnerait un résultat instable d'une
                    -- collecte à l'autre.
-                   coalesce((
-                       select jsonb_build_object(
-                           'name', t -> 'data' ->> 'name',
-                           'overview', t -> 'data' ->> 'overview',
-                           'tagline', t -> 'data' ->> 'tagline'
-                       )
-                       from jsonb_array_elements(
-                           coalesce(r.payload -> 'translations' -> 'translations', '[]'::jsonb)
-                       ) t
-                       where t ->> 'iso_639_1' = %(lang2)s
-                       order by (t ->> 'iso_3166_1' = %(region)s) desc
-                       limit 1
-                   ), '{}'::jsonb) as traduction,
+                  coalesce((
+                           select jsonb_agg(
+                               t -> 'data' order by (t ->> 'iso_3166_1' = %(region)s) desc
+                           )
+                           from jsonb_array_elements(
+                               coalesce(
+                                   r.payload -> 'translations' -> 'translations', '[]'::jsonb
+                               )
+                           ) t
+                           where t ->> 'iso_639_1' = %(lang2)s
+                       ), '[]'::jsonb) as traduction,
                    -- La disponibilité en streaming, pour le pays de la langue
                    -- choisie seulement. Le brut en porte une centaine ; les
                    -- envoyer tous ferait transiter un catalogue mondial pour
@@ -518,14 +554,22 @@ async def fetch_work(
     # Afficher un synopsis français en prétendant montrer l'arabe induirait en
     # erreur sur ce qui est réellement collecté, ce que ce tableau de bord a
     # précisément pour rôle de mesurer.
-    traduit: dict[str, Any] = head["traduction"] or {}
-    nom = (traduit.get("name") or "").strip() or None
-    synopsis = (traduit.get("overview") or "").strip() or None
-    accroche = (traduit.get("tagline") or "").strip() or None
+    # Le français ne passe pas par les traductions : la fiche ayant été demandée
+    # à TMDB avec `language=fr-FR`, la racine du payload porte déjà le titre
+    # d'affichage français, résolu par TMDB lui-même. Y rechercher nous-mêmes
+    # ramènerait par exemple le `fr-CA` « Le trône de fer » là où la racine dit
+    # « Le Trône de fer » — une régression silencieuse sur la langue par défaut.
+    traduites = head["traduction"] if lang.split("-")[0] != "fr" else []
+    nom = _premier_non_vide(traduites, "name")
+    synopsis = _premier_non_vide(traduites, "overview")
+    accroche = _premier_non_vide(traduites, "tagline")
 
     return {
         "id": work_id,
-        "name": nom or head["name"] or head["original_name"],
+        # Faute de titre traduit, TMDB montre le titre original — pas la
+        # version française. Le français fait exception : la fiche ayant été
+        # demandée en `fr-FR`, la racine du payload porte déjà son titre.
+        "name": nom or _repli_titre(head, lang),
         "originalName": head["original_name"],
         "tagline": accroche or head["tagline"] or None,
         "overview": synopsis or head["overview"],
