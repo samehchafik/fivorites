@@ -713,7 +713,7 @@ def _predict_all(vector: list[float], weights: dict[str, dict[str, Any]]) -> dic
             "score": predict(vector, row["intercept"], row["coef"]),
             "trainedOn": row["trainedOn"],
             "maeFit": row["maeFit"],
-            "maeLoo": row.get("maeLoo"),
+            "maeCv": row.get("maeCv"),
         }
         for axe, row in weights.items()
     }
@@ -874,7 +874,7 @@ async def train_weights(
                     "axe": axe,
                     "trainedOn": result.trained_on,
                     "maeFit": result.mae_fit,
-                    "maeLoo": result.mae_loo,
+                    "maeCv": result.mae_cv,
                     "lambda": result.lam,
                 }
             )
@@ -883,7 +883,7 @@ async def train_weights(
                 "coef": result.coef,
                 "trainedOn": result.trained_on,
                 "maeFit": result.mae_fit,
-                "maeLoo": result.mae_loo,
+                "maeCv": result.mae_cv,
                 "lambda": result.lam,
             }
 

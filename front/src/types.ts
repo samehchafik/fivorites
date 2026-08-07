@@ -347,7 +347,7 @@ export interface TrainingRun {
    *  qu'on ait rien à recliquer. */
   interne?: Record<
     string,
-    { score: number; trainedOn: number; maeFit: number | null; maeLoo?: number | null }
+    { score: number; trainedOn: number; maeFit: number | null; maeCv?: number | null }
   > | null
   createdAt: string
   claudeAt: string | null
@@ -389,11 +389,11 @@ export interface TrainResult {
     trainedOn: number
     maeFit?: number
     /** L'erreur de validation croisée (leave-one-out) — la métrique
-     *  honnête : maeFit baisse toujours avec plus de paramètres, maeLoo dit
+     *  honnête : maeFit baisse toujours avec plus de paramètres, maeCv dit
      *  ce que le modèle ferait sur une œuvre qu'il n'a pas vue. C'est elle
      *  qu'il faut regarder lot après lot pour savoir si l'interne a assez
      *  d'œuvres pour cesser de diverger avec le juge. */
-    maeLoo?: number
+    maeCv?: number
     lambda?: number
     skipped?: boolean
   }[]
@@ -419,7 +419,7 @@ export interface Phase2Result {
   weights?: { id: number; trainedAt: string; works: number }
   internal: Record<
     string,
-    { score: number; trainedOn: number; maeFit: number | null; maeLoo?: number | null }
+    { score: number; trainedOn: number; maeFit: number | null; maeCv?: number | null }
   >
   llm: {
     scores: Record<string, AxisScore>

@@ -39,10 +39,49 @@ class AxisWeights:
     coef: list[float]
     trained_on: int
     mae_fit: float
-    # Le λ retenu par la validation croisée, et l'erreur LOO qui l'a désigné.
-    # C'est elle, la métrique honnête : le MAE d'ajustement flatte toujours.
+    # Le λ retenu, et l'erreur de validation croisée qui l'a désigné. C'est
+    # elle, la métrique honnête : le MAE d'ajustement flatte toujours, et il
+    # flatte d'autant plus qu'on a moins d'exemples que de dimensions.
     lam: float
-    mae_loo: float
+    mae_cv: float
+
+
+def _fit(xc: np.ndarray, yc: np.ndarray, lam: float) -> np.ndarray:
+    """Les coefficients ridge sur des données déjà centrées."""
+    u, s, vt = np.linalg.svd(xc, full_matrices=False)
+    return vt.T @ ((s / (s**2 + lam)) * (u.T @ yc))
+
+
+def _erreur_croisee(x: np.ndarray, y: np.ndarray, lam: float, plis: int) -> float:
+    """L'erreur sur des points que le modèle n'a pas vus.
+
+    Réajustée à chaque pli, exprès. La forme fermée du LOO — résidu divisé par
+    (1 − hᵢᵢ) — est exacte en théorie et inutilisable ici : dès que les
+    exemples sont moins nombreux que les dimensions, un λ minuscule interpole
+    les données, le résidu tombe à zéro ET le levier tend vers 1. Le calcul
+    devient 0/0, rend numériquement ~0, et désigne le pire λ en croyant élire
+    le meilleur. C'est exactement ce qui s'est produit sur le premier vrai
+    lot : 41 œuvres, 256 dimensions, une régression qui recopiait le juge à la
+    virgule près. Mesurer sur des points réellement écartés ne peut pas
+    dégénérer de cette façon.
+    """
+    erreurs: list[np.ndarray] = []
+    for pli in range(plis):
+        # Découpage par pas plutôt qu'en blocs : sans mélange aléatoire, des
+        # blocs contigus suivraient l'ordre d'insertion en base, qui n'a
+        # aucune raison d'être neutre (popularité décroissante, par exemple).
+        test = np.arange(pli, len(y), plis)
+        if len(test) == 0 or len(test) == len(y):
+            continue
+        garde = np.ones(len(y), dtype=bool)
+        garde[test] = False
+
+        x_mean, y_mean = x[garde].mean(axis=0), float(y[garde].mean())
+        coef = _fit(x[garde] - x_mean, y[garde] - y_mean, lam)
+        pred = np.clip((x[test] - x_mean) @ coef + y_mean, SCALE_MIN, SCALE_MAX)
+        erreurs.append(np.abs(pred - y[test]))
+
+    return float(np.concatenate(erreurs).mean()) if erreurs else float("inf")
 
 
 def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> AxisWeights:
@@ -51,30 +90,21 @@ def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> Axi
     y = np.asarray(values, dtype=np.float64)
     n, _dims = x.shape
 
+    # Un pli par exemple tant que ça reste peu coûteux — c'est le découpage le
+    # moins arbitraire ; au-delà, dix plis suffisent et bornent le calcul.
+    plis = n if n <= 60 else 10
+
+    best_lam, best_cv = LAMBDA_GRID[-1], float("inf")
+    for lam in LAMBDA_GRID:
+        erreur = _erreur_croisee(x, y, lam, plis)
+        if erreur < best_cv:
+            best_lam, best_cv = lam, erreur
+
     # Centrage : l'intercept absorbe la moyenne, la ridge ne pénalise que les
     # écarts. Sans ça, λ tirerait les prédictions vers 0 — hors de l'échelle.
     x_mean = x.mean(axis=0)
     y_mean = float(y.mean())
-    xc, yc = x - x_mean, y - y_mean
-
-    # Une seule SVD sert toute la grille : coefficients, ajustement et
-    # leviers (h) ne dépendent de λ que par le filtre s²/(s²+λ).
-    u, s, vt = np.linalg.svd(xc, full_matrices=False)
-    uty = u.T @ yc
-
-    best_lam, best_loo = LAMBDA_GRID[-1], float("inf")
-    for lam in LAMBDA_GRID:
-        filt = s**2 / (s**2 + lam)
-        fitted_c = u @ (filt * uty)
-        leverage = (u**2 * filt).sum(axis=1)
-        # h → 1 signale un point que le modèle mémorise ; le plancher évite la
-        # division par zéro et pénalise λ trop faibles, ce qui est le but.
-        loo_residuals = (yc - fitted_c) / np.clip(1.0 - leverage, 1e-6, None)
-        loo = float(np.abs(loo_residuals).mean())
-        if loo < best_loo:
-            best_lam, best_loo = lam, loo
-
-    coef = vt.T @ ((s / (s**2 + best_lam)) * uty)
+    coef = _fit(x - x_mean, y - y_mean, best_lam)
     intercept = y_mean - float(x_mean @ coef)
 
     fitted = np.clip(x @ coef + intercept, SCALE_MIN, SCALE_MAX)
@@ -87,7 +117,7 @@ def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> Axi
         trained_on=n,
         mae_fit=round(mae, 3),
         lam=best_lam,
-        mae_loo=round(best_loo, 3),
+        mae_cv=round(best_cv, 3),
     )
 
 

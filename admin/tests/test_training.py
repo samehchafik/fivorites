@@ -7,6 +7,7 @@ que les pages Training mesurent à la main.
 
 from __future__ import annotations
 
+import random
 from collections.abc import AsyncIterator
 
 import httpx
@@ -740,7 +741,46 @@ def test_la_ridge_discrimine_des_embeddings_normalises() -> None:
         f"les groupes 8 et 3 doivent rester séparés ({hauts:.1f} vs {bas:.1f}) — "
         "des prédictions plates signifient que λ écrase le signal"
     )
-    assert poids.mae_loo < 1.0, "la validation croisée doit trouver un λ qui généralise ici"
+    assert poids.mae_cv < 1.0, "la validation croisée doit trouver un λ qui généralise ici"
+
+
+def test_la_ridge_ne_recopie_pas_le_juge() -> None:
+    """Le bug du second lot réel : 41 œuvres, 256 dimensions, et une régression
+    qui rendait EXACTEMENT les notes d'OpenAI — maeFit à 0,003. Avec moins
+    d'exemples que de dimensions, un λ minuscule interpole les données ; la
+    forme fermée du LOO calculait alors 0/0 et désignait ce λ-là. Ici on tient
+    le seul critère qui ne ment pas : ce que le modèle fait sur des œuvres
+    qu'il n'a jamais vues."""
+    rng = random.Random(12)
+    dims, n_train, n_test = 256, 41, 20
+
+    def echantillon(k: int) -> tuple[list[list[float]], list[float]]:
+        vecteurs, notes = [], []
+        for _ in range(k):
+            signal = rng.uniform(-1, 1)
+            v = [0.0] * dims
+            v[0] = 0.12 * signal
+            v[1] = 0.97
+            for j in range(2, dims):
+                v[j] = rng.gauss(0, 0.02)
+            vecteurs.append(v)
+            # Une vraie note : une part de signal, une part de bruit.
+            notes.append(max(1.0, min(10.0, 5.5 + 3.0 * signal + rng.gauss(0, 0.4))))
+        return vecteurs, notes
+
+    vx, vy = echantillon(n_train)
+    tx, ty = echantillon(n_test)
+
+    poids = train_axis("test", vx, vy)
+
+    # Le seul critère qui ne ment pas : ce que le modèle fait sur des œuvres
+    # qu'il n'a jamais vues. Le MAE d'ajustement, lui, peut être excellent
+    # pour de mauvaises raisons — c'est précisément le piège d'origine.
+    erreurs = [
+        abs(predict(v, poids.intercept, poids.coef) - y) for v, y in zip(tx, ty, strict=True)
+    ]
+    dehors = sum(erreurs) / len(erreurs)
+    assert dehors < 2.0, f"erreur {dehors:.2f} sur des œuvres jamais vues — λ trop faible"
 
 
 def test_la_prediction_est_bornee_a_l_echelle() -> None:

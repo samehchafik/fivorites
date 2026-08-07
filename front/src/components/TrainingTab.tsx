@@ -715,7 +715,7 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
         // œuvre qu'il n'a pas vue — la validation croisée, si.
         message: bilan.axes
           .map((axe) =>
-            axe.skipped ? `${axe.axe} : trop peu de notes` : `${axe.axe} : MAE loo ${axe.maeLoo}`,
+            axe.skipped ? `${axe.axe} : trop peu de notes` : `${axe.axe} : MAE cv ${axe.maeCv}`,
           )
           .join(' · '),
       })
@@ -887,7 +887,7 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
                       <Group gap={6} wrap="nowrap">
                         <Text fw={600}>{shown.internal[axe].score}</Text>
                         <Tooltip
-                          label={`entraîné sur ${shown.internal[axe].trainedOn} œuvre(s) — MAE loo ${shown.internal[axe].maeLoo ?? '—'} (ajustement ${shown.internal[axe].maeFit ?? '—'}, toujours plus bas — pas la mesure de généralisation)`}
+                          label={`entraîné sur ${shown.internal[axe].trainedOn} œuvre(s) — MAE cv ${shown.internal[axe].maeCv ?? '—'} (ajustement ${shown.internal[axe].maeFit ?? '—'}, toujours plus bas — pas la mesure de généralisation)`}
                           multiline
                           w={280}
                         >
