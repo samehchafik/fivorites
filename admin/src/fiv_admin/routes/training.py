@@ -188,32 +188,32 @@ async def works_a_noter(
 ) -> list[dict[str, Any]]:
     """Les séries collectées qu'aucun juge n'a encore notées sur ce barème.
 
-    « Sur ce barème », et c'est tout le sujet : l'entraînement des poids filtre
-    par `rubric_version`, donc une note rendue sous un barème précédent ne
-    nourrit pas le suivant. Une œuvre déjà jugée en v1 est donc une candidate
-    légitime pour v2 — surprenant à la lecture, nécessaire au fond. La colonne
-    `deja` dit sous quels barèmes elle a été vue, pour que la liste s'explique
-    d'elle-même ; `inedites` restreint aux œuvres jamais jugées, quand on
-    cherche à élargir plutôt qu'à compléter.
+    « Pas encore notées » se lit dans `notation.training_run` : une œuvre qui a
+    déjà un essai sur ce barème est écartée, quel que soit son contenu. C'est
+    le journal qui fait foi, pas `notation.score` — l'atelier affiche le
+    journal, et une liste qui proposerait une œuvre déjà visible comme notée à
+    l'écran serait incompréhensible.
+
+    « Sur ce barème », et c'est le second point : l'entraînement des poids
+    filtre par `rubric_version`, donc un essai rendu sous un barème précédent
+    ne nourrit pas le suivant. Une œuvre déjà jugée en v1 reste donc candidate
+    pour v2, et la colonne `deja` le dit ; `inedites` restreint aux œuvres
+    sans aucun essai, quand on cherche à élargir plutôt qu'à compléter.
 
     L'ordre est celui du catalogue : popularité d'abord, note des votants pour
     départager. Entraîner sur les œuvres les plus vues n'est pas un biais de
     confort — ce sont celles dont les dossiers sont les plus fournis (Wikipédia,
     synopsis d'épisodes, visuels), donc celles qui apprennent le plus par appel
     payé. La longue traîne obscure viendra quand le barème tiendra.
-
-    Les prédictions internes et les contre-notes ne comptent pas comme « déjà
-    notée » : seule une note de juge, celle qui entraîne, ferme une œuvre.
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
             select id_tmdb, titre, popularity, note, deja from (
                 select candidates.*, (
-                    select array_agg(distinct s.rubric_version order by s.rubric_version)
-                    from notation.score s
-                    where s.id_tmdb = candidates.id_tmdb
-                      and s.modele <> %(interne)s and s.modele not like 'claude%%'
+                    select array_agg(distinct t.rubric_version order by t.rubric_version)
+                    from notation.training_run t
+                    where t.id_tmdb = candidates.id_tmdb
                 ) as deja
                 from (
                     select distinct on (r.source_id)
@@ -238,7 +238,6 @@ async def works_a_noter(
                 "source": SOURCE,
                 "kind": KIND_SERIES,
                 "rubric": rubric_version,
-                "interne": INTERNAL_MODEL,
                 "inedites": inedites,
                 "limit": limit,
             },

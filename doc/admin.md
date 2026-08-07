@@ -230,7 +230,10 @@ docker compose run --rm admin training note -n 50 --apercu   # ce qu'on s'apprê
 docker compose run --rm admin training note -n 50            # puis pour de vrai
 ```
 
-« Pas encore jugées » s'entend **sur le barème courant** : l'entraînement des
+« Pas encore jugées » se lit dans `notation.training_run` : une œuvre qui a
+déjà un essai sur le barème est écartée, quel que soit son contenu — c'est le
+journal que l'atelier affiche, et proposer une œuvre déjà visible comme notée
+à l'écran serait incompréhensible. Et cela s'entend **sur le barème courant** : l'entraînement des
 poids filtre par version, donc une note rendue sous un barème précédent ne
 nourrit pas le suivant. Une œuvre déjà vue en v1 revient donc dans la liste
 pour v2, avec la mention « déjà v1 » pour que ça se lise. `--inedites`
