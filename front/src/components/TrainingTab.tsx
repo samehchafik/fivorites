@@ -130,6 +130,43 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
   )
 }
 
+/**
+ * Copie dans le presse-papier, où que l'admin soit servie.
+ *
+ * `navigator.clipboard` n'existe qu'en contexte sécurisé — HTTPS ou
+ * localhost. Or l'admin de production est servie en HTTP direct sur son
+ * port : le bouton « Copier pour Claude.ai » y levait une erreur muette et
+ * paraissait mort. Le repli est l'ancienne méthode `execCommand('copy')` sur
+ * un textarea hors écran : dépréciée, mais précisément maintenue par les
+ * navigateurs pour ce cas-là.
+ */
+async function copyText(text: string): Promise<boolean> {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // Le presse-papier moderne peut refuser (permission, focus perdu) :
+      // on tente quand même l'ancien chemin plutôt que d'échouer.
+    }
+  }
+  const zone = document.createElement('textarea')
+  zone.value = text
+  zone.setAttribute('readonly', '')
+  zone.style.position = 'fixed'
+  zone.style.opacity = '0'
+  document.body.appendChild(zone)
+  zone.focus()
+  zone.select()
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    zone.remove()
+  }
+}
+
 /** L'écart coloré : vert au niveau du bruit, rouge au-delà de l'ambiguïté. */
 function GapBadge({ gap }: { gap: number | null | undefined }) {
   if (gap === null || gap === undefined) {
@@ -253,20 +290,25 @@ function Phase1({
 
   /** Consigne + dossier, prêts à coller dans claude.ai — le contre-jugement
    *  manuel quand il n'y a pas de clé Anthropic. */
-  const copyForClaude = () => {
+  const copyForClaude = async () => {
     const axesList = (selected?.axes ?? []).join(', ')
-    void navigator.clipboard
-      .writeText(
-        `${prompt}\n\nReply with one line per axis, format "axis: score" (${axesList}).` +
-          `\n\n----- DOSSIER -----\n\n${dossierText ?? ''}`,
-      )
-      .then(() =>
-        notifications.show({
-          color: 'teal',
-          title: 'Copié',
-          message: 'Consigne + dossier dans le presse-papier — à coller dans claude.ai.',
-        }),
-      )
+    const text =
+      `${prompt}\n\nReply with one line per axis, format "axis: score" (${axesList}).` +
+      `\n\n----- DOSSIER -----\n\n${dossierText ?? ''}`
+    if (await copyText(text)) {
+      notifications.show({
+        color: 'teal',
+        title: 'Copié',
+        message: 'Consigne + dossier dans le presse-papier — à coller dans claude.ai.',
+      })
+    } else {
+      notifications.show({
+        color: 'red',
+        title: 'Copie impossible',
+        message:
+          'Le navigateur a refusé les deux méthodes de copie — sélectionner le dossier à la main.',
+      })
+    }
   }
 
   const save = useMutation({
