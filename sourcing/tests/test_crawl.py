@@ -135,7 +135,7 @@ async def test_le_brut_du_crawl_est_conserve_par_qid(conn, settings: Settings):
         assert await cur.fetchall() == [
             ("wikidata", "entity", "Q777"),
             ("wikidata", "lookup", "Q777"),
-            ("wikipedia", "article", "مسلسل"),
+            ("wikipedia", "article", "Q777"),
         ]
 
 

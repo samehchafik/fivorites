@@ -173,13 +173,16 @@ async def test_le_brut_porte_wikimedia_mais_jamais_tvmaze(conn, settings: Settin
 
     async with conn.cursor() as cur:
         await cur.execute(
-            "select source, kind, count(*) from raw_source group by 1, 2 order by 1, 2"
+            "select source, kind, source_id, count(*) from raw_source "
+            "group by 1, 2, 3 order by 1, 2, 3"
         )
         assert await cur.fetchall() == [
-            ("tmdb", "tv", 1),
-            ("wikidata", "entity", 1),
-            ("wikidata", "lookup", 1),
-            ("wikipedia", "article", 2),
+            ("tmdb", "tv", str(TV_ID), 1),
+            ("wikidata", "entity", QID, 1),
+            # Tout le brut d'une série se retrouve par UNE clé — l'article
+            # n'est pas keyé par son titre, qui dépend de la langue.
+            ("wikidata", "lookup", str(TV_ID), 1),
+            ("wikipedia", "article", str(TV_ID), 2),
         ]
 
 

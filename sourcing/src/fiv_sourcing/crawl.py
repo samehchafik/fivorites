@@ -177,7 +177,7 @@ async def _crawler_un_item(
         tvmaze_id=_entier(faits.get("tvmaze") or item.get("tvmaze")),
     )
 
-    cible = Cible(oeuvre_id=oeuvre_id)
+    cible = Cible(oeuvre_id=oeuvre_id, cle=qid)
     detail.qid = qid
     detail.resolved_by = "sweep"
     await store.upsert_riche_source(

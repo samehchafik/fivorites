@@ -112,8 +112,9 @@ async def enrich_series(
         return report
 
     cible = Cible(
-        tv_id=tv_id,
         oeuvre_id=(await store.ensure_oeuvres(conn, [tv_id]))[tv_id],
+        cle=str(tv_id),
+        tv_id=tv_id,
         fiche_id=fiche_id,
     )
     titre = await _titre_du_catalogue(conn, tv_id)
@@ -128,12 +129,19 @@ async def enrich_series(
 class Cible:
     """Une série à enrichir : ses identités internes.
 
-    `oeuvre_id` est le pivot — c'est lui qui attache les lignes entre elles,
-    et le seul champ toujours présent. `tv_id` et `fiche_id` sont l'ancrage
-    TMDB : renseignés sur le flux 1, nuls sur le flux 2 (crawler hors-TMDB).
+    `oeuvre_id` est le pivot — c'est lui qui attache les lignes entre elles.
+    `cle` est la clé de la série dans `raw_source` : l'id TMDB au flux 1, le
+    QID au flux 2. **Toutes** les lignes brutes d'une série la portent — y
+    compris les articles Wikipédia, dont le titre n'est pas une clé : il dépend
+    de la langue, et une table keyée tantôt par id tantôt par titre est
+    illisible. Le titre reste dans le payload et dans `riche_source.source_id`.
+
+    `tv_id` et `fiche_id` sont l'ancrage TMDB : renseignés sur le flux 1, nuls
+    sur le flux 2 (crawler hors-TMDB).
     """
 
     oeuvre_id: int
+    cle: str
     tv_id: int | None = None
     fiche_id: int | None = None
 
@@ -277,8 +285,10 @@ async def _wikipedia(
             continue
 
         # R1 : l'article complet vit dans le brut — c'est ce qui rend
-        # l'extraction (R2, sections utiles) rejouable hors ligne.
-        await _persist(conn, wikipedia.SOURCE, "article", titre, lang, resultat)
+        # l'extraction (R2, sections utiles) rejouable hors ligne. Keyé par la
+        # clé de la série, pas par le titre : le titre dépend de la langue et
+        # rendrait la table illisible — il reste dans le payload.
+        await _persist(conn, wikipedia.SOURCE, "article", cible.cle, lang, resultat)
         lu = wikipedia.lire_article(resultat.payload)
         if lu is None:
             continue
@@ -462,7 +472,12 @@ async def enrich_all(
         fiches = await store.latest_fiche_ids(conn, tranche)
         oeuvres = await store.ensure_oeuvres(conn, [i for i in tranche if i in fiches])
         cibles = {
-            tv_id: Cible(tv_id=tv_id, oeuvre_id=oeuvres[tv_id], fiche_id=fiches[tv_id])
+            tv_id: Cible(
+                oeuvre_id=oeuvres[tv_id],
+                cle=str(tv_id),
+                tv_id=tv_id,
+                fiche_id=fiches[tv_id],
+            )
             for tv_id in tranche
             if tv_id in fiches
         }

@@ -50,6 +50,9 @@ schéma sourcing
 │  raw_source(source, kind, source_id, lang, payload, sha…)
 │      source ∈ { tmdb, wikidata, wikipedia }        ← R1
 │      append-only, dédup par empreinte              ← R2
+│      source_id = LA CLÉ DE LA SÉRIE, partout :
+│        id TMDB (flux 1) ou QID (flux 2) — jamais
+│        un titre ; le titre vit dans le payload
 │
 │  fetch_state(source, kind, source_id, …)
 │      l'état : quand on a regardé, quand ça a bougé
