@@ -258,13 +258,20 @@ function Phase1({
   // lui, les verdicts ne vivaient que dans l'état du navigateur et un F5
   // faisait croire que la notation n'avait jamais eu lieu.
   const runs = useQuery({ queryKey: ['training-runs', id], queryFn: () => api.trainingRuns(id) })
-  const lastRun = runs.data?.[0] ?? null
+
+  // Le dernier essai **de ce barème**, et pas simplement le dernier. Prendre
+  // le plus récent tous barèmes confondus affichait un essai v1 sous un
+  // sélecteur réglé sur v2 : l'écran laissait croire que l'œuvre était notée
+  // ici alors qu'elle ne l'était qu'ailleurs — un verdict rendu sur une autre
+  // consigne, donc incomparable.
+  const lastRun =
+    runs.data?.find((entry) => !selected || entry.rubricVersion === selected.version) ?? null
 
   // L'essai affiché : celui qu'on vient de lancer, sinon le dernier du
   // journal. Régénérer écrase l'affichage — le journal, lui, garde tout.
   const shown =
     result !== null
-      ? { ...result, storedAt: null as string | null }
+      ? { ...result, storedAt: null as string | null, storedVersion: null as string | null }
       : lastRun?.openai
         ? {
             runId: lastRun.id,
@@ -274,6 +281,7 @@ function Phase1({
               ? computeGaps(lastRun.openai.scores, lastRun.claude.scores, axesOf(lastRun))
               : null,
             storedAt: lastRun.createdAt,
+            storedVersion: lastRun.rubricVersion,
           }
         : null
 
@@ -468,8 +476,10 @@ function Phase1({
           <Paper withBorder radius="md" p="sm">
             {shown.storedAt && (
               <Text size="xs" c="dimmed" mb={4}>
-                Relu du journal — essai du {new Date(shown.storedAt).toLocaleString('fr-FR')}.
-                « Noter (OpenAI) » régénère et prend sa place.
+                Relu du journal — essai
+                {shown.storedVersion ? ` du barème ${shown.storedVersion},` : ''} du{' '}
+                {new Date(shown.storedAt).toLocaleString('fr-FR')}. « Noter (OpenAI) » régénère et
+                prend sa place.
               </Text>
             )}
             {shown.gaps ? (
