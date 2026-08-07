@@ -43,6 +43,11 @@ def search_path(*schemas: str) -> sql.Composed:
 async def connect(dsn: str, *schemas: str) -> AsyncIterator[psycopg.AsyncConnection]:
     conn = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
     try:
+        # Même garde-fou que côté sourcing : un client tué net au milieu d'une
+        # transaction laisse une session zombie qui tient ses verrous — vu en
+        # production, 15 h durant, une migration bloquée derrière. Postgres la
+        # tue lui-même passé ce délai.
+        await conn.execute("set idle_in_transaction_session_timeout = '5min'")
         if schemas:
             await conn.execute(search_path(*schemas))
         yield conn

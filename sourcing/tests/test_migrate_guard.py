@@ -53,3 +53,22 @@ async def test_un_schema_a_jour_ne_signale_rien(conn, settings, tmp_path):
         (tmp_path / chemin.name).write_text("select 1")
 
     assert await pending_migrations(conn, tmp_path) == []
+
+
+async def test_les_connexions_declarent_leur_timeout_de_zombie(conn, settings):
+    """Vu en production : un conteneur tué net laisse une session « idle in
+    transaction » qui tient ses verrous 15 h et bloque une migration derrière.
+    Chaque connexion applicative demande donc à Postgres de la tuer passé 5 min
+    d'inactivité en transaction — nos transactions durent des millisecondes.
+
+    Le `conn` de la fixture se connecte en direct : c'est `db.connect`, le
+    chemin de toutes les commandes, qui doit porter le réglage.
+    """
+    from fiv_sourcing.db import connect
+
+    async with (
+        connect(settings.database_url, schema=settings.db_schema) as applicative,
+        applicative.cursor() as cur,
+    ):
+        await cur.execute("show idle_in_transaction_session_timeout")
+        assert (await cur.fetchone())[0] == "5min"

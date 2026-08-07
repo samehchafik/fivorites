@@ -37,6 +37,15 @@ create table if not exists public.schema_migrations (
 async def connect(dsn: str, *, schema: str | None = None) -> AsyncIterator[psycopg.AsyncConnection]:
     conn = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
     try:
+        # Le garde-fou contre nos propres zombies. Constaté en production : un
+        # conteneur tué net au milieu d'un bloc transactionnel laisse une
+        # session « idle in transaction » que Postgres croit vivante — 15 h de
+        # verrous tenus, et une migration bloquée derrière. Avec ce réglage de
+        # session, Postgres tue lui-même la connexion si sa transaction reste
+        # ouverte sans activité : nos transactions applicatives durent des
+        # millisecondes, cinq minutes d'inactivité ne peuvent être qu'un client
+        # mort.
+        await conn.execute("set idle_in_transaction_session_timeout = '5min'")
         if schema:
             await conn.execute(
                 sql.SQL("set search_path to {}, public").format(sql.Identifier(schema))
