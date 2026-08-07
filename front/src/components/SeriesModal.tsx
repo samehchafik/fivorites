@@ -43,6 +43,16 @@ import { WatchPanel } from './WatchPanel'
  * Contrairement à la grille, elle relit le brut : ce qu'on ouvre n'est jamais
  * périmé, même si la projection des vignettes l'est.
  */
+/**
+ * Le décalage de la croix de fermeture.
+ *
+ * Les deux fenêtres sont en `padding={0}` — c'est ce qui permet au décor et aux
+ * visuels d'aller d'un bord à l'autre — mais l'en-tête hérite du même zéro, et
+ * la croix se retrouve collée au bord droit, par-dessus la barre de défilement.
+ * On la remet où on l'attend : en haut à droite, mais à distance du bord.
+ */
+const CROIX = { close: { marginRight: 'var(--mantine-spacing-md)' } }
+
 export function SeriesModal({
   id,
   lang,
@@ -90,6 +100,7 @@ export function SeriesModal({
       scrollAreaComponent={ScrollArea.Autosize}
       title={null}
       withCloseButton
+      styles={CROIX}
     >
       {work.isLoading && (
         <Center p="xl">
@@ -457,6 +468,7 @@ export function SeriesModal({
         withCloseButton
         title={null}
         zIndex={300}
+        styles={CROIX}
       >
         {zoom && (
           <Image

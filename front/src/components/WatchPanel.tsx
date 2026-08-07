@@ -46,7 +46,7 @@ export function WatchPanel({ watch, languages }: { watch: Watch; languages: Lang
                 ))}
               </Group>
               <Text size="xs" c="dimmed">
-                Changer de langue dans l'en-tête change de pays.
+                Changer de langue change de pays.
               </Text>
             </Stack>
           )}
@@ -59,7 +59,7 @@ export function WatchPanel({ watch, languages }: { watch: Watch; languages: Lang
   return (
     <Stack gap="lg">
       <Text size="sm" c="dimmed">
-        Disponibilité en {pays}. Changer de langue dans l'en-tête change de pays.
+        Disponibilité en {pays}. Changer de langue change de pays.
       </Text>
 
       {watch.offers.map((offer) => (
