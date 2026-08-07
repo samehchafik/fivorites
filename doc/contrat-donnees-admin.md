@@ -6,7 +6,8 @@
 > fichier doit suffire pour travailler côté admin sans relire le sourcing.
 >
 > Rédigé le 2026-08-07. Les règles de fond vivent dans
-> [`architecture-sourcing.md`](architecture-sourcing.md).
+> [`architecture-sourcing.md`](architecture-sourcing.md) ; le détail colonne par
+> colonne dans [`dictionnaire-donnees.md`](dictionnaire-donnees.md).
 
 ---
 

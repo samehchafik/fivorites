@@ -216,6 +216,9 @@ donc le fichier reste tel quel pour le poste local.
 | [`Makefile`](Makefile) | le point d'entrée unique en local — c'est lui qui tient la vendorisation |
 | [`Dockerfile`](Dockerfile) | l'image du serveur |
 
+La donnée en détail — chaque colonne, la structure des payloads, le cycle de
+vie d'une série : [`doc/dictionnaire-donnees.md`](../doc/dictionnaire-donnees.md).
+
 ## Base et schémas
 
 **Une seule base pour tout le projet — `fivorites_v2` — et un schéma par
