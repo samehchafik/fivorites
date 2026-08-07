@@ -28,8 +28,9 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 from fiv_admin.deps import Config, Conn, CurrentUser
-from fiv_admin.dossier import build_dossier
-from fiv_admin.llm import LlmError, embed_openai, score_anthropic, score_openai
+from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
+from fiv_admin.llm import LlmError, caption_openai, embed_openai, score_anthropic, score_openai
+from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
 
 router = APIRouter()
@@ -124,6 +125,78 @@ async def dossier(user: CurrentUser, conn: Conn, work_id: int) -> dict[str, Any]
             f"aucune fiche collectée pour {work_id} — impossible de construire un dossier.",
         )
     return built
+
+
+# ---------------------------------------------------------------- les visuels
+
+
+@router.post("/training/works/{work_id}/captions")
+async def caption_work(
+    user: CurrentUser, conn: Conn, settings: Config, work_id: int
+) -> dict[str, Any]:
+    """Légende les visuels d'une série et les fige dans `notation.media_caption`.
+
+    Idempotent par construction : une image déjà légendée n'est jamais
+    renvoyée au modèle — la légende est payée une fois, puis relue par le
+    dossier pour toujours. Relancer le bouton après une re-collecte ne
+    légende donc que les images nouvelles.
+    """
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "OPENAI_API_KEY doit être renseignée dans le .env de l'admin "
+            "pour légender les visuels.",
+        )
+    fiche = await load_fiche(conn, work_id)
+    if fiche is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {work_id} non collectée")
+
+    images = select_images(fiche, await load_seasons(conn, work_id))
+    if not images:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "aucun visuel dans le brut collecté — ni backdrop sur la fiche, "
+            "ni still d'épisode sur les saisons en-US.",
+        )
+
+    async with conn.cursor() as cur:
+        await cur.execute("select url from notation.media_caption where id_tmdb = %s", (work_id,))
+        known = {row[0] for row in await cur.fetchall()}
+    fresh = [image for image in images if image["url"] not in known]
+
+    captioned = 0
+    model = settings.openai_model
+    if fresh:
+        async with httpx.AsyncClient() as http:
+            try:
+                result = await caption_openai(
+                    http, api_key=settings.openai_api_key, model=model, images=fresh
+                )
+            except LlmError as exc:
+                raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        model = result["model"]
+        async with conn.cursor() as cur:
+            for image, caption in zip(fresh, result["captions"], strict=True):
+                if not caption:
+                    continue
+                await cur.execute(
+                    """
+                    insert into notation.media_caption
+                        (id_tmdb, url, kind, label, caption, modele)
+                    values (%s, %s, %s, %s, %s, %s)
+                    on conflict (id_tmdb, url) do nothing
+                    """,
+                    (work_id, image["url"], image["kind"], image["label"], caption, model),
+                )
+                captioned += 1
+
+    return {
+        "id": work_id,
+        "captioned": captioned,
+        "already": len(images) - len(fresh),
+        "total": len(images),
+        "model": model,
+    }
 
 
 # ---------------------------------------------------------------- le barème

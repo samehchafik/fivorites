@@ -21,6 +21,7 @@ from fiv_admin.app import create_app
 from fiv_admin.config import Settings
 from fiv_admin.dossier import build_dossier
 from fiv_admin.security import hash_password
+from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
 
 pytestmark = [pytest.mark.integration, requires_db]
@@ -45,6 +46,12 @@ async def seed_series(conn: psycopg.AsyncConnection, id_tmdb: int = 1399) -> Non
         "genres": [{"name": "Drama"}, {"name": "Fantasy"}],
         "keywords": {"results": [{"name": "dragon"}, {"name": "civil war"}]},
         "networks": [{"name": "HBO"}],
+        "images": {
+            "backdrops": [
+                {"file_path": "/moins-vote.jpg", "vote_count": 2},
+                {"file_path": "/plus-vote.jpg", "vote_count": 9},
+            ]
+        },
         "translations": {
             "translations": [
                 {
@@ -66,11 +73,13 @@ async def seed_series(conn: psycopg.AsyncConnection, id_tmdb: int = 1399) -> Non
     )
     season = {
         "season_number": 1,
+        "overview": "Two great houses collide while winter gathers in the north.",
         "episodes": [
             {
                 "episode_number": n,
                 "name": f"Episode {n}",
                 "overview": f"Winter approaches and alliances shift, chapter {n}.",
+                "still_path": f"/s1e{n}.jpg",
             }
             for n in range(1, 6)
         ],
@@ -317,6 +326,110 @@ async def test_phase2_sans_poids_explique_le_prealable(client: httpx.AsyncClient
     reponse = await client.post("/api/training/phase2", json={"id": 1399, "rubricVersion": "v1"})
     assert reponse.status_code == 409
     assert "poids" in reponse.json()["detail"]
+
+
+# ---------------------------------------------------------------- les visuels
+
+
+def test_la_selection_des_visuels_est_deterministe_et_votee() -> None:
+    fiche = {
+        "images": {
+            "backdrops": [
+                {"file_path": "/b.jpg", "vote_count": 1},
+                {"file_path": "/a.jpg", "vote_count": 8},
+            ]
+        }
+    }
+    seasons = [
+        (1, {"episodes": [{"episode_number": 3, "still_path": "/e3.jpg"}]}),
+    ]
+
+    premier = select_images(fiche, seasons)
+    assert premier == select_images(fiche, seasons), "même brut, même sélection"
+    assert premier[0]["url"].endswith("/a.jpg"), "le backdrop le plus voté d'abord"
+    assert premier[0]["label"] == "backdrop 1"
+    assert premier[-1] == {
+        "url": "https://image.tmdb.org/t/p/w780/e3.jpg",
+        "kind": "still",
+        "label": "S01E03",
+    }
+
+
+async def test_le_dossier_integre_saisons_et_legendes(conn: psycopg.AsyncConnection) -> None:
+    await seed_series(conn, 2100)
+    async with conn.cursor() as cur:
+        for url, kind, label, caption in [
+            ("https://image.tmdb.org/t/p/w780/e1.jpg", "still", "S01E01", "bright open field"),
+            ("https://image.tmdb.org/t/p/w780/a.jpg", "backdrop", "backdrop 1", "dark castle"),
+        ]:
+            await cur.execute(
+                "insert into notation.media_caption (id_tmdb, url, kind, label, caption, modele)"
+                " values (2100, %s, %s, %s, %s, 'gpt-vision-test')",
+                (url, kind, label, caption),
+            )
+
+    built = await build_dossier(conn, 2100)
+
+    assert built is not None
+    assert "SEASON OVERVIEWS:\nSeason 1: Two great houses collide" in built["text"]
+    assert "MEDIA (what the official images show" in built["text"]
+    assert built["text"].index("backdrop 1: dark castle") < built["text"].index(
+        "S01E01: bright open field"
+    ), "les backdrops avant les stills — l'ordre de l'index, donc de l'empreinte"
+    assert built["sections"]["seasonOverviews"] == 1
+    assert built["sections"]["mediaLines"] == 2
+
+
+async def test_legender_paye_une_fois_puis_relit(
+    client: httpx.AsyncClient, conn: psycopg.AsyncConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le contrat économique du bouton : un appel vision par image nouvelle,
+    zéro pour une image déjà légendée — la légende est figée."""
+    appels: list[int] = []
+
+    async def fake_caption(http, *, api_key, model, images):
+        appels.append(len(images))
+        return {
+            "model": "gpt-vision-test",
+            "captions": [f"dark moody frame ({image['label']})" for image in images],
+        }
+
+    monkeypatch.setattr(routes.training, "caption_openai", fake_caption)
+
+    premier = await client.post("/api/training/works/1399/captions")
+    assert premier.status_code == 200
+    body = premier.json()
+    assert body["total"] == 7, "2 backdrops de la fiche + 5 stills d'épisodes"
+    assert body["captioned"] == 7
+    assert appels == [7]
+
+    second = await client.post("/api/training/works/1399/captions")
+    assert second.status_code == 200
+    assert second.json()["captioned"] == 0
+    assert second.json()["already"] == 7
+    assert appels == [7], "pas de second appel vision : les légendes sont relues, pas repayées"
+
+    built = await build_dossier(conn, 1399)
+    assert built is not None
+    assert "dark moody frame (backdrop 1)" in built["text"]
+
+
+async def test_legender_sans_visuel_explique(
+    client: httpx.AsyncClient, conn: psycopg.AsyncConnection
+) -> None:
+    await conn.execute(
+        "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+        " values (2200, 'Sans images', 1, current_date)"
+    )
+    await conn.execute(
+        "insert into raw_source (source, kind, source_id, lang, http_status, payload,"
+        " payload_sha256) values ('tmdb', 'tv', '2200', 'fr-FR', 200, %s, sha256('2200'::bytea))",
+        (Jsonb({"original_name": "Sans images"}),),
+    )
+
+    reponse = await client.post("/api/training/works/2200/captions")
+    assert reponse.status_code == 409
+    assert "aucun visuel" in reponse.json()["detail"]
 
 
 # ---------------------------------------------------------------- la ridge

@@ -39,6 +39,10 @@ EPISODE_SAMPLE = 10
 # c'est ce qui rend la notation de masse presque gratuite.
 WIKIPEDIA_MAX_CHARS = 6000
 
+# Un synopsis de saison résume le ton d'un arc entier — matière précieuse et
+# normalement courte ; la troncature n'est là que pour les fiches bavardes.
+SEASON_OVERVIEW_MAX_CHARS = 1500
+
 # En dessous, le dossier ne permet pas de noter : la consigne du barème
 # autorise le « ne sait pas », mais autant le dire avant de payer l'appel.
 MIN_CHARS = 400
@@ -96,8 +100,8 @@ def _truncate_sentence(text: str, limit: int) -> str:
     return text[: cut + 1] if cut > 0 else text[:limit]
 
 
-async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str, Any] | None:
-    """Le dossier anglais d'une série, ou None si elle n'est pas collectée."""
+async def load_fiche(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str, Any] | None:
+    """La fiche TMDB la plus récente d'une série, ou None si rien de collecté."""
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
@@ -109,11 +113,15 @@ async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str
             {"source": SOURCE, "kind": KIND_SERIES, "id": str(id_tmdb)},
         )
         head = await cur.fetchone()
-        if head is None:
-            return None
-        payload = head["payload"]
+    return head["payload"] if head else None
 
-        # Toutes les saisons en-US, la plus récente version de chacune.
+
+async def load_seasons(
+    conn: psycopg.AsyncConnection, id_tmdb: int
+) -> list[tuple[int | None, dict[str, Any]]]:
+    """Toutes les saisons en-US (la version la plus récente de chacune),
+    triées par numéro. La notation lit l'anglais, donc uniquement en-US."""
+    async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
             select distinct on (source_id) source_id, payload
@@ -126,7 +134,20 @@ async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str
             {"source": SOURCE, "kind": KIND_SEASON, "id": str(id_tmdb)},
         )
         season_rows = await cur.fetchall()
+    return sorted(
+        ((row["payload"].get("season_number"), row["payload"]) for row in season_rows),
+        key=lambda pair: (pair[0] is None, pair[0]),
+    )
 
+
+async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str, Any] | None:
+    """Le dossier anglais d'une série, ou None si elle n'est pas collectée."""
+    payload = await load_fiche(conn, id_tmdb)
+    if payload is None:
+        return None
+    season_payloads = await load_seasons(conn, id_tmdb)
+
+    async with conn.cursor(row_factory=dict_row) as cur:
         # L'article Wikipédia anglais, si l'enrichissement est passé par là.
         await cur.execute(
             """
@@ -138,14 +159,25 @@ async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str
         )
         wiki = await cur.fetchone()
 
-    seasons = sorted(
-        (
-            (row["payload"].get("season_number"), row["payload"].get("episodes") or [])
-            for row in season_rows
-        ),
-        key=lambda pair: (pair[0] is None, pair[0]),
-    )
+        # Les légendes visuelles, si elles ont été payées (bouton de la page
+        # Training 1). L'index porte exactement cet ordre : il est stable, et
+        # la stabilité de l'ordre est celle de l'empreinte.
+        await cur.execute(
+            """
+            select label, caption from notation.media_caption
+            where id_tmdb = %(id)s order by kind, label, url
+            """,
+            {"id": id_tmdb},
+        )
+        captions = await cur.fetchall()
+
+    seasons = [(number, p.get("episodes") or []) for number, p in season_payloads]
     episodes = _sample_episodes(seasons)
+    season_overviews = [
+        (number, _truncate_sentence(overview, SEASON_OVERVIEW_MAX_CHARS))
+        for number, p in season_payloads
+        if (overview := (p.get("overview") or "").strip())
+    ]
     english = _english_translation(payload)
 
     title = (english.get("name") or "").strip() or payload.get("original_name") or ""
@@ -178,11 +210,21 @@ async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str
         parts.append("KEYWORDS: " + ", ".join(keywords))
     if overview:
         parts.append("OVERVIEW:\n" + overview)
+    if season_overviews:
+        parts.append(
+            "SEASON OVERVIEWS:\n"
+            + "\n".join(f"Season {number}: {text}" for number, text in season_overviews)
+        )
     if episodes:
         lines = [
             f"S{ep['season']}E{ep['episode']} {ep['name']}: {ep['overview']}" for ep in episodes
         ]
         parts.append("EPISODE SYNOPSES (sampled across the whole run):\n" + "\n".join(lines))
+    if captions:
+        parts.append(
+            "MEDIA (what the official images show, auto-described):\n"
+            + "\n".join(f"{row['label']}: {row['caption']}" for row in captions)
+        )
     if wikipedia:
         parts.append("WIKIPEDIA (en):\n" + wikipedia)
 
@@ -196,8 +238,10 @@ async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str
         "enough": len(text) >= MIN_CHARS,
         "sections": {
             "overviewChars": len(overview),
+            "seasonOverviews": len(season_overviews),
             "episodeCount": len(episodes),
             "episodeChars": sum(len(ep["overview"]) for ep in episodes),
+            "mediaLines": len(captions),
             "wikipediaChars": len(wikipedia),
             "keywords": len(keywords),
         },

@@ -599,9 +599,7 @@ async def test_the_rating_sort_combines_with_popularity(conn: psycopg.AsyncConne
     lot = {9101, 9102}
 
     # Note strictement identique : c'est la popularité qui doit trancher.
-    rows, _ = await fetch_cards(
-        conn, CardQuery(lang="fr-FR", sort="rating", sort2="popularity")
-    )
+    rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR", sort="rating", sort2="popularity"))
     assert [row["id"] for row in rows if row["id"] in lot] == [9102, 9101]
 
     rows, _ = await fetch_cards(

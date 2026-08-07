@@ -149,6 +149,84 @@ async def score_anthropic(
     return {"model": body.get("model", model), "scores": _clamp(parsed, axes)}
 
 
+# La consigne de légende. En anglais, comme tout le dossier ; factuelle,
+# tournée vers ce que les axes visuels mesurent — lumière, couleur, ambiance —
+# et fermée à la spéculation narrative : le modèle décrit, il ne raconte pas.
+CAPTION_PROMPT = (
+    "You will receive official images from one television series: wide backdrops "
+    "and episode stills. For EACH image, write one short English line (under 25 "
+    "words) describing only what is visible: lighting (dark, bright, neon...), "
+    "dominant colours, setting, mood, notable subjects. Be factual. No plot "
+    "speculation, no character names, no episode guesses."
+)
+
+
+def captions_schema(count: int) -> dict[str, Any]:
+    """Une propriété par image (`image_1`…`image_n`), toutes requises : le
+    schéma strict garantit exactement une légende par visuel envoyé — pas de
+    tableau à recompter."""
+    keys = [f"image_{i}" for i in range(1, count + 1)]
+    return {
+        "type": "object",
+        "properties": {key: {"type": "string"} for key in keys},
+        "required": keys,
+        "additionalProperties": False,
+    }
+
+
+async def caption_openai(
+    http: httpx.AsyncClient,
+    *,
+    api_key: str,
+    model: str,
+    images: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Les légendes d'une liste d'images `[{url, kind, label}]`, en un appel.
+
+    Un seul appel pour tout le lot : la consigne n'est payée qu'une fois, et
+    `detail: low` ramène chaque image à son tarif plancher — largement assez
+    pour lire une lumière et une ambiance.
+    """
+    content: list[dict[str, Any]] = []
+    for i, image in enumerate(images, start=1):
+        content.append({"type": "text", "text": f"Image {i} ({image['kind']} {image['label']}):"})
+        content.append({"type": "image_url", "image_url": {"url": image["url"], "detail": "low"}})
+
+    response = await http.post(
+        f"{OPENAI_BASE}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": CAPTION_PROMPT},
+                {"role": "user", "content": content},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "image_captions",
+                    "strict": True,
+                    "schema": captions_schema(len(images)),
+                },
+            },
+        },
+        timeout=TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise LlmError(f"OpenAI vision {response.status_code} : {response.text[:300]}")
+
+    body = response.json()
+    try:
+        import json
+
+        parsed = json.loads(body["choices"][0]["message"]["content"])
+        captions = [str(parsed[f"image_{i}"]).strip() for i in range(1, len(images) + 1)]
+    except (KeyError, IndexError, ValueError) as exc:
+        raise LlmError(f"réponse vision illisible : {exc}") from exc
+
+    return {"model": body.get("model", model), "captions": captions}
+
+
 async def embed_openai(
     http: httpx.AsyncClient,
     *,
