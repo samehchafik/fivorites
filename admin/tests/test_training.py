@@ -405,6 +405,19 @@ async def test_entrainement_puis_prediction_interne(
         "/api/training/phase2", json={"id": 1399, "rubricVersion": "v-poids"}
     )
     assert prediction.status_code == 200
+    assert prediction.json()["runId"] is not None, "le vecteur généré entre au journal"
+
+    # Le journal porte le vecteur interne, à côté des verdicts.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select interne, interne_at from notation.training_run"
+            " where id_tmdb = 1399 and rubric_version = 'v-poids'"
+        )
+        interne, interne_at = await cur.fetchone()
+    assert set(interne.keys()) == set(AXES)
+    assert all(1.0 <= entry["score"] <= 10.0 for entry in interne.values())
+    assert interne_at is not None
+    assert prediction.status_code == 200
     body = prediction.json()
     assert body["weights"]["works"] == 12, "la version de poids utilisée est identifiée"
     for axe in AXES:
@@ -416,6 +429,56 @@ async def test_entrainement_puis_prediction_interne(
             "select count(*) from notation.score where id_tmdb = 1399 and modele = 'interne-ridge'"
         )
         assert (await cur.fetchone())[0] == len(AXES)
+
+
+async def test_l_entrainement_regenere_les_oeuvres_deja_jugees(
+    client: httpx.AsyncClient, conn: psycopg.AsyncConnection
+) -> None:
+    """Des poids neufs périment les prédictions faites avec les anciens : tout
+    essai portant un verdict OpenAI est régénéré dans la foulée."""
+    creation = await client.post(
+        "/api/training/rubrics",
+        json={"version": "v-regen", "prompt": "r" * 60, "axes": AXES},
+    )
+    assert creation.status_code == 201
+
+    for n in range(12):
+        id_tmdb = 5000 + n
+        await seed_series(conn, id_tmdb)
+        async with conn.cursor() as cur:
+            for axe in AXES:
+                await cur.execute(
+                    "insert into notation.score (id_tmdb, axe, valeur, confiance,"
+                    " rubric_version, modele, input_sha256, prompt_sha256)"
+                    " values (%s, %s, %s, 0.8, 'v-regen', 'gpt-test', 'sha-in', 'sha-p')",
+                    (id_tmdb, axe, 3 + (n % 6)),
+                )
+            # Seules les trois premières ont un essai journalisé avec verdict.
+            if n < 3:
+                await cur.execute(
+                    "insert into notation.training_run (id_tmdb, rubric_version, prompt,"
+                    " dossier_sha256, openai) values (%s, 'v-regen', %s, 'sha-in', %s)",
+                    (id_tmdb, "r" * 60, Jsonb({"model": "gpt-test", "scores": {}})),
+                )
+
+    entrainement = await client.post(
+        "/api/training/weights/train", json={"rubricVersion": "v-regen"}
+    )
+
+    assert entrainement.status_code == 200
+    assert entrainement.json()["generated"] == 3, "une génération par essai portant un verdict"
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select count(*) from notation.training_run"
+            " where rubric_version = 'v-regen' and interne is not null"
+        )
+        assert (await cur.fetchone())[0] == 3
+        # Les neuf autres n'ont pas d'essai : rien n'a été inventé pour elles.
+        await cur.execute(
+            "select count(*) from notation.training_run where rubric_version = 'v-regen'"
+        )
+        assert (await cur.fetchone())[0] == 3
 
 
 async def test_phase2_sans_poids_explique_le_prealable(client: httpx.AsyncClient) -> None:

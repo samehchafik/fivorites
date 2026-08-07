@@ -585,6 +585,76 @@ async def _embedding(
     return vector
 
 
+def _predict_all(vector: list[float], weights: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Le vecteur de goût prédit par les poids, axe par axe."""
+    return {
+        axe: {
+            "score": predict(vector, row["intercept"], row["coef"]),
+            "trainedOn": row["trainedOn"],
+            "maeFit": row["maeFit"],
+        }
+        for axe, row in weights.items()
+    }
+
+
+async def _store_internal(
+    conn: Any,
+    *,
+    id_tmdb: int,
+    internal: dict[str, Any],
+    rubric_version: str,
+    prompt: str,
+    dossier_sha256: str,
+    raw_source_id: int | None,
+) -> int:
+    """Écrit le vecteur généré dans `score` et dans le journal de l'essai.
+
+    L'essai visé est le plus récent de l'œuvre sur ce barème ; sans essai
+    préalable, une ligne naît pour l'accueillir. `interne_at` date la
+    génération et non l'essai : les poids ont pu changer entre les deux.
+    """
+    await _store_scores(
+        conn,
+        id_tmdb=id_tmdb,
+        scores={
+            axe: {"score": entry["score"], "confidence": None} for axe, entry in internal.items()
+        },
+        rubric_version=rubric_version,
+        modele=INTERNAL_MODEL,
+        input_sha256=dossier_sha256,
+        prompt_sha256=_prompt_sha(prompt),
+    )
+
+    interne_json = Jsonb(internal)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update notation.training_run set interne = %(interne)s, interne_at = now()
+            where id = (
+                select id from notation.training_run
+                where id_tmdb = %(id)s and rubric_version = %(rubric)s
+                order by created_at desc limit 1
+            )
+            returning id
+            """,
+            {"interne": interne_json, "id": id_tmdb, "rubric": rubric_version},
+        )
+        row = await cur.fetchone()
+        if row is None:
+            await cur.execute(
+                """
+                insert into notation.training_run
+                    (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256,
+                     interne, interne_at)
+                values (%s, %s, %s, %s, %s, %s, now())
+                returning id
+                """,
+                (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256, interne_json),
+            )
+            row = await cur.fetchone()
+    return row[0]
+
+
 class TrainIn(BaseModel):
     rubricVersion: str
 
@@ -715,12 +785,56 @@ async def train_weights(
             )
             weights_id, trained_at = await cur.fetchone()
 
+    # Des poids neufs périment toutes les prédictions faites avec les anciens :
+    # on régénère dans la foulée, pour chaque œuvre dont le journal porte un
+    # verdict OpenAI. C'est gratuit — les embeddings viennent d'être calculés
+    # ci-dessus, et le cache de `notation.embedding` couvre le reste.
+    generated = 0
+    if weights_json:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                select distinct on (id_tmdb) id_tmdb, prompt
+                from notation.training_run
+                where rubric_version = %s and openai is not null
+                order by id_tmdb, created_at desc
+                """,
+                (body.rubricVersion,),
+            )
+            journaux = await cur.fetchall()
+
+        async with httpx.AsyncClient() as http:
+            for entry in journaux:
+                id_tmdb = entry["id_tmdb"]
+                built = await build_dossier(conn, id_tmdb)
+                if built is None:
+                    continue
+                vector = vectors.get(id_tmdb)
+                if vector is None:
+                    try:
+                        vector = await _embedding(conn, settings, http, built)
+                    except LlmError:
+                        # Une œuvre qu'on n'arrive pas à plonger ne doit pas
+                        # faire échouer un entraînement déjà écrit en base.
+                        continue
+                await _store_internal(
+                    conn,
+                    id_tmdb=id_tmdb,
+                    internal=_predict_all(vector, weights_json),
+                    rubric_version=body.rubricVersion,
+                    prompt=entry["prompt"],
+                    dossier_sha256=built["sha256"],
+                    raw_source_id=built["rawSourceId"],
+                )
+                generated += 1
+
     return {
         "rubricVersion": body.rubricVersion,
         "works": len(by_work),
         "axes": trained,
         "weightsId": weights_id,
         "trainedAt": trained_at,
+        "generated": generated,
     }
 
 
@@ -781,25 +895,7 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
         except LlmError as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
-    internal = {
-        axe: {
-            "score": predict(vector, row["intercept"], row["coef"]),
-            "trainedOn": row["trainedOn"],
-            "maeFit": row["maeFit"],
-        }
-        for axe, row in weight_rows.items()
-    }
-    await _store_scores(
-        conn,
-        id_tmdb=body.id,
-        scores={
-            axe: {"score": entry["score"], "confidence": None} for axe, entry in internal.items()
-        },
-        rubric_version=body.rubricVersion,
-        modele=INTERNAL_MODEL,
-        input_sha256=built["sha256"],
-        prompt_sha256=_prompt_sha(rubric["prompt"]),
-    )
+    internal = _predict_all(vector, weight_rows)
 
     if llm_result is not None:
         await _store_scores(
@@ -840,9 +936,46 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
             else None
         )
 
+    # Le contre-juge, s'il s'est prononcé sur ce barème. La phase 2 le montre
+    # à côté d'OpenAI : deux lignées face à la régression, c'est ce qui permet
+    # de voir si l'interne dérive vers l'une d'elles.
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select distinct on (axe) axe, valeur, confiance, modele, scored_at
+            from notation.score
+            where id_tmdb = %s and rubric_version = %s and modele like 'claude%%'
+            order by axe, scored_at desc
+            """,
+            (body.id, body.rubricVersion),
+        )
+        contre = await cur.fetchall()
+    claude_scores = {
+        row["axe"]: {
+            "score": float(row["valeur"]) if row["valeur"] is not None else None,
+            "confidence": float(row["confiance"]) if row["confiance"] is not None else None,
+        }
+        for row in contre
+    }
+    claude_origin = (
+        {"model": contre[0]["modele"], "scoredAt": contre[0]["scored_at"]} if contre else None
+    )
+
     internal_scores = {axe: {"score": entry["score"]} for axe, entry in internal.items()}
+
+    run_id = await _store_internal(
+        conn,
+        id_tmdb=body.id,
+        internal=internal,
+        rubric_version=body.rubricVersion,
+        prompt=rubric["prompt"],
+        dossier_sha256=built["sha256"],
+        raw_source_id=built["rawSourceId"],
+    )
+
     return {
         "id": body.id,
+        "runId": run_id,
         "dossier": {key: built[key] for key in ("sha256", "chars", "title")},
         "weights": {
             "id": weights_row["id"],
@@ -851,5 +984,6 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
         },
         "internal": internal,
         "llm": {"scores": llm_scores, "origin": llm_origin},
+        "claude": {"scores": claude_scores, "origin": claude_origin},
         "gaps": _gaps(internal_scores, llm_scores, axes) if llm_scores else None,
     }

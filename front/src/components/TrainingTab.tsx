@@ -676,16 +676,19 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
 
   const train = useMutation({
     mutationFn: () => api.trainWeights(selected?.version ?? 'v1'),
-    onSuccess: (bilan) =>
+    onSuccess: (bilan) => {
       notifications.show({
         color: 'teal',
-        title: `Poids réentraînés sur ${bilan.works} œuvre(s)`,
+        title: `Poids entraînés sur ${bilan.works} œuvre(s) · ${bilan.generated} vecteur(s) régénéré(s)`,
         message: bilan.axes
           .map((axe) =>
             axe.skipped ? `${axe.axe} : trop peu de notes` : `${axe.axe} : MAE ${axe.maeFit}`,
           )
           .join(' · '),
-      }),
+      })
+      // Les poids qui viennent de changer ont périmé le tableau affiché.
+      setResult(null)
+    },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Entraînement refusé', message: error.message }),
   })
@@ -711,37 +714,54 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
           allowDeselect={false}
           w={180}
         />
-        <Button
-          variant="default"
-          onClick={() => train.mutate()}
-          loading={train.isPending}
-          disabled={!selected}
+        <Tooltip
+          label="Refait la régression sur tout l'historique de notes du barème"
+          multiline
+          w={240}
         >
-          Réentraîner les poids
-        </Button>
-        <Button
-          onClick={() => compare.mutate(false)}
-          loading={compare.isPending}
-          disabled={!selected}
+          <Button
+            variant="default"
+            onClick={() => train.mutate()}
+            loading={train.isPending}
+            disabled={!selected}
+          >
+            Entraînement
+          </Button>
+        </Tooltip>
+        <Tooltip
+          label="Génère le vecteur interne depuis les poids et l'écrit dans le journal de l'essai"
+          multiline
+          w={260}
         >
-          Comparer (notes stockées)
-        </Button>
-        <Tooltip label="Note aussi l'œuvre avec OpenAI maintenant — un appel payant" multiline w={240}>
+          <Button
+            onClick={() => compare.mutate(false)}
+            loading={compare.isPending}
+            disabled={!selected}
+          >
+            Générer
+          </Button>
+        </Tooltip>
+        <Tooltip
+          label="Génère, et note aussi l'œuvre avec OpenAI maintenant — un appel payant"
+          multiline
+          w={260}
+        >
           <Button
             variant="light"
             onClick={() => compare.mutate(true)}
             loading={compare.isPending}
             disabled={!selected}
           >
-            Comparer (note fraîche)
+            Générer (note fraîche)
           </Button>
         </Tooltip>
       </Group>
 
       <Text size="xs" c="dimmed">
-        La boucle : les poids prédisent, le LLM vérifie. Écart au niveau du bruit (≤ 1) → les
-        poids tiennent, on continue sur le lot suivant. Écart au-delà → « Réentraîner » refait la
-        régression sur tout l'historique de notes du barème.
+        La boucle : les poids prédisent, les juges vérifient. Écart au niveau du bruit (≤ 1) → les
+        poids tiennent, on continue sur le lot suivant. Écart au-delà → « Entraînement » refait la
+        régression sur tout l'historique de notes du barème. Chaque génération s'écrit dans le
+        journal de l'essai.
       </Text>
 
       {result && (
@@ -764,12 +784,15 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
                 <Table.Th>Axe</Table.Th>
                 <Table.Th>Interne (poids)</Table.Th>
                 <Table.Th>
-                  LLM{' '}
+                  OpenAI{' '}
                   {result.llm.origin
                     ? `(${result.llm.origin.model}${result.llm.origin.fresh ? ', fraîche' : ', stockée'})`
                     : ''}
                 </Table.Th>
-                <Table.Th>Écart</Table.Th>
+                <Table.Th>
+                  Claude {result.claude.origin ? `(${result.claude.origin.model})` : ''}
+                </Table.Th>
+                <Table.Th>Écart interne / OpenAI</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -800,12 +823,21 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
                     <ScoreCell entry={result.llm.scores[axe]} />
                   </Table.Td>
                   <Table.Td>
+                    <ScoreCell entry={result.claude.scores[axe]} />
+                  </Table.Td>
+                  <Table.Td>
                     <GapBadge gap={result.gaps?.perAxis[axe]} />
                   </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>
+          {!result.claude.origin && (
+            <Text size="xs" c="dimmed" mt={6}>
+              Aucune contre-note Claude sur ce barème — la colonne se remplit depuis Training 1,
+              « Copier pour Claude.ai » puis « Enregistrer la contre-note ».
+            </Text>
+          )}
         </Paper>
       )}
     </Stack>
