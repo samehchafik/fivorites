@@ -55,3 +55,6 @@ sourcing/data/
 # --- secrets du déploiement serveur ---
 # `.env` porte POSTGRES_PASSWORD et le token TMDB ; seul .env.example est suivi.
 .env
+
+# --- var/ : logs et verrous de la passe quotidienne (scripts/nightly.sh) ---
+/var/
