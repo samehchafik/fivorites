@@ -10,6 +10,14 @@
 
 ---
 
+## 0. « Où est la version anglaise / espagnole ? » — le raccourci
+
+| Vous cherchez | C'est ici |
+|---|---|
+| titre + synopsis **de la série** en langue X | la fiche unique (`kind='tv'`) → `payload -> 'translations' -> 'translations'`, filtrer `iso_639_1` (et `iso_3166_1` : il peut y avoir en/US *et* en/GB) |
+| synopsis **des épisodes** en langue X | la ligne saison de cette langue : `kind='tv_season'`, `lang='en-US'` / `'es-ES'` — et nulle part ailleurs |
+| **l'article Wikipédia** en langue X | `riche_source` : `source='wikipedia'`, `lang='en'` / `'es'` |
+
 ## 1. Le contrat des langues, en une phrase
 
 **Toutes les séries sont importées dans cinq langues — fr, en, es, ar, tr —

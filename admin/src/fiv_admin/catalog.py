@@ -124,9 +124,19 @@ async def fetch_cards(
     conn: psycopg.AsyncConnection, q: CardQuery
 ) -> tuple[list[dict[str, Any]], int]:
     """Une page de vignettes, et le total du filtre."""
+    # Le français est déjà dans la projection : inutile de rouvrir vingt-quatre
+    # payloads pour retrouver ce qu'on a sous la main. C'est aussi la langue par
+    # défaut, donc le cas le plus fréquent — la page d'accueil reste aussi
+    # rapide qu'avant.
+    langue = q.lang.split("-")[0]
+    traduire = langue != "fr"
+
     params: dict[str, Any] = {
         "source": SOURCE,
+        "kind": KIND_SERIES,
         "part_kind": KIND_SEASON,
+        "lang2": langue,
+        "region": q.lang.rpartition("-")[2],
         "limit": q.page_size,
         "offset": q.offset,
         "search": q.search or None,
@@ -220,15 +230,33 @@ async def fetch_cards(
                       and split_part(s.source_id, '/', 1) = any (array(select id::text from page))
                     group by 1
                 )
+                {traductions}
                 select p.*,
                        coalesce(l.coverage, '{{}}'::jsonb) as coverage,
-                       coalesce(t.expected, 0) as parts_expected
+                       coalesce(t.expected, 0) as parts_expected,
+                       {traduction}
                 from page p
                 left join langs l on l.sid = p.id::text
                 left join parts t on t.sid = p.id::text
+                {jointure}
                 order by {order_page}
                 """
-            ).format(where=where, order=order, order_page=order_page),
+            ).format(
+                where=where,
+                order=order,
+                order_page=order_page,
+                traductions=_TRADUCTIONS if traduire else sql.SQL(""),
+                traduction=(
+                    sql.SQL("coalesce(x.data, '{{}}'::jsonb) as traduction")
+                    if traduire
+                    else sql.SQL("'{{}}'::jsonb as traduction")
+                ),
+                jointure=(
+                    sql.SQL("left join traductions x on x.sid = p.id::text")
+                    if traduire
+                    else sql.SQL("")
+                ),
+            ),
             params,
         )
         rows = await cur.fetchall()
@@ -237,6 +265,14 @@ async def fetch_cards(
 
 
 def _shape_card(row: dict[str, Any], lang: str) -> dict[str, Any]:
+    # Le texte traduit s'il existe, le français sinon. La vignette ne dit pas
+    # lequel des deux elle montre : sur une grille de vingt-quatre cartes, la
+    # mention serait du bruit — c'est la fiche qui l'annonce, à l'endroit où on
+    # lit vraiment le texte.
+    traduit: dict[str, Any] = row.get("traduction") or {}
+    nom = (traduit.get("name") or "").strip() or None
+    synopsis = (traduit.get("overview") or "").strip() or None
+
     coverage: dict[str, Any] = row["coverage"] or {}
     expected = int(row["parts_expected"] or 0)
     selected = coverage.get(lang) or {"ok": 0, "failed": 0}
@@ -244,9 +280,9 @@ def _shape_card(row: dict[str, Any], lang: str) -> dict[str, Any]:
 
     return {
         "id": row["id"],
-        "name": row["name"] or row["original_name"],
+        "name": nom or row["name"] or row["original_name"],
         "originalName": row["original_name"],
-        "overview": row["overview"],
+        "overview": synopsis or row["overview"],
         "posterPath": row["poster_path"],
         "backdropPath": row["backdrop_path"],
         "status": row["status"],
