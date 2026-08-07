@@ -28,9 +28,47 @@ SOURCE = "tmdb"
 KIND_SERIES = "tv"
 KIND_SEASON = "tv_season"
 
+# La note, pondérée par le nombre de votants.
+#
+# Trier sur `vote_average` brut donne un classement inutile : une série notée
+# 10 par un seul votant passe devant une série notée 8,4 par vingt-deux mille.
+# Ce n'est pas un cas rare — c'est le sommet de la liste, entièrement occupé par
+# des séries que personne n'a vues.
+#
+# La correction est la moyenne bayésienne, celle qu'IMDb applique à son Top 250 :
+# on ajoute à chaque série `m` votes fictifs à la note moyenne du catalogue.
+# Une série à trois votes reste donc tirée vers la moyenne, et il faut du volume
+# pour s'en écarter — ce qui est exactement ce qu'on veut dire par « bien notée ».
+#
+#     (note × votants + C × m) / (votants + m)
+#
+# `m = 50` : le seuil à partir duquel une note commence à vouloir dire quelque
+# chose. `C = 6,5` : la moyenne observée sur TMDB, où les notes se serrent haut.
+# Les deux sont des constantes assumées, pas des réglages — les rendre
+# configurables donnerait un classement dont personne ne saurait plus la règle.
+NOTE_VOTES_FICTIFS = sql.Literal(50)
+NOTE_MOYENNE = sql.Literal(6.5)
+
+_NOTE_PONDEREE = """(case
+        when coalesce({t}.vote_count, 0) = 0 then null
+        else ({t}.vote_average * {t}.vote_count + {c} * {m}) / ({t}.vote_count + {m})
+    end)"""
+
+
+def _note(table: str) -> sql.Composable:
+    """La note pondérée, écrite sur l'alias de table demandé.
+
+    Une série sans aucun vote vaut `null`, jamais la moyenne : elle n'est pas
+    « moyennement notée », elle n'est pas notée. Le `nulls last` du tri la
+    renvoie donc en fin de liste dans les deux sens, ce qui est la seule place
+    honnête pour une absence de note.
+    """
+    return sql.SQL(_NOTE_PONDEREE).format(t=sql.SQL(table), c=NOTE_MOYENNE, m=NOTE_VOTES_FICTIFS)
+
+
 # Tris de la grille. Liste fermée : la clé vient de la requête HTTP, jamais le
 # nom de colonne.
-CARD_SORTS: dict[str, sql.SQL] = {
+CARD_SORTS: dict[str, sql.Composable] = {
     # Le défaut demandé : de la plus récente à la plus ancienne.
     "air_date": sql.SQL("v.first_air_date"),
     # L'année seule, et c'est le seul tri qui rende un second critère utile.
@@ -41,6 +79,7 @@ CARD_SORTS: dict[str, sql.SQL] = {
     "air_year": sql.SQL("extract(year from v.first_air_date)"),
     "name": sql.SQL("coalesce(v.name, v.original_name)"),
     "popularity": sql.SQL("c.popularity"),
+    "rating": _note("v"),
     "fetched": sql.SQL("v.fetched_at"),
 }
 
@@ -52,11 +91,12 @@ CAST_LIMIT = 30
 
 
 # Les colonnes du SELECT final, où `page` a perdu les préfixes de tables.
-PAGE_SORTS: dict[str, sql.SQL] = {
+PAGE_SORTS: dict[str, sql.Composable] = {
     "air_date": sql.SQL("p.first_air_date"),
     "air_year": sql.SQL("extract(year from p.first_air_date)"),
     "name": sql.SQL("coalesce(p.name, p.original_name)"),
     "popularity": sql.SQL("p.popularity"),
+    "rating": _note("p"),
     "fetched": sql.SQL("p.fetched_at"),
 }
 
@@ -163,7 +203,9 @@ _TRADUCTIONS = sql.SQL(
 
 
 def _order_by(
-    criteria: tuple[tuple[str, bool], ...], columns: dict[str, sql.SQL], tiebreak: sql.SQL
+    criteria: tuple[tuple[str, bool], ...],
+    columns: dict[str, sql.Composable],
+    tiebreak: sql.SQL,
 ) -> sql.SQL:
     """La clause de tri, plus un départage final sur l'id.
 

@@ -119,9 +119,15 @@ affiche 228 454 lignes.
 ### La grille
 
 Cartes triées, filtrées, paginées. Deux critères de tri combinables (date,
-année, popularité, titre, dernière collecte), deux cases (« avec affiche », « avec
+année, note, popularité, titre, dernière collecte), deux cases (« avec affiche », « avec
 descriptif »), une recherche, un seuil de popularité. Le décompte affiche
 `filtrés / total` dès qu'un filtre est en place.
+
+Le tri **par note** est pondéré par le nombre de votants — moyenne bayésienne,
+cinquante votes fictifs à 6,5. Sur la note brute, la tête de liste n'est faite
+que de séries notées 10 par une personne ; ici il faut du volume pour s'écarter
+de la moyenne. Une série sans aucun vote vaut `null` et part en fin de liste
+dans les deux sens : elle n'est pas mal notée, elle n'est pas notée.
 
 ### La fiche
 

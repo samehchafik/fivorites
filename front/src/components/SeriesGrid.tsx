@@ -28,6 +28,12 @@ export const CARD_SORTS: { value: string; label: string }[] = [
   { value: 'air_year', label: 'Année de diffusion' },
   { value: 'name', label: 'Titre' },
   { value: 'popularity', label: 'Popularité' },
+  // « Note » et non « note moyenne » : elle est pondérée par le nombre de
+  // votants, sans quoi la tête de liste n'est faite que de séries notées 10 par
+  // une personne. L'infobulle du sélecteur le dit — le classement n'est pas
+  // exactement celui des étoiles affichées, et mieux vaut l'annoncer que le
+  // laisser découvrir.
+  { value: 'rating', label: 'Note' },
   { value: 'fetched', label: 'Dernière collecte' },
 ]
 
@@ -50,6 +56,12 @@ function directionsFor(sort: string): { value: string; label: string }[] {
     return [
       { value: 'desc', label: 'des plus populaires' },
       { value: 'asc', label: 'des moins populaires' },
+    ]
+  }
+  if (sort === 'rating') {
+    return [
+      { value: 'desc', label: 'des mieux notées' },
+      { value: 'asc', label: 'des moins bien notées' },
     ]
   }
   return [
@@ -153,6 +165,13 @@ export function SeriesGrid({
           />
           <Select
             label="Tri"
+            // Dit à quoi on trie pendant qu'on trie, plutôt que de laisser
+            // chercher pourquoi une série notée 9,5 passe derrière une 8,8.
+            description={
+              state.sort === 'rating' || state.sort2 === 'rating'
+                ? 'note pondérée par le nombre de votants'
+                : undefined
+            }
             data={CARD_SORTS}
             value={state.sort}
             onChange={(next) => next && onState({ ...state, sort: next })}

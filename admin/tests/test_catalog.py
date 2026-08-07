@@ -517,6 +517,99 @@ async def test_sorting_by_year_lets_the_second_criterion_work(
     assert [r["id"] for r in rows if r["id"] in lot] == [8002, 8003, 8001]
 
 
+async def test_the_rating_sort_weighs_the_number_of_voters(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Le classement qu'on attend d'un tri « par note ».
+
+    Sur `vote_average` brut, le sommet de la liste appartient aux séries qu'un
+    seul votant a notées 10 — un classement que personne ne peut utiliser. La
+    pondération bayésienne tire ces notes vers la moyenne du catalogue tant
+    qu'elles ne reposent sur rien.
+    """
+    await seed(conn)
+    for tv_id, note, votants, digest in (
+        # 10/10, un seul votant : la note maximale, et aucune information.
+        (9001, 10.0, 1, b"\x71"),
+        # 8,8 sur cinq mille : moins bien noté, infiniment mieux établi.
+        (9002, 8.8, 5000, b"\x72"),
+        # 9,5 sur soixante : au-dessus du seuil, mais de peu.
+        (9003, 9.5, 60, b"\x73"),
+        # Aucun vote : ce n'est pas une note basse, c'est une absence de note.
+        (9004, None, 0, b"\x74"),
+    ):
+        await conn.execute(
+            "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+            " values (%s, %s, 1.0, date '2026-08-05')",
+            (tv_id, f"#{tv_id}"),
+        )
+        await conn.execute(
+            """
+            insert into raw_source (source, kind, source_id, lang, http_status,
+                                    payload, payload_sha256)
+            values ('tmdb', 'tv', %s, 'fr-FR', 200,
+                    jsonb_build_object('name', %s::text,
+                                       'vote_average', %s::real,
+                                       'vote_count', %s::int), %s)
+            """,
+            (str(tv_id), f"#{tv_id}", note, votants, digest),
+        )
+    await refresh_cards(conn)
+    lot = {9001, 9002, 9003, 9004}
+
+    rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR", sort="rating"))
+    classement = [row["id"] for row in rows if row["id"] in lot]
+
+    # Les chiffres, pour que le classement attendu ne soit pas une incantation :
+    #   9002 → (8,8 × 5000 + 6,5 × 50) / 5050 = 8,78  — le volume écrase le prior
+    #   9003 → (9,5 ×   60 + 6,5 × 50) /  110 = 8,14  — soixante votes le tirent
+    #                                                   encore vers la moyenne
+    #   9001 → (10  ×    1 + 6,5 × 50) /   51 = 6,57  — un votant ne pèse rien
+    # Une note plus haute peut donc passer derrière une note plus établie : c'est
+    # le comportement recherché, pas un effet de bord.
+    assert classement == [9002, 9003, 9001, 9004]
+
+    # Dans l'autre sens, la série sans vote reste en fin de liste : elle n'est
+    # ni la mieux ni la moins bien notée, elle n'est pas notée.
+    rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR", sort="rating", descending=False))
+    assert [row["id"] for row in rows if row["id"] in lot][-1] == 9004
+
+
+async def test_the_rating_sort_combines_with_popularity(conn: psycopg.AsyncConnection) -> None:
+    """Le second critère, sur le tri qui vient d'arriver."""
+    await seed(conn)
+    for tv_id, pop, digest in ((9101, 5.0, b"\x81"), (9102, 90.0, b"\x82")):
+        await conn.execute(
+            "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+            " values (%s, %s, %s, date '2026-08-05')",
+            (tv_id, f"#{tv_id}", pop),
+        )
+        await conn.execute(
+            """
+            insert into raw_source (source, kind, source_id, lang, http_status,
+                                    payload, payload_sha256)
+            values ('tmdb', 'tv', %s, 'fr-FR', 200,
+                    jsonb_build_object('name', %s::text,
+                                       'vote_average', 7.5::real,
+                                       'vote_count', 900::int), %s)
+            """,
+            (str(tv_id), f"#{tv_id}", digest),
+        )
+    await refresh_cards(conn)
+    lot = {9101, 9102}
+
+    # Note strictement identique : c'est la popularité qui doit trancher.
+    rows, _ = await fetch_cards(
+        conn, CardQuery(lang="fr-FR", sort="rating", sort2="popularity")
+    )
+    assert [row["id"] for row in rows if row["id"] in lot] == [9102, 9101]
+
+    rows, _ = await fetch_cards(
+        conn, CardQuery(lang="fr-FR", sort="rating", sort2="popularity", descending2=False)
+    )
+    assert [row["id"] for row in rows if row["id"] in lot] == [9101, 9102]
+
+
 async def test_a_collection_that_stored_nothing_never_lights_the_banner(
     conn: psycopg.AsyncConnection,
 ) -> None:
