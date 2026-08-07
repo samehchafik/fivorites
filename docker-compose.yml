@@ -81,7 +81,6 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER:-fivorites_v2}:${DB_PASSWORD:?DB_PASSWORD doit être défini dans .env}@${DB_HOST:-172.28.0.1}:${DB_PORT:-5432}/${DB_NAME:-fivorites_v2}
       SOURCING_SCHEMA: ${DB_SCHEMA:-sourcing}
-      ADMIN_SCHEMA: ${ADMIN_SCHEMA:-admin}
       # Obligatoire : sans elle un secret est tiré au hasard à chaque démarrage,
       # donc toute session saute au redémarrage.  openssl rand -hex 32
       ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:?ADMIN_SECRET_KEY doit être défini dans .env}

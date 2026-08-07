@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from conftest import TEST_DSN, requires_db
 from fiv_admin.cli import app
+from fiv_admin.config import get_settings
 
 pytestmark = requires_db
 
@@ -24,9 +25,13 @@ def _target_the_test_database(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", TEST_DSN)
     # `get_settings` est mis en cache : sans ça, la première lecture de
     # l'environnement gagnerait pour toute la session de tests.
-    from fiv_admin.config import get_settings
-
     get_settings.cache_clear()
+
+
+# La même base, sans le schéma de l'administration : `postgres` existe dans
+# toute grappe PostgreSQL, c'est initdb qui la crée. Elle sert ici à jouer l'état
+# d'un premier déploiement sans rien détruire.
+DSN_SANS_SCHEMA = TEST_DSN.rsplit("/", 1)[0] + "/postgres"
 
 
 def test_user_add_says_what_to_run_when_the_schema_is_missing(
@@ -34,7 +39,8 @@ def test_user_add_says_what_to_run_when_the_schema_is_missing(
 ) -> None:
     """L'état d'un premier déploiement. Avant, on tombait sur une trace
     `UndefinedTable` : elle dit quelle table manque, pas quoi faire."""
-    monkeypatch.setenv("ADMIN_SCHEMA", "schema_jamais_migre")
+    monkeypatch.setenv("DATABASE_URL", DSN_SANS_SCHEMA)
+    get_settings.cache_clear()
 
     result = runner.invoke(app, ["user", "add", "quelquun"])
 
@@ -44,6 +50,34 @@ def test_user_add_says_what_to_run_when_the_schema_is_missing(
     # Et surtout : aucune invite de mot de passe. Se le faire saisir deux fois
     # pour rien est précisément ce que le contrôle en amont évite.
     assert "Mot de passe" not in result.output
+
+
+def test_a_misconfigured_schema_is_named_as_such(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Le cas qui a réellement bloqué un déploiement : `ADMIN_SCHEMA=main` dans
+    le `.env` du serveur. Les migrations posent `admin` en dur, donc le conseil
+    « appliquer les migrations » faisait tourner en rond — la commande obéissait
+    et le compte restait introuvable. Le message doit accuser la variable."""
+    monkeypatch.setenv("ADMIN_SCHEMA", "schema_jamais_migre")
+    get_settings.cache_clear()
+
+    result = runner.invoke(app, ["user", "add", "quelquun"])
+
+    assert result.exit_code == 1
+    assert "ADMIN_SCHEMA" in result.output
+    assert "n'est pas un réglage" in result.output
+    assert "Mot de passe" not in result.output
+
+
+def test_passwd_checks_the_schema_before_asking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`passwd` avait le défaut que `add` n'avait plus : il demandait le mot de
+    passe, deux fois, puis échouait sur la table absente."""
+    monkeypatch.setenv("DATABASE_URL", DSN_SANS_SCHEMA)
+    get_settings.cache_clear()
+
+    result = runner.invoke(app, ["user", "passwd", "quelquun"])
+
+    assert result.exit_code == 1
+    assert "mot de passe" not in result.output.lower()
 
 
 def test_user_add_creates_then_refuses_a_duplicate(conn: psycopg.AsyncConnection) -> None:

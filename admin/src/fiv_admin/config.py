@@ -29,6 +29,19 @@ class Settings(BaseSettings):
     # modules regardent la même base sans qu'on ait rien à configurer.
     database_url: str = "postgresql://fivorites_v2@localhost:5432/fivorites_v2"
     sourcing_schema: str = "sourcing"
+
+    # Le nom du schéma de l'administration n'est **pas** un réglage de
+    # déploiement, malgré les apparences : les migrations le posent en dur
+    # (`create schema admin`, `create table admin.admin_user`). Une valeur
+    # différente ici ne déplacerait rien, elle ferait seulement chercher les
+    # comptes là où il n'y en a pas — et c'est arrivé, un `ADMIN_SCHEMA=main`
+    # dans le `.env` du serveur a rendu toute création de compte impossible avec
+    # un message qui accusait les migrations.
+    #
+    # Le champ reste, parce que pointer vers un schéma absent est justement ce
+    # qu'il faut pouvoir faire pour tester le message d'erreur. Ce qui a disparu,
+    # c'est le chemin par lequel on l'atteignait sans le vouloir : le compose ne
+    # transmet plus la variable, et les `.env.example` ne la proposent plus.
     admin_schema: str = "admin"
 
     # Clé de signature des sessions. Vide = un secret éphémère est tiré au

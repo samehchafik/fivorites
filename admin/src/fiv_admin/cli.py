@@ -221,6 +221,11 @@ def user_add(
 @user_app.command("passwd")
 def user_passwd(username: str) -> None:
     """Change le mot de passe d'un compte."""
+    # Avant l'invite, pour la même raison que dans `user_add` : saisir un mot de
+    # passe deux fois pour apprendre ensuite que la table n'existe pas est
+    # exactement ce qu'on ne veut pas faire vivre à quelqu'un qui déploie.
+    _require_admin_schema()
+
     password = typer.prompt("Nouveau mot de passe", hide_input=True, confirmation_prompt=True)
     if len(password) < 12:
         typer.echo("Mot de passe trop court : 12 caractères au minimum.")
@@ -352,6 +357,19 @@ def _require_admin_schema() -> None:
         return row[0] if row else None
 
     if _run(run()) is None:
+        # Le cas qui trompe : ce n'est pas la migration qui manque, c'est
+        # l'endroit où on la cherche. Les migrations posent `admin` en dur ; un
+        # `ADMIN_SCHEMA` différent fait donc chercher les comptes dans un schéma
+        # que rien ne créera jamais, et le conseil « appliquer les migrations »
+        # envoie tourner en rond.
+        if settings.admin_schema != "admin":
+            typer.echo(f"Le schéma configuré est « {settings.admin_schema} ».")
+            typer.echo("Or les migrations créent « admin », et ce nom n'est pas un réglage.")
+            typer.echo("→ retirer ADMIN_SCHEMA de l'environnement (ou le remettre à « admin ») :")
+            typer.echo("     sed -i 's/^ADMIN_SCHEMA=.*/ADMIN_SCHEMA=admin/' .env")
+            typer.echo("     docker compose up -d admin")
+            raise typer.Exit(1)
+
         typer.echo(f"Le schéma « {settings.admin_schema} » n'existe pas encore.")
         typer.echo("→ appliquer les migrations d'abord :")
         typer.echo("     fiv-admin db migrate")

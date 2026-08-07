@@ -201,6 +201,32 @@ sait fabriquer des administrateurs n'en est plus un. Et le mot de passe n'est
 jamais un argument de commande — une ligne de commande finit dans l'historique
 du shell.
 
+### Créer le compte, ou réinitialiser son mot de passe
+
+Sur le serveur, en conteneur :
+
+```bash
+docker compose run --rm -it admin user add admin --name "Admin"
+docker compose run --rm -it admin user passwd admin     # réinitialiser
+docker compose run --rm admin user list
+```
+
+En local, la même commande sans Docker : `admin/.venv/bin/fiv-admin user add admin`.
+
+Quatre points qui font perdre du temps quand on les ignore :
+
+* **`-it` est obligatoire** pour `add` et `passwd` : sans terminal attaché,
+  l'invite de mot de passe n'a nulle part où s'afficher ;
+* le mot de passe est demandé **deux fois** et fait **12 caractères minimum** ;
+* `add` sur un compte existant n'écrase rien — il renvoie vers `passwd`, qui est
+  la réinitialisation. Il n'y a pas de « mot de passe oublié » par courriel ;
+* un compte désactivé se rouvre par `user disable admin --enable`.
+
+Le nom du schéma, lui, **n'est pas un réglage** : les migrations posent `admin`
+en dur. Un `ADMIN_SCHEMA` différent dans l'environnement ferait chercher les
+comptes dans un schéma que rien ne créera — le compose ne transmet plus cette
+variable, et la commande le dit si elle la trouve quand même.
+
 ## 7. La base
 
 Le module possède son schéma `admin` et rien d'autre :
