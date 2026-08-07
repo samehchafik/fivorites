@@ -185,11 +185,11 @@ Le limiteur est saturé : 2,06 × 10 ≈ 20 req/s. Ce n'est donc ni le réseau n
 base qui bornent, mais le plafond configuré — voir la question ouverte sur le
 débit réellement toléré.
 
-⚠️ **À vérifier avant d'engager la passe complète** : l'endpoint `translations`
-d'une saison suffirait-il à remplacer les cinq appels ? Ma compréhension est
-qu'il ne couvre que le nom et le synopsis *de la saison*, pas l'`overview` de
-chaque épisode — mais si je me trompe, le coût des saisons est divisé par cinq.
-Une seule requête suffit à trancher.
+✅ **Vérifié par requête réelle** (2026-08-07, `/tv/1399/season/1`) :
+l'endpoint `translations` d'une saison ne porte que `{name, overview}` de la
+saison — 56 traductions, zéro épisode — tandis que `language=ar-SA` renvoie
+bien les synopsis d'épisode en arabe. Le facteur cinq est incontournable, le
+choix d'un appel par langue est le bon.
 
 ### 4.2 Enrichissement — mesuré
 
@@ -423,7 +423,9 @@ Par ordre de ce qui bloque.
 7. 🟠 **Écart de version Postgres** : 16 en dev, **13** sur le serveur — le dépôt
    PGDG du runbook n'a pas été utilisé. Rien n'exige aujourd'hui plus que la 13,
    mais l'écart est à résorber avant que la base contienne des données coûteuses.
-8. ⚠️ **`translations` sur les saisons** — cf. §4.1, facteur cinq sur le coût.
+8. ✅ ~~`translations` sur les saisons~~ — **tranché par requête réelle**
+   (cf. §4.1) : il ne couvre pas les épisodes, le facteur cinq est le prix des
+   synopsis d'épisode traduits.
 9. ⚠️ **De l'instabilité inter-tests, vue deux fois.** Une passe complète a
    échoué une fois sur 7 tests (autour de `test_enrich_all`), puis cinq passes
    vertes d'affilée sans reproduction ; même signature qu'un échec isolé

@@ -51,7 +51,7 @@ décision non rejouable du projet.
 | **Catalogue V1** | **Table rase.** On re-collecte tout depuis TMDB sur l'architecture cible. La V1 n'est plus une dépendance du chantier : ni son catalogue, ni son pipeline, ni son schéma. Le seul actif à ne pas perdre reste les fives utilisateurs (§5.3 du doc de sourcing), qui se raccorderont plus tard par `id_tmdb`. |
 | **Filtrage à l'acquisition** | **Aucun**, mesure du lot 2 à l'appui. `popularity` est une métrique d'usage du *site* TMDB, dont le public est très majoritairement occidental : un seuil à 5 ne retiendrait que 54 des 5 560 séries en écriture arabe, alors que leur popularité médiane est comparable à celle du reste du catalogue. On collecte tout ; le tri se fait en aval, sur des données complètes. |
 | **Périmètre de notation** | Non décidé — **mesuré** au lot 5. Le rapport de couverture donne la courbe « matière disponible × popularité » ; le seuil se lit dessus. |
-| **Langues des saisons** | fr, en, es, ar, tr — un appel par saison **et par langue**, c'est le poste de coût dominant. La raison : `language=` traduit aussi l'`overview` de chaque épisode, alors que l'endpoint `translations` d'une saison ne porte que sur la saison elle-même. Réglable par `TMDB_SEASON_LANGUAGES` ; à confirmer par une requête avant la passe complète, le facteur est de cinq (§5, lot 2). |
+| **Langues des saisons** | fr, en, es, ar, tr — un appel par saison **et par langue**, c'est le poste de coût dominant. La raison : `language=` traduit aussi l'`overview` de chaque épisode, alors que l'endpoint `translations` d'une saison ne porte que sur la saison elle-même. Réglable par `TMDB_SEASON_LANGUAGES`. **Confirmé par requête réelle** (2026-08-07) : `translations` d'une saison ne couvre pas les épisodes, le facteur cinq est incontournable. |
 | **Langage** | Python 3.12, **vendorisé** dans `sourcing/vendor/python`. Aucune dépendance à un Python système : le Makefile n'appelle jamais `uv run`, et un garde-fou échoue si la venv dérive. |
 | **Exécution** | **Postgres tourne toujours sur l'hôte, jamais en conteneur** — poste de dev comme serveur. Seule l'application est conteneurisée, et seulement sur le serveur : en local elle tourne sur le Python de `vendor/`. Mise en place serveur : [`serveur-debian11.md`](serveur-debian11.md). |
 | **Base** | Postgres local de la machine, rôle et base `fivorites_v2`. **Une seule base pour tout le projet, un schéma par domaine.** **Pas de Docker.** |
@@ -179,12 +179,11 @@ lot 5.
 4 secondes. La falaise de popularité est brutale — le premier décile couvre 406
 à 3,71, les neuf autres se partagent 3,71 à 0.
 
-*Reste ouvert* : `/tv/{id}/season/{n}?append_to_response=translations`
-remplacerait-il les cinq appels par langue ? La réponse attendue est non — cet
-endpoint ne porte que sur la saison, pas sur l'`overview` de chaque épisode —
-mais elle n'a pas été vérifiée par une requête réelle, et le facteur est de
-cinq sur le poste de coût dominant. Une seule requête suffit à trancher, avant
-la passe complète.
+*Tranché* (2026-08-07, requête réelle sur `/tv/1399/season/1`) :
+`translations` d'une saison ne porte que le nom et le synopsis *de la saison* —
+zéro épisode — alors que `language=` renvoie bien les synopsis d'épisode
+traduits. Le facteur cinq est le prix de la matière de notation, le choix est
+confirmé.
 
 ### ✅ Lot 3 — Enrichissement externe *(livré)*
 
