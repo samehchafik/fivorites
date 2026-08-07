@@ -33,14 +33,33 @@ app.add_typer(training_app, name="training")
 
 @training_app.command("note")
 def training_note(
-    limit: Annotated[int, typer.Option("--limit", "-n", min=1, max=500)] = 10,
-    bareme: Annotated[str | None, typer.Option("--bareme")] = None,
-    legendes: Annotated[bool, typer.Option("--legendes")] = False,
-    inedites: Annotated[bool, typer.Option("--inedites")] = False,
-    sans_filtre: Annotated[bool, typer.Option("--sans-filtre")] = False,
-    rejouer: Annotated[bool, typer.Option("--rejouer")] = False,
-    apercu: Annotated[bool, typer.Option("--apercu")] = False,
-    pause: Annotated[float, typer.Option("--pause", min=0.0)] = 0.0,
+    limit: Annotated[
+        int, typer.Option("--limit", "-n", min=1, max=500, help="Combien de séries noter.")
+    ] = 10,
+    bareme: Annotated[
+        str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
+    ] = None,
+    legendes: Annotated[
+        bool,
+        typer.Option("--legendes", help="Décrire les visuels et les joindre au dossier (payant)."),
+    ] = False,
+    inedites: Annotated[
+        bool, typer.Option("--inedites", help="Seulement les œuvres jamais jugées, tous barèmes.")
+    ] = False,
+    sans_filtre: Annotated[
+        bool, typer.Option("--sans-filtre", help="Ne pas exiger d'affiche.")
+    ] = False,
+    rejouer: Annotated[
+        bool,
+        typer.Option("--rejouer", help="Reprendre aussi les œuvres déjà notées sur ce barème."),
+    ] = False,
+    apercu: Annotated[
+        bool,
+        typer.Option("--apercu", help="Afficher la liste et le coût estimé, sans rien appeler."),
+    ] = False,
+    pause: Annotated[
+        float, typer.Option("--pause", min=0.0, help="Secondes d'attente entre deux œuvres.")
+    ] = 0.0,
 ) -> None:
     """Note les N séries les plus populaires pas encore jugées sur le barème.
 
