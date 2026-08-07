@@ -37,6 +37,7 @@ def training_note(
     bareme: Annotated[str | None, typer.Option("--bareme")] = None,
     sans_legende: Annotated[bool, typer.Option("--sans-legende")] = False,
     inedites: Annotated[bool, typer.Option("--inedites")] = False,
+    sans_filtre: Annotated[bool, typer.Option("--sans-filtre")] = False,
     apercu: Annotated[bool, typer.Option("--apercu")] = False,
     pause: Annotated[float, typer.Option("--pause", min=0.0)] = 0.0,
 ) -> None:
@@ -55,6 +56,11 @@ def training_note(
     Les œuvres déjà notées sur ce barème-ci sont sautées, donc relancer la
     commande continue le lot au lieu de le refaire : c'est un appel payant par
     œuvre, et on ne paie jamais deux fois la même.
+
+    Comme la grille, la liste exige une affiche et un descriptif anglais —
+    celui que lira le juge. Sans lui le dossier n'a pas de section OVERVIEW et
+    serait refusé comme trop maigre, après avoir payé le légendage.
+    `--sans-filtre` lève ces deux conditions.
 
     `--apercu` montre la liste et le coût estimé sans rien appeler. À utiliser
     la première fois : c'est la seule façon de voir ce qu'on s'apprête à payer.
@@ -98,7 +104,9 @@ def training_note(
                 raise typer.Exit(1)
             version, prompt, axes = row
 
-            candidates = await works_a_noter(conn, version, limit, inedites=inedites)
+            candidates = await works_a_noter(
+                conn, version, limit, inedites=inedites, filtres=not sans_filtre
+            )
             if not candidates:
                 typer.echo(f"aucune série à noter sur le barème {version} — tout est déjà jugé.")
                 return 0

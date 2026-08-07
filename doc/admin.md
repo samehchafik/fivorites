@@ -240,6 +240,11 @@ pour v2, avec la mention « déjà v1 » pour que ça se lise. `--inedites`
 restreint aux œuvres jamais jugées, quand on cherche à élargir le catalogue
 plutôt qu'à compléter un barème.
 
+Comme la grille, la liste exige une **affiche** et un **descriptif anglais** —
+celui que lira le juge. Sans lui le dossier n'a pas de section OVERVIEW et
+serait refusé comme trop maigre, après avoir payé le légendage.
+`--sans-filtre` lève ces deux conditions.
+
 L'ordre est celui du catalogue — popularité, puis note des votants. Ce n'est
 pas un biais de confort : les œuvres les plus vues ont les dossiers les plus
 fournis (Wikipédia, synopsis d'épisodes, visuels), donc apprennent le plus par

@@ -184,7 +184,7 @@ async def _auto_captions(conn: Any, settings: Any, work_id: int) -> None:
 
 
 async def works_a_noter(
-    conn: Any, rubric_version: str, limit: int, *, inedites: bool = False
+    conn: Any, rubric_version: str, limit: int, *, inedites: bool = False, filtres: bool = True
 ) -> list[dict[str, Any]]:
     """Les séries collectées qu'aucun juge n'a encore notées sur ce barème.
 
@@ -205,6 +205,14 @@ async def works_a_noter(
     confort — ce sont celles dont les dossiers sont les plus fournis (Wikipédia,
     synopsis d'épisodes, visuels), donc celles qui apprennent le plus par appel
     payé. La longue traîne obscure viendra quand le barème tiendra.
+
+    `filtres` reprend les deux cases de la grille — affiche et descriptif — et
+    les rend obligatoires par défaut. Le descriptif exigé est **l'anglais**,
+    celui que lira le juge : sans lui le dossier n'a pas de section OVERVIEW,
+    la commande le refuserait comme « trop maigre » après avoir payé le
+    légendage, et la liste ne ressemblerait pas à ce que la grille montre à
+    réglages égaux. Une téléréalité sans synopsis anglais disparaît ainsi
+    d'elle-même, sans qu'on ait à juger les genres à sa place.
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
@@ -226,6 +234,16 @@ async def works_a_noter(
                     join tmdb_catalog c on c.id = r.source_id::int
                     where r.source = %(source)s and r.kind = %(kind)s
                       and r.http_status between 200 and 299 and r.payload is not null
+                      and (not %(filtres)s or (
+                          nullif(r.payload ->> 'poster_path', '') is not null
+                          and exists (
+                              select 1 from jsonb_array_elements(
+                                  coalesce(r.payload -> 'translations' -> 'translations',
+                                           '[]'::jsonb)) t
+                              where t ->> 'iso_639_1' = 'en'
+                                and nullif(btrim(t -> 'data' ->> 'overview'), '') is not null
+                          )
+                      ))
                     order by r.source_id, r.fetched_at desc
                 ) candidates
             ) vues
@@ -239,6 +257,7 @@ async def works_a_noter(
                 "kind": KIND_SERIES,
                 "rubric": rubric_version,
                 "inedites": inedites,
+                "filtres": filtres,
                 "limit": limit,
             },
         )
