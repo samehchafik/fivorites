@@ -136,7 +136,7 @@ make dev          # l'API (8182) et Vite (5173) côte à côte → http://localh
 make api          # l'API seule, rechargement à chaud
 make web-build    # construit ../front dans ../www
 make serve        # l'API sert le front → http://127.0.0.1:8182
-make test         # 88 tests
+make test         # 91 tests
 make lint         # ruff + tsc
 ```
 
