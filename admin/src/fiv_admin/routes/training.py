@@ -854,13 +854,18 @@ async def train_weights(
         )
 
     # Les embeddings de chaque œuvre notée, dossier reconstruit à l'identique.
+    # Les dossiers sont gardés : la régénération plus bas en a besoin, et les
+    # reconstruire une seconde fois doublait le nombre de requêtes — quatre
+    # par œuvre, dont deux qui ramènent des payloads volumineux.
     embedder = f"{settings.openai_embed_model}@{settings.embed_dimensions}"
     vectors: dict[int, list[float]] = {}
+    dossiers: dict[int, dict[str, Any]] = {}
     async with httpx.AsyncClient() as http:
         for id_tmdb in by_work:
             built = await build_dossier(conn, id_tmdb)
             if built is None:
                 continue
+            dossiers[id_tmdb] = built
             try:
                 vectors[id_tmdb] = await _embedding(conn, settings, http, built)
             except LlmError as exc:
@@ -971,7 +976,10 @@ async def train_weights(
         async with httpx.AsyncClient() as http:
             for entry in journaux:
                 id_tmdb = entry["id_tmdb"]
-                built = await build_dossier(conn, id_tmdb)
+                # Le dossier vient du tour précédent quand l'œuvre y était :
+                # c'est le cas de la quasi-totalité d'entre elles, puisqu'on
+                # régénère justement celles qui ont servi à entraîner.
+                built = dossiers.get(id_tmdb) or await build_dossier(conn, id_tmdb)
                 if built is None:
                     continue
                 vector = vectors.get(id_tmdb)
