@@ -49,9 +49,9 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
   })
   const rubrics = useQuery({ queryKey: ['rubrics'], queryFn: api.rubrics })
 
-  // Le rattrapage manuel : les légendes se créent d'elles-mêmes à la lecture
-  // du dossier, ce bouton ne sert qu'après une re-collecte qui aurait apporté
-  // de nouvelles images — ou quand la vision a échoué au premier passage.
+  // Le seul chemin vers les légendes : rien n'est déclenché par l'ouverture
+  // d'une fiche ni par une notation. Un appel de vision par œuvre coûte plus
+  // cher que la notation elle-même — ça se demande, ça ne s'impose pas.
   const caption = useMutation({
     mutationFn: () => api.captionWork(id),
     onSuccess: (result) => {
@@ -81,13 +81,13 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
               {dossier.data.sections.episodeCount} synopsis d'épisodes ·{' '}
               {dossier.data.sections.mediaLines > 0
                 ? `${dossier.data.sections.mediaLines} visuels légendés`
-                : 'aucun visuel à légender'}{' '}
+                : 'visuels non légendés'}{' '}
               · {dossier.data.sections.wikipediaChars > 0
                 ? 'Wikipédia en'
                 : 'pas de Wikipédia — enrichir aiderait'}
             </Text>
             <Tooltip
-              label="Les visuels se légendent d'eux-mêmes à la première lecture du dossier. Ce bouton rattrape le reste : images apportées par une re-collecte, ou modèle de vision indisponible au premier passage."
+              label="Décrit les backdrops et stills d'épisodes avec le modèle de vision, et fige le résultat : payé une fois, relu ensuite. Rien n'est légendé sans ce clic — un appel de vision par œuvre coûte plus cher que la notation."
               multiline
               w={300}
             >
@@ -98,7 +98,7 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
                 loading={caption.isPending}
                 onClick={() => caption.mutate()}
               >
-                Relégender
+                Légender les visuels
               </Button>
             </Tooltip>
           </Group>

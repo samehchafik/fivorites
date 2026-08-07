@@ -35,9 +35,10 @@ app.add_typer(training_app, name="training")
 def training_note(
     limit: Annotated[int, typer.Option("--limit", "-n", min=1, max=500)] = 10,
     bareme: Annotated[str | None, typer.Option("--bareme")] = None,
-    sans_legende: Annotated[bool, typer.Option("--sans-legende")] = False,
+    legendes: Annotated[bool, typer.Option("--legendes")] = False,
     inedites: Annotated[bool, typer.Option("--inedites")] = False,
     sans_filtre: Annotated[bool, typer.Option("--sans-filtre")] = False,
+    rejouer: Annotated[bool, typer.Option("--rejouer")] = False,
     apercu: Annotated[bool, typer.Option("--apercu")] = False,
     pause: Annotated[float, typer.Option("--pause", min=0.0)] = 0.0,
 ) -> None:
@@ -55,11 +56,18 @@ def training_note(
 
     Les œuvres déjà notées sur ce barème-ci sont sautées, donc relancer la
     commande continue le lot au lieu de le refaire : c'est un appel payant par
-    œuvre, et on ne paie jamais deux fois la même.
+    œuvre, et on ne paie jamais deux fois la même. `--rejouer` lève cette
+    protection et reprend tout — après un prompt corrigé ou des légendes
+    ajoutées. Rien n'est écrasé : le nouvel essai s'empile à côté de l'ancien
+    dans le journal, et c'est le plus récent que l'atelier montre.
 
     La liste exige une affiche ; `--sans-filtre` lève cette condition. Le
     descriptif n'entre pas dans le filtre : le champ est mal calibré pour cet
     usage, et c'est la taille du dossier assemblé qui décide en aval.
+
+    `--legendes` ajoute la description des visuels au dossier — un appel de
+    vision par œuvre, plus cher que la notation elle-même. Éteint par défaut :
+    on règle d'abord le barème sur du texte, on paie l'image ensuite.
 
     `--apercu` montre la liste et le coût estimé sans rien appeler. À utiliser
     la première fois : c'est la seule façon de voir ce qu'on s'apprête à payer.
@@ -104,7 +112,12 @@ def training_note(
             version, prompt, axes = row
 
             candidates = await works_a_noter(
-                conn, version, limit, inedites=inedites, filtres=not sans_filtre
+                conn,
+                version,
+                limit,
+                inedites=inedites,
+                filtres=not sans_filtre,
+                rejouer=rejouer,
             )
             if not candidates:
                 typer.echo(f"aucune série à noter sur le barème {version} — tout est déjà jugé.")
@@ -127,8 +140,8 @@ def training_note(
                 # légendes varient d'une série à l'autre. Assez pour décider.
                 typer.echo(
                     f"\naperçu seul, rien n'a été appelé — coût estimé "
-                    f"~{len(candidates) * 0.004:.2f} $ "
-                    f"({'légendes comprises' if not sans_legende else 'sans légendes'})"
+                    f"~{len(candidates) * (0.004 if legendes else 0.001):.2f} $ "
+                    f"({'légendes comprises' if legendes else 'sans légendes'})"
                 )
                 return 0
 
@@ -143,7 +156,7 @@ def training_note(
                         rubric_version=version,
                         prompt=prompt,
                         axes=axes,
-                        captions=not sans_legende,
+                        captions=legendes,
                     )
                 except DossierMaigre as exc:
                     typer.echo(f"  {n:3d}/{len(candidates)} ⨯ {titre} — {exc}")

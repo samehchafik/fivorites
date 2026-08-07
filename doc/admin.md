@@ -240,7 +240,12 @@ pour v2, avec la mention « déjà v1 » pour que ça se lise. `--inedites`
 restreint aux œuvres jamais jugées, quand on cherche à élargir le catalogue
 plutôt qu'à compléter un barème.
 
-La liste exige une **affiche** ; `--sans-filtre` lève cette condition. Le
+La liste exige une **affiche** ; `--sans-filtre` lève cette condition.
+`--rejouer` reprend aussi les œuvres déjà notées sur le barème — utile après
+un prompt corrigé ; rien n'est écrasé, le nouvel essai s'empile dans le
+journal. Les légendes visuelles ne sont **pas** générées par défaut :
+`--legendes` les demande, et ouvrir une fiche dans l'atelier ne déclenche
+aucune dépense — c'est le bouton « Légender les visuels » qui la déclenche. Le
 descriptif n'entre pas dans le filtre : le champ est présent ou absent selon la
 langue interrogée, donc mal calibré pour trancher — c'est la taille du dossier
 assemblé qui décide en aval.

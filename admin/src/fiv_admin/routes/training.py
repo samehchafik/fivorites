@@ -184,7 +184,13 @@ async def _auto_captions(conn: Any, settings: Any, work_id: int) -> None:
 
 
 async def works_a_noter(
-    conn: Any, rubric_version: str, limit: int, *, inedites: bool = False, filtres: bool = True
+    conn: Any,
+    rubric_version: str,
+    limit: int,
+    *,
+    inedites: bool = False,
+    filtres: bool = True,
+    rejouer: bool = False,
 ) -> list[dict[str, Any]]:
     """Les séries collectées qu'aucun juge n'a encore notées sur ce barème.
 
@@ -199,6 +205,12 @@ async def works_a_noter(
     ne nourrit pas le suivant. Une œuvre déjà jugée en v1 reste donc candidate
     pour v2, et la colonne `deja` le dit ; `inedites` restreint aux œuvres
     sans aucun essai, quand on cherche à élargir plutôt qu'à compléter.
+
+    `rejouer` lève cette exclusion et reprend tout, essais compris. Le journal
+    étant fait d'ajouts, rien n'est écrasé : le nouvel essai s'empile à côté
+    de l'ancien, et c'est le plus récent que l'atelier montre. C'est ainsi
+    qu'on rejoue un lot après avoir corrigé un prompt ou ajouté les légendes,
+    sans avoir à vider quoi que ce soit — mais chaque œuvre est repayée.
 
     L'ordre est celui du catalogue : popularité d'abord, note des votants pour
     départager. Entraîner sur les œuvres les plus vues n'est pas un biais de
@@ -238,7 +250,7 @@ async def works_a_noter(
                     order by r.source_id, r.fetched_at desc
                 ) candidates
             ) vues
-            where not (%(rubric)s = any (coalesce(deja, '{}')))
+            where (%(rejouer)s or not (%(rubric)s = any (coalesce(deja, '{}'))))
               and (not %(inedites)s or deja is null)
             order by popularity desc nulls last, note desc nulls last
             limit %(limit)s
@@ -249,6 +261,7 @@ async def works_a_noter(
                 "rubric": rubric_version,
                 "inedites": inedites,
                 "filtres": filtres,
+                "rejouer": rejouer,
                 "limit": limit,
             },
         )
@@ -279,7 +292,7 @@ async def note_work(
     rubric_version: str,
     prompt: str,
     axes: list[str],
-    captions: bool = True,
+    captions: bool = False,
 ) -> dict[str, Any]:
     """Note une œuvre et journalise l'essai — le chemin commun au bouton et au lot.
 
@@ -293,8 +306,11 @@ async def note_work(
     HTTP, le lot saute l'œuvre et poursuit.
     """
     if captions:
-        # Les légendes avant le dossier : le juge doit lire la section MEDIA,
-        # pas découvrir qu'elle manquait une fois la note rendue.
+        # Quand on les demande, les légendes passent AVANT le dossier : le juge
+        # doit lire la section MEDIA, pas découvrir qu'elle manquait une fois
+        # la note rendue. Éteint par défaut — un appel de vision par œuvre
+        # coûte plus cher que la notation elle-même, et l'entraînement se règle
+        # d'abord sur du texte.
         await _auto_captions(conn, settings, id_tmdb)
 
     built = await build_dossier(conn, id_tmdb)
@@ -375,8 +391,10 @@ async def note_work(
 
 
 @router.get("/training/works/{work_id}/dossier")
-async def dossier(user: CurrentUser, conn: Conn, settings: Config, work_id: int) -> dict[str, Any]:
-    await _auto_captions(conn, settings, work_id)
+async def dossier(user: CurrentUser, conn: Conn, work_id: int) -> dict[str, Any]:
+    """Le dossier tel qu'il est en base — aucune dépense déclenchée par une
+    simple lecture. Les légendes visuelles se demandent explicitement, par le
+    bouton : ouvrir une fiche ne doit jamais coûter un appel de vision."""
     built = await build_dossier(conn, work_id)
     if built is None:
         raise HTTPException(

@@ -21,7 +21,6 @@ from fiv_admin import routes
 from fiv_admin.app import create_app
 from fiv_admin.config import Settings
 from fiv_admin.dossier import build_dossier
-from fiv_admin.llm import LlmError
 from fiv_admin.security import hash_password
 from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
@@ -604,48 +603,47 @@ async def test_le_dossier_integre_saisons_et_legendes(conn: psycopg.AsyncConnect
     assert built["sections"]["mediaLines"] == 2
 
 
-async def test_le_dossier_legende_les_visuels_manquants_tout_seul(
+async def test_lire_un_dossier_ne_declenche_aucune_depense(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """La donnée visuelle ne bouge pas : la légende se crée à la première
-    lecture du dossier, puis se relit — sans qu'on ait rien à cliquer."""
+    """Ouvrir une fiche ne coûte rien. Le légendage a été automatique un
+    temps ; sur un catalogue de cette taille, la facture montait pendant la
+    simple consultation. Il se demande maintenant, il ne s'impose plus."""
     appels: list[int] = []
 
     async def fake_caption(http, *, api_key, model, images):
         appels.append(len(images))
-        return {
-            "model": "gpt-vision-test",
-            "captions": [f"dark moody frame ({image['label']})" for image in images],
-        }
-
-    monkeypatch.setattr(routes.training, "caption_openai", fake_caption)
-
-    premier = await client.get("/api/training/works/1399/dossier")
-    assert premier.status_code == 200
-    assert "dark moody frame (backdrop 1)" in premier.json()["text"]
-    assert premier.json()["sections"]["mediaLines"] == 7
-    assert appels == [7]
-
-    second = await client.get("/api/training/works/1399/dossier")
-    assert second.json()["sha256"] == premier.json()["sha256"], "même dossier, même empreinte"
-    assert appels == [7], "les légendes sont relues, jamais repayées"
-
-
-async def test_le_dossier_se_lit_meme_si_la_vision_echoue(
-    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Un modèle de vision en panne ne doit pas rendre une série innotable :
-    le dossier se construit, simplement sans section MEDIA."""
-
-    async def fake_caption(http, *, api_key, model, images):
-        raise LlmError("OpenAI vision 500 : boom")
+        return {"model": "gpt-vision-test", "captions": ["frame"] * len(images)}
 
     monkeypatch.setattr(routes.training, "caption_openai", fake_caption)
 
     reponse = await client.get("/api/training/works/1399/dossier")
+
     assert reponse.status_code == 200
+    assert appels == [], "lire un dossier ne doit appeler aucun modèle de vision"
     assert reponse.json()["sections"]["mediaLines"] == 0
-    assert "MEDIA (" not in reponse.json()["text"]
+
+
+async def test_noter_ne_legende_pas_sans_qu_on_le_demande(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Même règle pour la notation : le juge lit ce qui est en base, et le
+    visuel n'entre au dossier que si on a payé pour l'y mettre."""
+    appels: list[int] = []
+
+    async def fake_caption(http, *, api_key, model, images):
+        appels.append(len(images))
+        return {"model": "gpt-vision-test", "captions": ["frame"] * len(images)}
+
+    monkeypatch.setattr(routes.training, "caption_openai", fake_caption)
+
+    essai = await client.post(
+        "/api/training/phase1",
+        json={"id": 1399, "rubricVersion": "v1", "prompt": "p" * 60, "axes": AXES},
+    )
+
+    assert essai.status_code == 200
+    assert appels == [], "noter ne doit pas déclencher de légendage"
 
 
 async def test_legender_paye_une_fois_puis_relit(
