@@ -115,8 +115,18 @@ lire.
 ?id=1399                            ouvre la fiche de la série 1399
 ?lang=ar-SA                         choisit la langue
 ?filtre=image,description           coche les deux cases et applique les filtres
-?id=1399&lang=ar-SA&filtre=image    les trois
+?tri=note:desc                      trie par note décroissante
+?puis=popularite:desc               départage à valeur égale
+?puis=aucun                         retire le départage
+?id=1399&onglet=training1           la fiche, ouverte sur l'atelier Training 1
+?id=1399&lang=ar-SA&filtre=image    plusieurs à la fois
 ```
+
+Les noms des tris se tapent comme ils se lisent — `date`, `annee`, `titre`,
+`note`, `popularite`, `collecte` — et le sens est facultatif : `?tri=note` vaut
+`?tri=note:desc`, parce que « les mieux notées » est ce qu'on veut neuf fois sur
+dix. `puis=aucun` existe parce que le défaut *a* un départage : sans mot pour
+dire son absence, l'avoir retiré ne survivrait pas au partage du lien.
 
 L'URL est **la source au chargement**, puis l'état la réécrit : la barre
 d'adresse est donc toujours copiable telle quelle, et une URL collée dans une

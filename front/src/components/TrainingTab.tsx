@@ -10,15 +10,13 @@ import {
   Select,
   Stack,
   Table,
-  Tabs,
   Text,
   Textarea,
   TextInput,
-  Title,
   Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconArrowLeft, IconCopy, IconPlayerPlay, IconScale, IconSchool } from '@tabler/icons-react'
+import { IconCopy, IconPhotoScan, IconPlayerPlay } from '@tabler/icons-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
@@ -26,7 +24,8 @@ import { ApiError, api } from '../api'
 import type { AxisScore, Gaps, Phase1Result, Phase2Result, Rubric } from '../types'
 
 /**
- * L'atelier d'entraînement de la notation. Deux phases, une même page.
+ * L'atelier d'entraînement de la notation — le contenu des onglets Training 1
+ * et Training 2 de la fiche série. Un onglet par phase, une même mécanique.
  *
  * **Training 1 — stabiliser le barème.** Le prompt s'édite à droite, le
  * dossier se lit à gauche, et un clic envoie la même consigne à deux juges :
@@ -40,16 +39,8 @@ import type { AxisScore, Gaps, Phase1Result, Phase2Result, Rubric } from '../typ
  * forte → le bouton « Réentraîner » refait les poids sur tout l'historique ;
  * divergence au niveau du bruit → les poids tiennent, on continue.
  */
-export function TrainingPage({
-  id,
-  phase,
-  onBack,
-}: {
-  id: number
-  phase: 1 | 2
-  onBack: () => void
-}) {
-  const [tab, setTab] = useState<'1' | '2'>(phase === 2 ? '2' : '1')
+export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
+  const queryClient = useQueryClient()
 
   const dossier = useQuery({
     queryKey: ['training-dossier', id],
@@ -58,26 +49,58 @@ export function TrainingPage({
   })
   const rubrics = useQuery({ queryKey: ['rubrics'], queryFn: api.rubrics })
 
+  // Les légendes visuelles : payées une fois, figées en base, relues par le
+  // dossier — d'où l'invalidation, qui fait apparaître la section MEDIA.
+  const caption = useMutation({
+    mutationFn: () => api.captionWork(id),
+    onSuccess: (result) => {
+      notifications.show({
+        color: 'teal',
+        title: 'Visuels légendés',
+        message:
+          result.captioned > 0
+            ? `${result.captioned} image(s) décrites par ${result.model}` +
+              (result.already > 0 ? `, ${result.already} déjà en base.` : '.')
+            : `Les ${result.already} images étaient déjà légendées — rien à payer.`,
+      })
+      void queryClient.invalidateQueries({ queryKey: ['training-dossier', id] })
+    },
+    onError: (error: Error) =>
+      notifications.show({ color: 'red', title: 'Légende impossible', message: error.message }),
+  })
+
   return (
     <Stack gap="md">
       <Group justify="space-between" wrap="nowrap">
-        <Group gap="sm" wrap="nowrap">
-          <Button variant="default" leftSection={<IconArrowLeft size={16} />} onClick={onBack}>
-            Catalogue
-          </Button>
-          <Title order={4} lineClamp={1}>
-            {dossier.data?.title ?? `Série ${id}`}
-          </Title>
-          <Badge variant="light">#{id}</Badge>
-        </Group>
+        <Badge variant="light">#{id}</Badge>
         {dossier.data && (
-          <Text size="sm" c="dimmed">
-            dossier {dossier.data.chars.toLocaleString('fr-FR')} caractères ·{' '}
-            {dossier.data.sections.episodeCount} synopsis d'épisodes ·{' '}
-            {dossier.data.sections.wikipediaChars > 0
-              ? 'Wikipédia en'
-              : 'pas de Wikipédia — enrichir aiderait'}
-          </Text>
+          <Group gap="sm" wrap="nowrap">
+            <Text size="sm" c="dimmed">
+              dossier {dossier.data.chars.toLocaleString('fr-FR')} caractères ·{' '}
+              {dossier.data.sections.episodeCount} synopsis d'épisodes ·{' '}
+              {dossier.data.sections.mediaLines > 0
+                ? `${dossier.data.sections.mediaLines} visuels légendés`
+                : 'visuels non légendés'}{' '}
+              · {dossier.data.sections.wikipediaChars > 0
+                ? 'Wikipédia en'
+                : 'pas de Wikipédia — enrichir aiderait'}
+            </Text>
+            <Tooltip
+              label="Décrit les backdrops et stills d'épisodes avec le modèle de vision, une fois pour toutes — la section MEDIA du dossier."
+              multiline
+              w={280}
+            >
+              <Button
+                size="compact-sm"
+                variant="default"
+                leftSection={<IconPhotoScan size={14} />}
+                loading={caption.isPending}
+                onClick={() => caption.mutate()}
+              >
+                Légender les visuels
+              </Button>
+            </Tooltip>
+          </Group>
         )}
       </Group>
 
@@ -93,28 +116,16 @@ export function TrainingPage({
         </Alert>
       )}
 
-      <Tabs value={tab} onChange={(next) => next && setTab(next as '1' | '2')}>
-        <Tabs.List mb="md">
-          <Tabs.Tab value="1" leftSection={<IconSchool size={16} />}>
-            Training 1 — le barème
-          </Tabs.Tab>
-          <Tabs.Tab value="2" leftSection={<IconScale size={16} />}>
-            Training 2 — les poids
-          </Tabs.Tab>
-        </Tabs.List>
-
-        <Tabs.Panel value="1">
-          <Phase1
-            id={id}
-            dossierText={dossier.data?.text}
-            rubrics={rubrics.data ?? []}
-            loading={rubrics.isLoading || dossier.isLoading}
-          />
-        </Tabs.Panel>
-        <Tabs.Panel value="2">
-          <Phase2 id={id} rubrics={rubrics.data ?? []} />
-        </Tabs.Panel>
-      </Tabs>
+      {phase === 1 ? (
+        <Phase1
+          id={id}
+          dossierText={dossier.data?.text}
+          rubrics={rubrics.data ?? []}
+          loading={rubrics.isLoading || dossier.isLoading}
+        />
+      ) : (
+        <Phase2 id={id} rubrics={rubrics.data ?? []} />
+      )}
     </Stack>
   )
 }

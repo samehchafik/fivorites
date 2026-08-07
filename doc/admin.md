@@ -159,21 +159,29 @@ complète serait le contraire de ce que ce tableau de bord mesure.
 ?id=1399                            ouvre la fiche de la série 1399
 ?lang=ar-SA                         choisit la langue
 ?filtre=image,description           coche les deux cases et applique les filtres
+?tri=note:desc&puis=popularite:desc les deux critères de tri, et leur sens
+?id=1399&onglet=training1           ouvre la fiche directement sur l'atelier Training 1
 ```
+
+Les noms se tapent comme ils se lisent (`date`, `annee`, `titre`, `note`,
+`popularite`, `collecte`), le sens est facultatif — `?tri=note` vaut
+`?tri=note:desc` —, une valeur inconnue est ignorée plutôt que transmise, et
+`?puis=aucun` retire le départage que le défaut applique.
 
 L'URL est la source au chargement, puis l'état la réécrit : une adresse collée
 dans une conversation rouvre exactement la même vue, cases cochées comprises.
 
 ## 5. L'API
 
-Onze routes, plus `/api/health` que le healthcheck de Docker interroge.
-Toutes exigent la session, sauf ces deux-là.
+Onze routes pour le suivi de la collecte, plus `/api/health` que le healthcheck
+de Docker interroge. Toutes exigent la session, sauf ces deux-là. L'atelier
+d'entraînement de la notation ajoute les siennes sous `/api/training`.
 
 | Route | Rôle |
 |---|---|
-| `POST /api/login` | ouvre la session (cookie signé, `HttpOnly`, `SameSite=Strict`) |
-| `POST /api/logout` | la referme |
-| `GET /api/me` | le compte courant — revérifié en base à chaque requête |
+| `POST /api/auth/login` | ouvre la session (cookie signé, `HttpOnly`, `SameSite=Strict`) |
+| `POST /api/auth/logout` | la referme |
+| `GET /api/auth/me` | le compte courant — revérifié en base à chaque requête |
 | `GET /api/meta` | les langues, les univers, les tris disponibles |
 | `GET /api/acquisition/summary` | les chiffres de tête (cache serveur d'une minute) |
 | `GET /api/acquisition/items` | le tableau d'avancement — `lang`, `media`, `status`, `search`, `sort`, `page` |

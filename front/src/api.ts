@@ -1,5 +1,6 @@
 import type {
   Account,
+  CaptionResult,
   CardsResponse,
   Detail,
   Dossier,
@@ -106,6 +107,11 @@ export const api = {
   trainingDossier: (id: number) => request<Dossier>(`/api/training/works/${id}/dossier`),
 
   trainingScores: (id: number) => request<StoredScore[]>(`/api/training/works/${id}/scores`),
+
+  /** Légende les visuels (backdrops + stills) via le modèle de vision, une
+   *  fois pour toutes : les images déjà légendées ne sont jamais repayées. */
+  captionWork: (id: number) =>
+    request<CaptionResult>(`/api/training/works/${id}/captions`, { method: 'POST' }),
 
   rubrics: () => request<Rubric[]>('/api/training/rubrics'),
 

@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { ApiError, api } from '../api'
 import { formatNumber } from '../display'
-import type { Account, CardsResponse, ItemsResponse, Meta, Summary } from '../types'
+import type { Account, CardsResponse, ItemsResponse, Meta, ModalTab, Summary } from '../types'
 import { readUrl, writeUrl } from '../urlState'
 import { AcquisitionTable } from './AcquisitionTable'
 import { DetailDrawer } from './DetailDrawer'
@@ -31,7 +31,6 @@ import { LanguagePicker } from './LanguagePicker'
 import { SeriesGrid, type GridState } from './SeriesGrid'
 import { SeriesModal } from './SeriesModal'
 import { SummaryCards } from './SummaryCards'
-import { TrainingPage } from './TrainingPage'
 
 const DEFAULT_FILTERS: FilterState = {
   status: 'all',
@@ -92,16 +91,22 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
 
   const [grid, setGrid] = useState<GridState>({
     ...DEFAULT_GRID,
+    // `?tri=note:desc&puis=aucun` : chaque critère absent de l'URL garde le
+    // défaut, chacun présent le remplace. `puis=aucun` est le seul moyen de
+    // dire « pas de départage » — sans lui, retirer le second critère ne
+    // survivrait pas au partage du lien.
+    ...(depuisUrl.tri && { sort: depuisUrl.tri.cle, order: depuisUrl.tri.sens }),
+    ...(depuisUrl.puis && { sort2: depuisUrl.puis.cle, order2: depuisUrl.puis.sens }),
     withPoster: depuisUrl.withPoster,
     withOverview: depuisUrl.withOverview,
   })
   const [gridPage, setGridPage] = useState(1)
   const [modalId, setModalId] = useState<number | null>(depuisUrl.id)
 
-  // L'atelier d'entraînement de la notation. Il remplace tout le contenu tant
-  // qu'il est ouvert : c'est une page de travail, pas une fenêtre par-dessus
-  // la grille — on y passe du temps, on y revient, on compare.
-  const [training, setTraining] = useState<{ id: number; phase: 1 | 2 } | null>(null)
+  // L'onglet de la fiche : présentation, ou l'un des deux ateliers
+  // d'entraînement de la notation. Dans l'URL comme la fiche elle-même —
+  // `?id=1399&onglet=training1` rouvre l'atelier, pas seulement la série.
+  const [modalTab, setModalTab] = useState<ModalTab>(depuisUrl.onglet)
 
   // Une frappe ne doit pas lancer une requête par caractère sur 228 000 lignes.
   const [tableSearch] = useDebouncedValue(filters.search, 350)
@@ -112,11 +117,24 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   useEffect(() => {
     writeUrl({
       id: modalId,
+      onglet: modalTab,
       lang,
+      tri: { cle: grid.sort, sens: grid.order },
+      puis: { cle: grid.sort2, sens: grid.order2 },
       withPoster: grid.withPoster,
       withOverview: grid.withOverview,
     })
-  }, [modalId, lang, grid.withPoster, grid.withOverview])
+  }, [
+    modalId,
+    modalTab,
+    lang,
+    grid.sort,
+    grid.order,
+    grid.sort2,
+    grid.order2,
+    grid.withPoster,
+    grid.withOverview,
+  ])
 
   const meta = useQuery<Meta>({ queryKey: ['meta'], queryFn: api.meta, staleTime: 5 * 60_000 })
   const available = meta.data?.media.find((entry) => entry.key === media)
@@ -329,13 +347,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       </AppShell.Header>
 
       <AppShell.Main>
-        {training ? (
-          <TrainingPage
-            id={training.id}
-            phase={training.phase}
-            onBack={() => setTraining(null)}
-          />
-        ) : available && !available.available ? (
+        {available && !available.available ? (
           <Alert
             color="yellow"
             variant="light"
@@ -361,8 +373,16 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
                 lang={lang}
                 page={gridPage}
                 onPage={setGridPage}
-                onOpen={setModalId}
-                onTraining={(id, phase) => setTraining({ id, phase })}
+                onOpen={(id) => {
+                  setModalId(id)
+                  setModalTab('presentation')
+                }}
+                onTraining={(id, phase) => {
+                  // Le même geste que l'ouverture, un onglet plus loin : les
+                  // ateliers vivent dans la fiche, pas dans une page à part.
+                  setModalId(id)
+                  setModalTab(phase === 1 ? 'training1' : 'training2')
+                }}
                 onRefreshProjection={() => refresh.mutate()}
                 refreshing={refresh.isPending}
               />
@@ -425,17 +445,16 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
 
       <SeriesModal
         id={modalId}
+        tab={modalTab}
         lang={lang}
         languages={languages}
         onLang={setLang}
-        onClose={() => setModalId(null)}
-        onTraining={(phase) => {
-          // La fiche se ferme quand l'atelier s'ouvre : deux surfaces de
-          // travail empilées, c'est celle du dessous qu'on croit cassée.
-          if (modalId !== null) {
-            setTraining({ id: modalId, phase })
-            setModalId(null)
-          }
+        onTab={setModalTab}
+        onClose={() => {
+          setModalId(null)
+          // La prochaine fiche s'ouvrira sur sa présentation : l'onglet
+          // d'entraînement appartient à une série, pas à la session.
+          setModalTab('presentation')
         }}
       />
 

@@ -7,6 +7,7 @@
  *     ?id=1399
  *     ?filtre=image,description
  *     ?lang=ar-SA
+ *     ?tri=note:desc&puis=popularite:desc
  *     ?id=1399&lang=ar-SA&filtre=description
  *
  * Le sens de la lecture compte : **l'URL est la source**, l'état de
@@ -30,11 +31,74 @@ const FILTRES = {
   description: 'withOverview',
 } as const
 
+/** Les noms des tris dans l'URL, et leur clé côté API. Même parti pris que les
+ *  filtres : `?tri=note:desc` se lit, `?sort=rating&order=desc` se décode. */
+const TRIS = {
+  date: 'air_date',
+  annee: 'air_year',
+  titre: 'name',
+  note: 'rating',
+  popularite: 'popularity',
+  collecte: 'fetched',
+} as const
+
+type NomDeTri = keyof typeof TRIS
+
+const CLE_VERS_NOM = Object.fromEntries(
+  Object.entries(TRIS).map(([nom, cle]) => [cle, nom]),
+) as Record<string, NomDeTri>
+
+/** La valeur qui dit « pas de second critère ».
+ *
+ *  Elle doit exister : le défaut de l'application *a* un second critère (la
+ *  popularité). Sans mot pour dire son absence, l'avoir retiré ne survivrait
+ *  pas au partage de l'URL — le destinataire retomberait sur le défaut. */
+const AUCUN = 'aucun'
+
+export interface Tri {
+  /** La clé d'API (`air_year`, `rating`…), ou `''` pour « aucun ». */
+  cle: string
+  sens: 'asc' | 'desc'
+}
+
+/** `note:desc` → `{ cle: 'rating', sens: 'desc' }`. Un nom inconnu rend null :
+ *  `?tri=nimportequoi` laisse le défaut plutôt que d'envoyer l'API en 422. */
+function lireTri(valeur: string | null, aucunPermis = false): Tri | null {
+  if (valeur === null) return null
+  const [nom, sens] = valeur.split(':')
+  if (aucunPermis && nom === AUCUN) return { cle: '', sens: 'desc' }
+  if (!(nom in TRIS)) return null
+  return {
+    cle: TRIS[nom as NomDeTri],
+    // Le sens est facultatif : `?tri=note` se tape plus vite que
+    // `?tri=note:desc`, et « les mieux notées » est ce qu'on veut neuf fois
+    // sur dix. Seul `asc` renverse.
+    sens: sens === 'asc' ? 'asc' : 'desc',
+  }
+}
+
+function ecrireTri(tri: Tri): string {
+  if (!tri.cle) return AUCUN
+  return `${CLE_VERS_NOM[tri.cle] ?? tri.cle}:${tri.sens}`
+}
+
+/** Les onglets de la fiche, tels qu'ils s'écrivent dans l'URL. `presentation`
+ *  est le défaut et ne s'écrit pas : `?id=1399` ouvre la fiche, et seul
+ *  `?id=1399&onglet=training1` a quelque chose à préciser. */
+const ONGLETS = ['presentation', 'training1', 'training2'] as const
+type Onglet = (typeof ONGLETS)[number]
+
 export interface UrlState {
   /** La fiche à ouvrir, ou null. */
   id: number | null
+  /** L'onglet de la fiche — n'a de sens qu'avec `id`. */
+  onglet: Onglet
   /** La langue choisie, ou null pour garder celle par défaut. */
   lang: string | null
+  /** Le tri principal, ou null pour garder celui par défaut. */
+  tri: Tri | null
+  /** Le départage — `cle: ''` veut dire « aucun », explicitement. */
+  puis: Tri | null
   withPoster: boolean
   withOverview: boolean
 }
@@ -60,9 +124,16 @@ export function readUrl(search = window.location.search): UrlState {
 
   const lang = params.get('lang')
 
+  // Un onglet inconnu retombe sur la présentation, comme un tri inconnu garde
+  // le défaut : une URL abîmée ouvre quelque chose plutôt que rien.
+  const onglet = params.get('onglet')
+
   return {
     id: Number.isInteger(id) && id > 0 ? id : null,
+    onglet: ONGLETS.includes(onglet as Onglet) ? (onglet as Onglet) : 'presentation',
     lang: lang !== null && CODE_LANGUE.test(lang) ? lang : null,
+    tri: lireTri(params.get('tri')),
+    puis: lireTri(params.get('puis'), true),
     withPoster: actifs.includes('image'),
     withOverview: actifs.includes('description'),
   }
@@ -70,12 +141,17 @@ export function readUrl(search = window.location.search): UrlState {
 
 export function writeUrl(state: UrlState, replace = true): void {
   // On repart des paramètres existants : ceux qu'on ne connaît pas — un
-  // `?utm_source`, un futur `?tri` — n'ont pas à disparaître parce qu'on a
+  // `?utm_source`, un futur `?vue` — n'ont pas à disparaître parce qu'on a
   // coché une case.
   const params = new URLSearchParams(window.location.search)
 
   if (state.id !== null) params.set('id', String(state.id))
   else params.delete('id')
+
+  // L'onglet n'existe qu'attaché à une fiche, et la présentation est le
+  // défaut : dans les deux cas, rien à écrire.
+  if (state.id !== null && state.onglet !== 'presentation') params.set('onglet', state.onglet)
+  else params.delete('onglet')
 
   // La langue est toujours écrite, même quand c'est celle par défaut : une URL
   // partagée doit ouvrir la même vue chez l'autre, y compris si son défaut
@@ -83,18 +159,28 @@ export function writeUrl(state: UrlState, replace = true): void {
   if (state.lang !== null) params.set('lang', state.lang)
   else params.delete('lang')
 
+  // Les deux tris sont toujours écrits, comme la langue et pour la même
+  // raison : une URL partagée doit ouvrir la même vue chez l'autre, y compris
+  // le jour où le défaut de l'application changera.
+  if (state.tri !== null) params.set('tri', ecrireTri(state.tri))
+  else params.delete('tri')
+
+  if (state.puis !== null) params.set('puis', ecrireTri(state.puis))
+  else params.delete('puis')
+
   const filtres = (Object.keys(FILTRES) as (keyof typeof FILTRES)[]).filter(
     (nom) => state[FILTRES[nom]],
   )
   if (filtres.length > 0) params.set('filtre', filtres.join(','))
   else params.delete('filtre')
 
-  // `URLSearchParams` encode la virgule en `%2C`. Elle est pourtant légale
-  // telle quelle dans une chaîne de requête (RFC 3986, sous-délimiteur), et
-  // `?filtre=image,description` se lit et se retape, contrairement à
-  // `?filtre=image%2Cdescription`. On la remet en clair : c'est la même URL
-  // pour le serveur, une URL utilisable pour un humain.
-  const query = params.toString().replace(/%2C/g, ',')
+  // `URLSearchParams` encode la virgule en `%2C` et le deux-points en `%3A`.
+  // Les deux sont pourtant légaux tels quels dans une chaîne de requête
+  // (RFC 3986, sous-délimiteurs), et `?filtre=image,description&tri=note:desc`
+  // se lit et se retape, contrairement à sa version encodée. On les remet en
+  // clair : c'est la même URL pour le serveur, une URL utilisable pour un
+  // humain.
+  const query = params.toString().replace(/%2C/g, ',').replace(/%3A/g, ':')
   const url = query ? `${window.location.pathname}?${query}` : window.location.pathname
 
   // Rien à faire si l'URL ne change pas : `replaceState` à chaque rendu

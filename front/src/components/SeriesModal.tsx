@@ -5,7 +5,6 @@ import {
   Avatar,
   Badge,
   Box,
-  Button,
   Center,
   Divider,
   Group,
@@ -25,6 +24,7 @@ import {
   IconAlertTriangle,
   IconDeviceTv,
   IconExternalLink,
+  IconId,
   IconPhoto,
   IconScale,
   IconSchool,
@@ -36,8 +36,9 @@ import { useEffect, useState } from 'react'
 
 import { api, tmdbImage } from '../api'
 import { POSTER_FALLBACK, formatDate, formatNumber } from '../display'
-import type { Language, Work } from '../types'
+import type { Language, ModalTab, Work } from '../types'
 import { SeasonPanel } from './SeasonPanel'
+import { TrainingTab } from './TrainingTab'
 import { WatchPanel } from './WatchPanel'
 
 /**
@@ -58,23 +59,26 @@ const CROIX = { close: { marginRight: 'var(--mantine-spacing-md)' } }
 
 export function SeriesModal({
   id,
+  tab,
   lang,
   languages,
   onLang,
+  onTab,
   onClose,
-  onTraining,
 }: {
   id: number | null
+  /** L'onglet affiché — présentation ou l'un des deux ateliers. L'état vit
+   *  chez le parent parce qu'il vit dans l'URL : `?id=1399&onglet=training1`
+   *  rouvre la fiche directement sur l'atelier. */
+  tab: ModalTab
   lang: string
   languages: Language[]
   /** Changer de langue depuis la fiche change la langue de toute
    *  l'application : c'est la même donnée, et deux langues courantes
    *  différentes selon l'écran seraient impossibles à tenir dans l'URL. */
   onLang: (code: string) => void
+  onTab: (tab: ModalTab) => void
   onClose: () => void
-  /** Ouvre l'atelier d'entraînement — la fiche se ferme, l'atelier prend
-   *  l'écran : le parent orchestre, la fiche ne fait que demander. */
-  onTraining: (phase: 1 | 2) => void
 }) {
   const [openSeason, setOpenSeason] = useState<string | null>(null)
   // Le visuel agrandi, s'il y en a un. Un seul état pour toute la fiche : les
@@ -123,7 +127,29 @@ export function SeriesModal({
         </Box>
       )}
 
+      {/* Trois onglets de premier niveau : la présentation (la fiche telle
+          qu'elle était), puis les deux ateliers d'entraînement de la notation.
+          `keepMounted={false}` : ouvrir la fiche ne déclenche pas la
+          construction du dossier de notation tant qu'on ne va pas l'y chercher. */}
       {data && (
+        <Tabs
+          value={tab}
+          onChange={(next) => next && onTab(next as ModalTab)}
+          keepMounted={false}
+        >
+          <Tabs.List px="lg" pt="xs">
+            <Tabs.Tab value="presentation" leftSection={<IconId size={16} />}>
+              {data.name ?? `Série ${data.id}`}
+            </Tabs.Tab>
+            <Tabs.Tab value="training1" leftSection={<IconSchool size={16} />}>
+              Training 1
+            </Tabs.Tab>
+            <Tabs.Tab value="training2" leftSection={<IconScale size={16} />}>
+              Training 2
+            </Tabs.Tab>
+          </Tabs.List>
+
+          <Tabs.Panel value="presentation">
         <Stack gap={0}>
           {backdrop && (
             <Box
@@ -186,29 +212,6 @@ export function SeriesModal({
                       {genre}
                     </Badge>
                   ))}
-                </Group>
-
-                {/* L'atelier de notation, aussi accessible depuis la fiche :
-                    c'est ici qu'on juge si une série vaut un entraînement —
-                    synopsis, saisons, langues — autant pouvoir y aller
-                    directement. */}
-                <Group gap={6}>
-                  <Button
-                    size="compact-xs"
-                    variant="default"
-                    leftSection={<IconSchool size={13} />}
-                    onClick={() => onTraining(1)}
-                  >
-                    Training 1
-                  </Button>
-                  <Button
-                    size="compact-xs"
-                    variant="default"
-                    leftSection={<IconScale size={13} />}
-                    onClick={() => onTraining(2)}
-                  >
-                    Training 2
-                  </Button>
                 </Group>
 
                 <Text size="sm" dir="auto">
@@ -481,6 +484,15 @@ export function SeriesModal({
             </Tabs.Panel>
           </Tabs>
         </Stack>
+          </Tabs.Panel>
+
+          <Tabs.Panel value="training1" p="lg">
+            <TrainingTab id={data.id} phase={1} />
+          </Tabs.Panel>
+          <Tabs.Panel value="training2" p="lg">
+            <TrainingTab id={data.id} phase={2} />
+          </Tabs.Panel>
+        </Tabs>
       )}
 
       {/* L'agrandissement. Une fenêtre dans la fenêtre : Mantine les empile

@@ -288,6 +288,10 @@ export interface Rubric {
   created_at: string
 }
 
+/** Les onglets de la fiche série — portés par l'URL (`?onglet=training1`)
+ *  pour qu'un lien partagé rouvre la fiche au bon endroit. */
+export type ModalTab = 'presentation' | 'training1' | 'training2'
+
 /** Le dossier de notation : le texte anglais réellement soumis aux juges. */
 export interface Dossier {
   idTmdb: number
@@ -299,11 +303,24 @@ export interface Dossier {
   enough: boolean
   sections: {
     overviewChars: number
+    seasonOverviews: number
     episodeCount: number
     episodeChars: number
+    /** Lignes de la section MEDIA — 0 tant que les visuels ne sont pas légendés. */
+    mediaLines: number
     wikipediaChars: number
     keywords: number
   }
+}
+
+/** Le bilan du bouton « Légender les visuels » : combien d'images sont passées
+ *  devant le modèle de vision, combien étaient déjà figées en base. */
+export interface CaptionResult {
+  id: number
+  captioned: number
+  already: number
+  total: number
+  model: string
 }
 
 /** La note d'un juge sur un axe. `score` null = « pas assez de matière ». */
