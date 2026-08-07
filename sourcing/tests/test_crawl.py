@@ -122,21 +122,17 @@ async def test_une_oeuvre_nait_par_qid_sans_ancrage_tmdb(conn, settings: Setting
 
 
 @respx.mock
-async def test_le_brut_du_crawl_est_conserve_par_qid(conn, settings: Settings):
-    """R1 vaut pour les deux flux : lookup et articles entrent dans raw_source,
-    keyés par QID — l'espace de noms du flux 1 (ids TMDB numériques) n'est
-    jamais croisé."""
+async def test_seule_la_reference_de_base_entre_dans_le_brut(conn, settings: Settings):
+    """R1 : pour une série hors TMDB, le lookup par QID est sa fiche
+    d'identité — la seule ligne de brut qu'elle aura jamais. Les articles et
+    TVmaze sont de l'enrichissement : riche_source uniquement."""
     _mock("Q777", "مسلسل")
 
     await _lancer(conn, settings, [{"qid": "Q777", "titre": "مسلسل"}])
 
     async with conn.cursor() as cur:
-        await cur.execute("select source, kind, source_id from raw_source order by source, kind")
-        assert await cur.fetchall() == [
-            ("wikidata", "entity", "Q777"),
-            ("wikidata", "lookup", "Q777"),
-            ("wikipedia", "article", "Q777"),
-        ]
+        await cur.execute("select source, kind, source_id from raw_source")
+        assert await cur.fetchall() == [("wikidata", "lookup", "Q777")]
 
 
 @respx.mock

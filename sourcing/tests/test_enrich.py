@@ -162,10 +162,10 @@ async def test_les_faits_sont_au_format_canonique(conn, settings: Settings):
 
 
 @respx.mock
-async def test_le_brut_porte_wikimedia_mais_jamais_tvmaze(conn, settings: Settings):
-    """R1 : le brut de Wikidata et Wikipédia rejoint celui de TMDB — c'est ce
-    qui rend l'extraction rejouable. TVmaze, enrichissement pur, n'y entre
-    jamais."""
+async def test_l_enrichissement_n_ecrit_jamais_dans_le_brut(conn, settings: Settings):
+    """R1 (2026-08-07) : raw_source ne porte que les références de base — ici
+    la fiche TMDB. Ce que l'enrichissement rapporte vit dans riche_source, et
+    seul le passage est noté dans fetch_state."""
     await _serie_collectee(conn)
     _mock(SPARQL_TROUVE)
 
@@ -176,14 +176,9 @@ async def test_le_brut_porte_wikimedia_mais_jamais_tvmaze(conn, settings: Settin
             "select source, kind, source_id, count(*) from raw_source "
             "group by 1, 2, 3 order by 1, 2, 3"
         )
-        assert await cur.fetchall() == [
-            ("tmdb", "tv", str(TV_ID), 1),
-            ("wikidata", "entity", QID, 1),
-            # Tout le brut d'une série se retrouve par UNE clé — l'article
-            # n'est pas keyé par son titre, qui dépend de la langue.
-            ("wikidata", "lookup", str(TV_ID), 1),
-            ("wikipedia", "article", str(TV_ID), 2),
-        ]
+        assert await cur.fetchall() == [("tmdb", "tv", str(TV_ID), 1)]
+        await cur.execute("select source, kind from fetch_state where source <> 'tmdb'")
+        assert await cur.fetchall() == [("wikidata", "lookup")]
 
 
 @respx.mock
@@ -199,10 +194,9 @@ async def test_rejouer_remplace_la_derivation_sans_l_empiler(conn, settings: Set
     async with conn.cursor() as cur:
         await cur.execute("select count(*) from riche_source")
         assert (await cur.fetchone())[0] == 4
-        # R2 : contenu inchangé, aucune ligne de brut en plus — la déduplication
-        # par empreinte tient la règle « jamais le même contenu deux fois ».
+        # R1 : deux passes, et le brut n'a toujours que la fiche TMDB.
         await cur.execute("select count(*) from raw_source")
-        assert (await cur.fetchone())[0] == 5
+        assert (await cur.fetchone())[0] == 1
 
 
 @respx.mock

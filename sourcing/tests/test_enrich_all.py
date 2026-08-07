@@ -200,22 +200,18 @@ async def test_le_compteur_enrichies_correspond_a_ce_qui_est_en_base(conn, setti
 
 
 @respx.mock
-async def test_le_brut_garde_une_ligne_par_serie_trouvee(conn, settings: Settings):
-    """R1/R2 : la réponse du lot est redécoupée par série avant d'entrer dans le
-    brut — seule la série trouvée y laisse une ligne, jamais TVmaze. Le passage,
-    lui, est noté pour les trois."""
+async def test_le_brut_reste_les_references_de_base(conn, settings: Settings):
+    """R1 (2026-08-07) : la passe entière n'ajoute pas une ligne au brut — il
+    ne porte que les fiches TMDB. Le passage, lui, est noté pour les trois,
+    c'est lui qui évite de les retenter indéfiniment."""
     await _collectees(conn, 1, 2, 3)
     _mock((2,))
 
     await _lancer(conn, settings, [1, 2, 3])
 
     async with conn.cursor() as cur:
-        await cur.execute(
-            "select source_id from raw_source where source = 'wikidata' and kind = 'lookup'"
-        )
-        assert [r[0] for r in await cur.fetchall()] == ["2"]
-        await cur.execute("select count(*) from raw_source where source = 'tvmaze'")
-        assert (await cur.fetchone())[0] == 0
+        await cur.execute("select distinct source from raw_source")
+        assert await cur.fetchall() == [("tmdb",)]
         await cur.execute(
             "select count(*) from fetch_state where source = 'wikidata' and kind = 'lookup'"
         )

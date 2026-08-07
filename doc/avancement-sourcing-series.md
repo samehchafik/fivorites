@@ -107,15 +107,13 @@ imposerait de réécrire toute la série pour rafraîchir une saison, invalidera
 l'empreinte du bloc entier au moindre changement, et rendrait les échecs
 tout-ou-rien.
 
-**Le brut porte TMDB et Wikidata/Wikimedia — jamais TVmaze** (R1 de
-[`architecture-sourcing.md`](architecture-sourcing.md), qui a remplacé la
-décision « exclusivement TMDB » du même jour). La dérivation est ainsi
-rejouable hors ligne ; TVmaze, enrichissement pur, se rejoue en réinterrogeant.
-`riche_source` n'est jamais une copie du brut (R2) : ses `facts` sont au format
-canonique produit par `normalize.py` (R5) — la seule frontière avec les formats
-propriétaires. Piège attrapé en vrai : Blazegraph ne garantit pas l'ordre des
-`GROUP_CONCAT`, et sans canonicalisation chaque rejeu écrivait une ligne de
-brut pour un contenu identique.
+**`raw_source` ne porte que les références de base** (R1 du 2026-08-07,
+[`architecture-sourcing.md`](architecture-sourcing.md)) : la collecte TMDB, et
+la référence Wikidata des séries hors TMDB (la ligne par QID du crawler, leur
+fiche d'identité). **L'enrichissement n'y écrit jamais** — ce qu'il rapporte va
+dans `riche_source`, `facts` au format canonique de `normalize.py` (R5), texte
+dans `content`. Contrepartie assumée : rejouer l'enrichissement = réinterroger
+(R4). La migration 009 a purgé ce que les versions précédentes y avaient écrit.
 
 **Rejouer une collecte inchangée n'écrit rien.** Déduplication par SHA-256 du
 payload canonicalisé. `riche_source`, elle, est **remplacée** à chaque passe :

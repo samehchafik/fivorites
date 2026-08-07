@@ -258,9 +258,12 @@ quand la série vient de TMDB, raccroché à la fiche collectée par
 `raw_source_id` : une ligne par (série, source, langue), avec le texte
 (`content`), les médias, les faits tiers (`facts` — pays, langue, lieux,
 dates et diffuseur TVmaze, leur seul lieu de vie) et le chemin du raccordement
-(`resolved_by`). Le brut de Wikidata et Wikipédia rejoint celui de TMDB dans
-`raw_source` (R1) — jamais celui de TVmaze, enrichissement pur. Les `facts`
-sont au format canonique de [`normalize.py`](src/fiv_sourcing/normalize.py). Deux compteurs calculés,
+(`resolved_by`). **L'enrichissement n'écrit jamais dans `raw_source`** (R1 du
+2026-08-07) : le brut ne porte que les références de base — la collecte TMDB,
+et la référence Wikidata des séries hors TMDB écrite par le crawler. Les
+`facts` sont au format canonique de
+[`normalize.py`](src/fiv_sourcing/normalize.py) ; rejouer l'enrichissement,
+c'est réinterroger (R4). Deux compteurs calculés,
 `content_chars` et `media_count`, permettent au rapport de couverture de
 seuiller sans jamais relire un article.
 

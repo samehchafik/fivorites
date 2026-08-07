@@ -12,27 +12,32 @@
 
 ## 1. Les règles
 
-**R1 — `raw_source` porte le brut de TMDB et de Wikidata/Wikimedia.**
-Append-only, dédupliqué par empreinte, une ligne par réponse. Jamais TVmaze :
-TVmaze est un enrichissement pur (raccordeur + faits, mesuré : peu de texte),
-il entre directement en dérivé.
+**R1 — `raw_source` porte les références de base des séries, rien d'autre.**
+Deux choses seulement : la collecte TMDB (fiches, saisons), et la **référence
+Wikidata des séries hors TMDB** — la ligne par QID qu'écrit le crawler, qui
+est la fiche d'identité de ces séries-là. **L'enrichissement n'écrit jamais
+dans `raw_source`** : les réponses de Wikidata, Wikipédia et TVmaze obtenues
+pour enrichir une série vont exclusivement dans `riche_source`, sous forme
+interprétée. *(Décision du 2026-08-07, en connaissance du coût : changer un
+jour l'extraction imposera de réinterroger les sources, ~37 h de réseau.)*
 
 **R2 — Jamais le même contenu deux fois.**
 Une seule entrée par objet dans `raw_source` (la déduplication par SHA-256 y
-veille), et `riche_source` n'est **jamais une copie du brut** : c'est une
-*interprétation* — extraite, normalisée, allégée. Le cas concret : l'article
-Wikipédia complet vit dans le brut ; `riche_source.content` n'en garde que
-l'extrait utile à la notation (§4).
+veille), et `riche_source` n'est **jamais une copie du brut** : c'est
+l'*ajout* — le texte utile à la notation dans `content`, les faits canoniques
+dans `facts`.
 
 **R3 — TMDB est la première référence ; `oeuvre` est le pivot.**
 On commence par parser les séries TMDB. `oeuvre` attache tout le reste : ses
 identifiants externes sont nullables et uniques, ce qui permet d'accueillir une
 série absente de TMDB et de la réconcilier si elle y apparaît un jour.
 
-**R4 — `riche_source` est rejouable.**
-Pour Wikidata et Wikipédia, la dérivation se rejoue depuis `raw_source`, hors
-ligne. Pour TVmaze — pas de brut, R1 — rejouer signifie réinterroger l'API :
-assumé, c'est une API gratuite, stable et rapide.
+**R4 — Rejouer l'enrichissement, c'est réinterroger.**
+La dérivation TMDB (couche 1) se rejoue depuis `raw_source`, hors ligne, comme
+toujours. L'enrichissement tiers, lui, n'a pas de brut (R1) : changer
+l'extraction — sections d'article, fait supplémentaire — se paie d'une
+réinterrogation des sources. Assumé le 2026-08-07 : ce sont des API gratuites
+et stables, et `fetch_state` + `--refresh-after` savent cibler la reprise.
 
 **R5 — Le JSON des données est uniforme partout.**
 Un seul schéma de `facts`, quelles que soient la source et la série (§3). La
@@ -46,13 +51,13 @@ ces clés.
 ```
 schéma sourcing
 │
-│  ── LE BRUT ──────────────────────────────────────────────
+│  ── LES RÉFÉRENCES DE BASE ───────────────────────────────
 │  raw_source(source, kind, source_id, lang, payload, sha…)
-│      source ∈ { tmdb, wikidata, wikipedia }        ← R1
+│      la collecte TMDB (fiches, saisons)            ← R1
+│      + la référence Wikidata des séries hors TMDB
+│        (une ligne par QID, écrite par le crawler)
 │      append-only, dédup par empreinte              ← R2
-│      source_id = LA CLÉ DE LA SÉRIE, partout :
-│        id TMDB (flux 1) ou QID (flux 2) — jamais
-│        un titre ; le titre vit dans le payload
+│      source_id = la clé de la série : id TMDB ou QID
 │
 │  fetch_state(source, kind, source_id, …)
 │      l'état : quand on a regardé, quand ça a bougé
@@ -119,17 +124,13 @@ inventée. Produit exclusivement par `normalize.py`.
 `content` (le texte de notation) et `media` (les visuels) restent des colonnes
 à part : ce sont des matières, pas des faits.
 
-## 4. Le texte Wikipédia : brut complet, dérivé allégé
+## 4. Le texte Wikipédia : directement dans le dérivé
 
-Décision du 2026-08-06 (« brut + dérivé allégé ») :
-
-- **`raw_source`** garde la réponse complète de l'API — l'article entier.
-  C'est ce qui rend l'extraction rejouable ;
-- **`riche_source.content`** ne garde que **l'extrait utile à la notation** :
-  les sections narratives (intrigue, synopsis, épisodes), sans l'infobox, les
-  références, les listes de distribution ni les liens externes. L'extraction
-  des sections est une dérivation comme une autre — si elle change, on rejoue
-  depuis le brut, zéro réseau.
+Décision du 2026-08-07, qui remplace « brut + dérivé allégé » de la veille :
+l'article n'est **pas** conservé en brut. `riche_source.content` reçoit le
+texte — à terme allégé aux seules sections narratives (étape 3), l'allègement
+se faisant **au moment de la récupération**. Si la règle d'extraction change,
+on réinterroge (R4).
 
 ## 5. Les deux flux d'entrée
 
@@ -137,9 +138,9 @@ Décision du 2026-08-06 (« brut + dérivé allégé ») :
 
 ```
 tmdb export → tmdb backfill → tmdb dates → enrich
-   inventaire     le brut       dérivation    wikidata/wikipédia → raw_source
-                                              normalisation      → riche_source
-                                              tvmaze             → riche_source
+   inventaire     le brut       dérivation    LIT raw_source (imdb_id)
+                                              wikidata/wikipédia/tvmaze
+                                                → riche_source, et rien d'autre
 ```
 
 **Flux 2 — le crawler hors-TMDB** *(livré : `crawl wikidata`)* :
@@ -148,9 +149,10 @@ tmdb export → tmdb backfill → tmdb dates → enrich
 crawl wikidata
    1. balaye les items « série » de Wikidata SANS identifiant TMDB
       (SPARQL paginé ; mesuré : ~44 700 items, dont ~300 ar sans aucun id)
-   2. crée l'oeuvre (id_tmdb null) et le brut par QID :
-      lookup + entity + articles → raw_source
-   3. enrichit : TVmaze (par P8600 ou imdb_id) → riche_source
+   2. crée l'oeuvre (id_tmdb null) et écrit LA RÉFÉRENCE DE BASE :
+      le lookup par QID → raw_source (c'est la fiche d'identité
+      de la série hors TMDB — l'équivalent de la fiche TMDB)
+   3. enrichit : articles Wikipédia + TVmaze → riche_source
 ```
 
 La **réconciliation** est portée par les index uniques d'`oeuvre` : si une
@@ -167,9 +169,9 @@ deux références redondantes. Le chemin, en étapes indépendantes et petites :
 | # | Étape | Nature |
 |---|---|---|
 | 1 | ✅ `normalize.py` + `facts` canoniques + test d'uniformité | livré |
-| 2 | ✅ `enrich` réécrit le brut wikidata/wikipédia dans `raw_source` (R1) | livré |
-| 3 | `content` allégé aux sections utiles (§4) | dérivation, rejouable |
-| 4 | ✅ `crawl wikidata` — le flux 2 | livré |
+| 2 | ✅ `enrich` n'écrit plus dans `raw_source` ; purge de l'enrichissement du brut (R1 du 2026-08-07) | livré |
+| 3 | `content` allégé aux sections utiles, à la récupération (§4) | code |
+| 4 | ✅ `crawl wikidata` — le flux 2, référence de base par QID | livré |
 | 5 | retirer `riche_source.id_tmdb` et `raw_source_id` | migration de ménage |
 
 L'ordre est le bon : 1 et 2 rendent le reste rejouable, 5 attend que tout le

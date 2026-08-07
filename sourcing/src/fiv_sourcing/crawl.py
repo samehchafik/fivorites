@@ -1,9 +1,11 @@
 """Le flux 2 : les séries qui existent dans Wikidata mais pas dans TMDB.
 
 C'est le crawler de `doc/architecture-sourcing.md` §5. Il balaye les items
-« série télévisée » sans identifiant TMDB, crée l'œuvre par QID, conserve le
-brut (R1), et enrichit — Wikipédia par les sitelinks, TVmaze par `P8600` ou
-`imdb_id`.
+« série télévisée » sans identifiant TMDB, crée l'œuvre par QID, écrit **la
+référence de base** dans `raw_source` — le lookup par QID, seule écriture du
+brut hors collecte TMDB (R1) : c'est la fiche d'identité des séries hors
+TMDB — puis enrichit dans `riche_source` : Wikipédia par les sitelinks, TVmaze
+par `P8600` ou `imdb_id`.
 
 **La cible par défaut est le noyau dur** : les items sans identifiant TMDB *ni*
 IMDb — injoignables par tout autre chemin (mesuré : 300 des 480 séries de
@@ -34,7 +36,15 @@ from typing import Any
 import psycopg
 
 from fiv_sourcing import normalize, store
-from fiv_sourcing.enrich import Cible, Clients, EnrichReport, _apres_wikidata, _entier, _persist
+from fiv_sourcing.enrich import (
+    Cible,
+    Clients,
+    EnrichReport,
+    _apres_wikidata,
+    _entier,
+    _noter,
+    _persist,
+)
 from fiv_sourcing.sources import wikidata
 
 log = logging.getLogger(__name__)
@@ -160,12 +170,14 @@ async def _crawler_un_item(
     detail.requests += 1
     if not resultat.ok:
         detail.errors.append(f"wikidata: {resultat.error or resultat.status}")
-        await _persist(conn, wikidata.SOURCE, "lookup", qid, None, resultat)
+        await _noter(conn, wikidata.SOURCE, "lookup", qid, resultat)
         return detail
 
     faits = wikidata.lire_lookup(wikidata.canonicaliser(resultat.payload)) or {"qid": qid}
-    # R1 : le lookup entre dans le brut, keyé par QID — le flux 1 utilise l'id
-    # TMDB, les deux espaces de noms ne se croisent jamais.
+    # R1 : pour une série hors TMDB, ce lookup EST la référence de base — la
+    # seule ligne de brut qu'elle aura jamais, l'équivalent de la fiche TMDB.
+    # C'est la seule écriture de raw_source hors collecte TMDB : tout ce qui
+    # suit (articles, TVmaze) est de l'enrichissement et va dans riche_source.
     await _persist(conn, wikidata.SOURCE, "lookup", qid, None, resultat)
 
     oeuvre_id = await store.ensure_oeuvre_par_qid(conn, qid, titre=item.get("titre"))

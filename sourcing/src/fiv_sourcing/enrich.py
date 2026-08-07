@@ -5,10 +5,11 @@ TVmaze pour les dates et le calendrier.
 
 Les règles sont celles de `doc/architecture-sourcing.md` :
 
-  * **R1** — le brut de Wikidata et Wikipédia va dans `raw_source`, comme celui
-    de TMDB. Jamais celui de TVmaze : enrichissement pur, rejouer = réinterroger.
-  * **R2** — `riche_source` n'est jamais une copie du brut, c'est une
-    interprétation : les `facts` au format canonique, le texte utile.
+  * **R1** (2026-08-07) — l'enrichissement **ne touche jamais à `raw_source`**.
+    Il lit les références de base (la fiche TMDB, pour l'imdb_id), interroge
+    Wikidata, Wikipédia et TVmaze, et écrit exclusivement dans `riche_source`.
+    Seul le passage est noté dans `fetch_state`, pour la reprise.
+  * **R4** — rejouer l'enrichissement = réinterroger. Assumé.
   * **R5** — les faits passent par `normalize.py`, jamais par le format
     propriétaire d'une source.
 
@@ -202,12 +203,10 @@ async def _wikidata(
             wikidata.lire_lookup(wikidata.canonicaliser(resultat.payload)) if resultat.ok else None
         )
 
-    # R1 : la réponse qui porte quelque chose va dans le brut. Une réponse
-    # vide n'apprend rien que fetch_state ne dise déjà — passage noté seulement.
-    if faits is not None:
-        await _persist(conn, wikidata.SOURCE, "lookup", str(cible.tv_id), None, resultat)
-    else:
-        await _noter(conn, wikidata.SOURCE, "lookup", str(cible.tv_id), resultat)
+    # R1 (2026-08-07) : l'enrichissement n'écrit jamais dans raw_source — seul
+    # le passage est noté, c'est lui qui porte la reprise. Ce qui mérite d'être
+    # gardé l'est dans riche_source, sous forme interprétée.
+    await _noter(conn, wikidata.SOURCE, "lookup", str(cible.tv_id), resultat)
     if not resultat.ok:
         report.errors.append(f"wikidata: {resultat.error or resultat.status}")
     if faits is None:
@@ -262,7 +261,6 @@ async def _sitelinks(
     if not resultat.ok:
         report.errors.append(f"wikidata/entity: {resultat.error or resultat.status}")
         return {}
-    await _persist(conn, wikidata.SOURCE, "entity", qid, None, resultat)
     return wikidata.lire_sitelinks(resultat.payload, qid)
 
 
@@ -284,11 +282,8 @@ async def _wikipedia(
             report.errors.append(f"wikipedia/{lang}: {resultat.error or resultat.status}")
             continue
 
-        # R1 : l'article complet vit dans le brut — c'est ce qui rend
-        # l'extraction (R2, sections utiles) rejouable hors ligne. Keyé par la
-        # clé de la série, pas par le titre : le titre dépend de la langue et
-        # rendrait la table illisible — il reste dans le payload.
-        await _persist(conn, wikipedia.SOURCE, "article", cible.cle, lang, resultat)
+        # R1 (2026-08-07) : l'article ne va pas dans le brut — le texte utile
+        # entre dans riche_source.content, et c'est tout. Rejouer = réinterroger.
         lu = wikipedia.lire_article(resultat.payload)
         if lu is None:
             continue
@@ -591,27 +586,13 @@ async def _resoudre_le_lot(
         log.warning("lot wikidata en échec : %s", resultat.error or resultat.status)
         return {}
 
-    # Même canonicalisation qu'à l'unité : sans elle, chaque rejeu du lot
-    # écrirait cent lignes de brut pour un contenu identique.
-    payload = wikidata.canonicaliser(resultat.payload)
-    faits_par_id = wikidata.lire_lookup_lot(payload)
-    lignes = wikidata.lignes_par_id(payload)
+    # La canonicalisation stabilise aussi les facts dérivés d'une passe à
+    # l'autre — l'ordre des GROUP_CONCAT n'est pas garanti par Blazegraph.
+    faits_par_id = wikidata.lire_lookup_lot(wikidata.canonicaliser(resultat.payload))
 
+    # R1 (2026-08-07) : rien n'entre dans le brut — seul le passage est noté,
+    # c'est lui qui porte la reprise, item trouvé ou pas.
     for tv_id in ids:
-        # R1/R2 : la ligne du lot est réemballée au format mono-série avant
-        # d'entrer dans le brut — le lot est une optimisation de transport,
-        # l'unité conservée reste l'objet. Rien pour les séries sans item.
-        ligne = lignes.get(tv_id)
-        if ligne is not None:
-            await store.store_raw(
-                conn,
-                source=wikidata.SOURCE,
-                kind="lookup",
-                source_id=str(tv_id),
-                lang=None,
-                http_status=resultat.status,
-                payload=wikidata.enveloppe(ligne),
-            )
         await store.mark_fetch(
             conn,
             source=wikidata.SOURCE,

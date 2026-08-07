@@ -261,27 +261,6 @@ def canonicaliser(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     return payload
 
 
-def enveloppe(ligne_brute: dict[str, Any]) -> dict[str, Any]:
-    """Réemballe une ligne d'un lot au format d'une réponse à une seule série.
-
-    Le lot est une optimisation de transport ; l'unité qu'on **conserve** reste
-    l'objet (R2). Sans ce réemballage, `raw_source` porterait une ligne couvrant
-    cent séries, dont ni l'empreinte, ni la fraîcheur, ni le statut ne
-    voudraient plus rien dire pour aucune d'elles.
-    """
-    return {"results": {"bindings": [ligne_brute]}}
-
-
-def lignes_par_id(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
-    """{id TMDB: sa ligne brute}, pour en garder le détail par série."""
-    par_id = {}
-    for ligne in ((payload or {}).get("results") or {}).get("bindings") or []:
-        brut = ligne.get("tmdb", {}).get("value", "")
-        if brut.isdigit():
-            par_id[int(brut)] = ligne
-    return par_id
-
-
 def lire_sweep(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Une page de balayage → [{qid, titre, imdb, tvmaze}]."""
     items = []
@@ -293,8 +272,8 @@ def lire_sweep(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
         items.append(
             {
                 "qid": qid,
-                # Le label service renvoie le QID quand aucun libellé n'existe :
-                # ce n'est pas un titre, on préfère l'absence.
+                # Le service de labels renvoie le QID quand aucun libellé
+                # n'existe : ce n'est pas un titre, on préfère l'absence.
                 "titre": titre if titre != qid else None,
                 "imdb": ligne.get("imdb", {}).get("value") or None,
                 "tvmaze": ligne.get("tvmaze", {}).get("value") or None,
