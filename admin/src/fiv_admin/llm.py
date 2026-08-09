@@ -227,6 +227,19 @@ async def caption_openai(
     return {"model": body.get("model", model), "captions": captions}
 
 
+# Le modèle d'embedding refuse au-delà de 8 192 tokens. La borne est posée en
+# caractères, faute de compter les tokens sans dépendance supplémentaire :
+# 20 000 laisse de la marge même sur du texte dense en noms propres, où le
+# rapport descend vers trois caractères par token.
+#
+# Tronquer plutôt qu'échouer, parce qu'un dossier n'est pas un texte suivi :
+# c'est une suite de sections, et les premières — titre, faits, genres,
+# synopsis — portent l'essentiel de ce qui distingue une œuvre d'une autre.
+# Une série de vingt-deux saisons dépassait la limite sur ses seuls résumés de
+# saison, et faisait échouer l'entraînement entier au huitième appel.
+EMBED_MAX_CHARS = 20_000
+
+
 async def embed_openai(
     http: httpx.AsyncClient,
     *,
@@ -240,11 +253,14 @@ async def embed_openai(
     `dimensions` réduit le vecteur côté OpenAI (Matryoshka) : 256 dimensions
     suffisent largement à une ridge entraînée sur quelques centaines d'œuvres,
     et divisent par six le poids stocké et le nombre de coefficients à estimer.
+
+    Le texte est tronqué à `EMBED_MAX_CHARS` : au-delà l'API refuse la
+    requête, et perdre la fin d'un dossier vaut mieux que perdre le lot.
     """
     response = await http.post(
         f"{OPENAI_BASE}/embeddings",
         headers={"Authorization": f"Bearer {api_key}"},
-        json={"model": model, "input": text, "dimensions": dimensions},
+        json={"model": model, "input": text[:EMBED_MAX_CHARS], "dimensions": dimensions},
         timeout=TIMEOUT,
     )
     if response.status_code != 200:

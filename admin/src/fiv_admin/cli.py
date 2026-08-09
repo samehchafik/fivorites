@@ -270,6 +270,11 @@ def training_poids(
                         f"  {axe['axe']:12s} MAE cv {axe['maeCv']:5.2f}"
                         f"  (ajustement {axe['maeFit']:5.2f}, lambda {axe['lambda']})"
                     )
+            if bilan.get("skipped"):
+                typer.echo(
+                    f"\n{len(bilan['skipped'])} œuvre(s) écartée(s), dossier non plongeable : "
+                    + ", ".join(str(i) for i in bilan["skipped"][:10])
+                )
             typer.echo(f"\n{bilan['generated']} vecteur(s) interne(s) régénéré(s).")
             typer.echo(
                 "La colonne « MAE cv » est celle qui compte : elle mesure ce que les poids"

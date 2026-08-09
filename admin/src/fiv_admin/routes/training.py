@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import logging
 from typing import Any
 
 import httpx
@@ -33,6 +34,8 @@ from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
 from fiv_admin.llm import LlmError, caption_openai, embed_openai, score_anthropic, score_openai
 from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -866,13 +869,23 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
     embedder = f"{settings.openai_embed_model}@{settings.embed_dimensions}"
     vectors: dict[int, list[float]] = {}
     dossiers: dict[int, dict[str, Any]] = {}
+    ecartees: list[int] = []
     async with httpx.AsyncClient() as http:
         for id_tmdb in by_work:
             built = await build_dossier(conn, id_tmdb)
             if built is None:
                 continue
             dossiers[id_tmdb] = built
-            vectors[id_tmdb] = await _embedding(conn, settings, http, built)
+            try:
+                vectors[id_tmdb] = await _embedding(conn, settings, http, built)
+            except LlmError as exc:
+                # Une œuvre qu'on n'arrive pas à plonger sort de l'échantillon,
+                # les autres restent. Un lot de cinquante perdu au huitième
+                # appel pour un dossier hors gabarit, c'est ce qu'on a vu et
+                # qu'on ne veut plus : l'entraînement doit aboutir sur ce qui
+                # est utilisable et dire ce qu'il a laissé de côté.
+                log.warning("embedding impossible pour %s, œuvre écartée : %s", id_tmdb, exc)
+                ecartees.append(id_tmdb)
 
     trained: list[dict[str, Any]] = []
     weights_json: dict[str, Any] = {}
@@ -1011,6 +1024,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
         "weightsId": weights_id,
         "trainedAt": trained_at,
         "generated": generated,
+        "skipped": ecartees,
     }
 
 
