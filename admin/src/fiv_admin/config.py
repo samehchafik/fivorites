@@ -95,10 +95,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_model: str = "gpt-5.4-mini"
     anthropic_model: str = "claude-haiku-4-5"
-    openai_embed_model: str = "text-embedding-3-small"
-    # 256 dimensions (réduction Matryoshka côté OpenAI) : largement assez pour
-    # une ridge sur quelques centaines d'œuvres, six fois moins de coefficients.
-    embed_dimensions: int = 256
+    # L'encodeur des dossiers, lui, n'est PAS un réglage : il est figé dans
+    # `embed.py`, parce qu'un vecteur n'a de sens qu'au sein du modèle qui l'a
+    # produit et qu'un réglage se change par inadvertance. Seul l'endroit où
+    # ses poids sont rangés se configure — pour que l'image Docker les
+    # embarque au lieu de les télécharger au démarrage.
+    embed_cache_dir: str | None = None
 
     # Les compteurs d'en-tête agrègent `raw_source` en entier. À l'échelle du
     # catalogue complet ça se compte en secondes : on les garde en mémoire un

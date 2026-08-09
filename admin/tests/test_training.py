@@ -116,13 +116,21 @@ async def client(
             "scores": {axe: {"score": 5, "confidence": 0.6} for axe in axes},
         }
 
-    async def fake_embed(http, *, api_key, model, dimensions, text):
-        seed = sum(ord(c) for c in text[:64])
-        return [((seed + i) % 17) / 17.0 for i in range(8)]
+    # L'encodeur est local et déterministe, mais charger le vrai modèle ONNX
+    # coûterait cinq secondes à chaque session de tests pour ne rien vérifier
+    # de plus : ces tests portent sur la mécanique, pas sur la qualité des
+    # vecteurs. Le simulacre garde la propriété qui compte — même texte, même
+    # vecteur — sur laquelle repose le cache.
+    def faux_encodeur(texts, *, cache_dir=None):
+        vecteurs = []
+        for text in texts:
+            graine = sum(ord(c) for c in text[:64])
+            vecteurs.append([((graine + i) % 17) / 17.0 for i in range(8)])
+        return vecteurs
 
     monkeypatch.setattr(routes.training, "score_openai", fake_openai)
     monkeypatch.setattr(routes.training, "score_anthropic", fake_anthropic)
-    monkeypatch.setattr(routes.training, "embed_openai", fake_embed)
+    monkeypatch.setattr(routes.training, "embed_texts", faux_encodeur)
 
     training_settings = settings.model_copy(
         update={"openai_api_key": "sk-test", "anthropic_api_key": "sk-ant-test"}

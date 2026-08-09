@@ -31,7 +31,8 @@ from pydantic import BaseModel, Field
 
 from fiv_admin.deps import Config, Conn, CurrentUser
 from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
-from fiv_admin.llm import LlmError, caption_openai, embed_openai, score_anthropic, score_openai
+from fiv_admin.embed import EMBEDDER, embed_texts
+from fiv_admin.llm import LlmError, caption_openai, score_anthropic, score_openai
 from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
 
@@ -709,35 +710,41 @@ async def work_scores(user: CurrentUser, conn: Conn, work_id: int) -> list[dict[
 # ---------------------------------------------------------------- phase 2
 
 
-async def _embedding(
-    conn: Any, settings: Any, http: httpx.AsyncClient, built: dict[str, Any]
-) -> list[float]:
-    """L'embedding du dossier, depuis le cache si le texte n'a pas changé."""
-    embedder = f"{settings.openai_embed_model}@{settings.embed_dimensions}"
+async def _embedding(conn: Any, settings: Any, built: dict[str, Any]) -> list[float]:
+    """L'embedding du dossier, depuis le cache si le texte n'a pas changé.
+
+    Le calcul est local (`embed.py`) : plus d'appel réseau, donc plus de
+    `LlmError` ici — un encodeur qui tombe est un défaut d'installation, pas
+    un incident d'exploitation à rattraper œuvre par œuvre.
+
+    Le cache reste utile malgré la vitesse : il garantit qu'un même dossier
+    donne le même vecteur d'un entraînement à l'autre, y compris si le modèle
+    venait à être remplacé — auquel cas `EMBEDDER` change et les anciens
+    vecteurs cessent simplement d'être relus.
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             "select vector from notation.embedding"
             " where id_tmdb = %s and input_sha256 = %s and embedder = %s",
-            (built["idTmdb"], built["sha256"], embedder),
+            (built["idTmdb"], built["sha256"], EMBEDDER),
         )
         row = await cur.fetchone()
     if row is not None:
         return row[0]
 
-    vector = await embed_openai(
-        http,
-        api_key=settings.openai_api_key,
-        model=settings.openai_embed_model,
-        dimensions=settings.embed_dimensions,
-        text=built["text"],
+    # `to_thread` : l'inférence ONNX est du calcul bloquant, et la tenir dans
+    # la boucle d'événements figerait l'API pendant tout un entraînement.
+    vectors = await asyncio.to_thread(
+        embed_texts, [built["text"]], cache_dir=settings.embed_cache_dir
     )
+    vector = vectors[0]
     async with conn.cursor() as cur:
         await cur.execute(
             """
             insert into notation.embedding (id_tmdb, input_sha256, embedder, vector)
             values (%s, %s, %s, %s) on conflict do nothing
             """,
-            (built["idTmdb"], built["sha256"], embedder, Jsonb(vector)),
+            (built["idTmdb"], built["sha256"], EMBEDDER, Jsonb(vector)),
         )
     return vector
 
@@ -866,26 +873,15 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
     # Les dossiers sont gardés : la régénération plus bas en a besoin, et les
     # reconstruire une seconde fois doublait le nombre de requêtes — quatre
     # par œuvre, dont deux qui ramènent des payloads volumineux.
-    embedder = f"{settings.openai_embed_model}@{settings.embed_dimensions}"
     vectors: dict[int, list[float]] = {}
     dossiers: dict[int, dict[str, Any]] = {}
     ecartees: list[int] = []
-    async with httpx.AsyncClient() as http:
-        for id_tmdb in by_work:
-            built = await build_dossier(conn, id_tmdb)
-            if built is None:
-                continue
-            dossiers[id_tmdb] = built
-            try:
-                vectors[id_tmdb] = await _embedding(conn, settings, http, built)
-            except LlmError as exc:
-                # Une œuvre qu'on n'arrive pas à plonger sort de l'échantillon,
-                # les autres restent. Un lot de cinquante perdu au huitième
-                # appel pour un dossier hors gabarit, c'est ce qu'on a vu et
-                # qu'on ne veut plus : l'entraînement doit aboutir sur ce qui
-                # est utilisable et dire ce qu'il a laissé de côté.
-                log.warning("embedding impossible pour %s, œuvre écartée : %s", id_tmdb, exc)
-                ecartees.append(id_tmdb)
+    for id_tmdb in by_work:
+        built = await build_dossier(conn, id_tmdb)
+        if built is None:
+            continue
+        dossiers[id_tmdb] = built
+        vectors[id_tmdb] = await _embedding(conn, settings, built)
 
     trained: list[dict[str, Any]] = []
     weights_json: dict[str, Any] = {}
@@ -918,7 +914,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
                     axe,
                     result.intercept,
                     Jsonb(result.coef),
-                    embedder,
+                    EMBEDDER,
                     result.trained_on,
                     result.mae_fit,
                 ),
@@ -964,7 +960,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
                     rubric_version,
                     rubric["prompt"],
                     _prompt_sha(rubric["prompt"]),
-                    embedder,
+                    EMBEDDER,
                     Jsonb(weights_json),
                     len(by_work),
                 ),
@@ -989,33 +985,25 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
             )
             journaux = await cur.fetchall()
 
-        async with httpx.AsyncClient() as http:
-            for entry in journaux:
-                id_tmdb = entry["id_tmdb"]
-                # Le dossier vient du tour précédent quand l'œuvre y était :
-                # c'est le cas de la quasi-totalité d'entre elles, puisqu'on
-                # régénère justement celles qui ont servi à entraîner.
-                built = dossiers.get(id_tmdb) or await build_dossier(conn, id_tmdb)
-                if built is None:
-                    continue
-                vector = vectors.get(id_tmdb)
-                if vector is None:
-                    try:
-                        vector = await _embedding(conn, settings, http, built)
-                    except LlmError:
-                        # Une œuvre qu'on n'arrive pas à plonger ne doit pas
-                        # faire échouer un entraînement déjà écrit en base.
-                        continue
-                await _store_internal(
-                    conn,
-                    id_tmdb=id_tmdb,
-                    internal=_predict_all(vector, weights_json),
-                    rubric_version=rubric_version,
-                    prompt=entry["prompt"],
-                    dossier_sha256=built["sha256"],
-                    raw_source_id=built["rawSourceId"],
-                )
-                generated += 1
+        for entry in journaux:
+            id_tmdb = entry["id_tmdb"]
+            # Le dossier vient du tour précédent quand l'œuvre y était : c'est
+            # le cas de la quasi-totalité d'entre elles, puisqu'on régénère
+            # justement celles qui ont servi à entraîner.
+            built = dossiers.get(id_tmdb) or await build_dossier(conn, id_tmdb)
+            if built is None:
+                continue
+            vector = vectors.get(id_tmdb) or await _embedding(conn, settings, built)
+            await _store_internal(
+                conn,
+                id_tmdb=id_tmdb,
+                internal=_predict_all(vector, weights_json),
+                rubric_version=rubric_version,
+                prompt=entry["prompt"],
+                dossier_sha256=built["sha256"],
+                raw_source_id=built["rawSourceId"],
+            )
+            generated += 1
 
     return {
         "rubricVersion": rubric_version,
@@ -1062,15 +1050,23 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
     axes: list[str] = rubric["axes"]
 
     # La version par défaut des poids : la ligne la plus récente du journal
-    # pour ce barème. Chaque prompt a la sienne ; réentraîner redate et remet
-    # en tête.
+    # pour ce barème ET cet encodeur. Chaque prompt a la sienne ; réentraîner
+    # redate et remet en tête.
+    #
+    # L'encodeur entre dans la sélection parce que ses coefficients sont
+    # dimensionnés sur lui : prédire un vecteur de 384 nombres avec des poids
+    # appris sur 256 ne lèverait pas une erreur claire, ça produirait un
+    # résultat faux ou un plantage obscur. Changer d'encodeur rend donc les
+    # anciens poids invisibles — il faut réentraîner, et c'est bien ce qu'on
+    # veut.
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
             select id, weights, works, trained_at from notation.training_weights
-            where rubric_version = %s order by trained_at desc limit 1
+            where rubric_version = %s and embedder = %s
+            order by trained_at desc limit 1
             """,
-            (body.rubricVersion,),
+            (body.rubricVersion, EMBEDDER),
         )
         weights_row = await cur.fetchone()
     if weights_row is None:
@@ -1087,7 +1083,7 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
 
     async with httpx.AsyncClient() as http:
         try:
-            vector = await _embedding(conn, settings, http, built)
+            vector = await _embedding(conn, settings, built)
             llm_result: dict[str, Any] | None = None
             if body.runLlm:
                 llm_result = await score_openai(

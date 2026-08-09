@@ -349,17 +349,33 @@ async def fetch_cards(
                 vectors as (
                     select id_tmdb, jsonb_object_agg(axe, valeur) as axis_scores
                     from scores group by id_tmdb
+                ),
+                -- La prédiction de la régression, dans les mêmes conditions.
+                -- Elle sert à afficher l'écart avec le juge : c'est la mesure
+                -- de ce que le modèle interne a appris, œuvre par œuvre.
+                internes as (
+                    select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
+                    from notation.score
+                    where id_tmdb = any (array(select id from page))
+                      and valeur is not null and modele = 'interne-ridge'
+                    order by id_tmdb, axe, scored_at desc
+                ),
+                vecteurs_internes as (
+                    select id_tmdb, jsonb_object_agg(axe, valeur) as internal_scores
+                    from internes group by id_tmdb
                 )
                 {traductions}
                 select p.*,
                        coalesce(l.coverage, '{{}}'::jsonb) as coverage,
                        coalesce(t.expected, 0) as parts_expected,
                        sv.axis_scores,
+                       iv.internal_scores,
                        {traduction}
                 from page p
                 left join langs l on l.sid = p.id::text
                 left join parts t on t.sid = p.id::text
                 left join vectors sv on sv.id_tmdb = p.id
+                left join vecteurs_internes iv on iv.id_tmdb = p.id
                 {jointure}
                 order by {order_page}
                 """
@@ -441,6 +457,9 @@ def _shape_card(row: dict[str, Any], lang: str) -> dict[str, Any]:
         # doit pouvoir distinguer « pas encore notée » de « notée à zéro
         # partout », ce qui n'existe pas dans le barème.
         "axisScores": row.get("axis_scores"),
+        # La prédiction interne, à côté du verdict : l'écart entre les deux
+        # est la seule lecture directe de ce que la régression a appris.
+        "internalScores": row.get("internal_scores"),
         "expectedParts": expected,
         "coverage": {
             code: {"ok": int(value.get("ok") or 0), "failed": int(value.get("failed") or 0)}
@@ -609,6 +628,18 @@ async def fetch_work(
         )
         axis_scores = {row["axe"]: float(row["valeur"]) for row in await cur.fetchall()}
 
+        # La prédiction interne, pour afficher l'écart avec le juge.
+        await cur.execute(
+            """
+            select distinct on (axe) axe, valeur
+            from notation.score
+            where id_tmdb = %s and valeur is not null and modele = 'interne-ridge'
+            order by axe, scored_at desc
+            """,
+            (work_id,),
+        )
+        internal_scores = {row["axe"]: float(row["valeur"]) for row in await cur.fetchall()}
+
     by_season: dict[int, dict[str, Any]] = {}
     for row in collected:
         number = int(row["season"].removeprefix("s")) if row["season"].startswith("s") else -1
@@ -691,6 +722,7 @@ async def fetch_work(
         "seasons": seasons,
         "raw": {"fetchedAt": head["fetched_at"], "httpStatus": head["http_status"]},
         "axisScores": axis_scores or None,
+        "internalScores": internal_scores or None,
         "catalog": (
             {
                 "popularity": float(catalog["popularity"]),

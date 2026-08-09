@@ -1,4 +1,4 @@
-import { Group, Tooltip } from '@mantine/core'
+import { Badge, Group, Tooltip } from '@mantine/core'
 
 /**
  * L'ordre et le libellé français des six axes du barème v1
@@ -37,12 +37,27 @@ function orderedAxes(scores: Record<string, number>): { key: string; label: stri
  */
 export function AxisVector({
   scores,
+  internal,
   size = 'sm',
 }: {
   scores: Record<string, number> | null | undefined
+  /** La prédiction de la régression, quand elle existe. Elle ne s'affiche pas
+   *  en barres — deux séries de barres côte à côte se comparent mal à cette
+   *  taille — mais en un seul écart moyen, la mesure qui dit si le modèle
+   *  interne a rattrapé le juge sur cette œuvre. */
+  internal?: Record<string, number> | null
   size?: 'sm' | 'md'
 }) {
   if (!scores || Object.keys(scores).length === 0) return null
+
+  const ecarts = internal
+    ? orderedAxes(scores)
+        .filter(({ key }) => typeof internal[key] === 'number')
+        .map(({ key, label }) => ({ label, gap: Math.abs(scores[key] - internal[key]) }))
+    : []
+  const moyen = ecarts.length
+    ? ecarts.reduce((somme, e) => somme + e.gap, 0) / ecarts.length
+    : null
 
   const height = size === 'sm' ? 20 : 36
   const width = size === 'sm' ? 5 : 9
@@ -77,6 +92,27 @@ export function AxisVector({
           </Tooltip>
         )
       })}
+      {moyen !== null && (
+        <Tooltip
+          withinPortal
+          multiline
+          w={220}
+          label={
+            'Écart entre le juge et la régression interne, axe par axe : ' +
+            ecarts.map((e) => `${e.label} ${e.gap.toFixed(1)}`).join(', ') +
+            '. Au niveau du bruit (≤ 1), le modèle interne a rattrapé le juge.'
+          }
+        >
+          <Badge
+            size={size === 'sm' ? 'xs' : 'sm'}
+            variant="light"
+            color={moyen <= 1 ? 'teal' : moyen <= 2 ? 'yellow' : 'red'}
+            ml={4}
+          >
+            Δ {moyen.toFixed(1)}
+          </Badge>
+        </Tooltip>
+      )}
     </Group>
   )
 }

@@ -274,7 +274,7 @@ export function SeriesModal({
                     <Text size="xs" c="dimmed">
                       Vecteur de goût
                     </Text>
-                    <AxisVector scores={data.axisScores} size="md" />
+                    <AxisVector scores={data.axisScores} internal={data.internalScores} size="md" />
                   </Stack>
                 )}
 

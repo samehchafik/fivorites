@@ -48,6 +48,16 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
+# Les poids de l'encodeur entrent dans l'image, ils ne se téléchargent pas au
+# démarrage. Un conteneur qui va chercher 90 Mo sur Hugging Face à son premier
+# entraînement dépend d'un tiers pour fonctionner, échoue derrière un pare-feu,
+# et rend le démarrage non reproductible — trois raisons de payer ces mégaoctets
+# une fois, à la construction.
+ENV FIV_MODELS=/opt/models
+RUN --mount=type=cache,target=/root/.cache/uv \
+    .venv/bin/python -c "from fastembed import TextEmbedding; \
+        TextEmbedding('sentence-transformers/all-MiniLM-L6-v2', cache_dir='/opt/models')"
+
 # --- exécution ---------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim-bookworm
 
@@ -56,6 +66,7 @@ RUN useradd --system --create-home --uid 10002 fivorites
 
 WORKDIR /app
 COPY --from=builder --chown=fivorites:fivorites /app/.venv ./.venv
+COPY --from=builder --chown=fivorites:fivorites /opt/models /opt/models
 COPY --chown=fivorites:fivorites src ./src
 COPY --chown=fivorites:fivorites migrations ./migrations
 COPY --chown=fivorites:fivorites pyproject.toml ./
@@ -64,6 +75,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     MIGRATIONS_DIR=/app/migrations \
+    EMBED_CACHE_DIR=/opt/models \
     WEB_DIST=/srv/www \
     HOST=0.0.0.0 \
     PORT=8182

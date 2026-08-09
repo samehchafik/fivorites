@@ -110,7 +110,7 @@ export function SeriesCard({
 
           {/* Le vecteur de goût — absent tant que rien n'est noté, donc pas de
               ligne ni d'espace réservé sur les cartes qui ne l'ont pas encore. */}
-          <AxisVector scores={card.axisScores} size="sm" />
+          <AxisVector scores={card.axisScores} internal={card.internalScores} size="sm" />
 
           <Text size="xs" c="dimmed" lineClamp={3} dir="auto">
             {card.overview || 'Pas de synopsis dans le brut collecté.'}

@@ -157,6 +157,10 @@ export interface Card {
    *  tant que la série n'a jamais été jugée : pas un objet vide, une absence.
    *  Facultatif : une API plus ancienne que le front ne le renvoie pas. */
   axisScores?: Record<string, number> | null
+  /** La prédiction de la régression interne, mêmes axes. Affichée non pas
+   *  pour elle-même mais pour son écart au juge : c'est la lecture directe
+   *  de ce que le modèle a appris sur cette œuvre. */
+  internalScores?: Record<string, number> | null
   expectedParts: number
   coverage: Record<string, { ok: number; failed: number }>
   selected: { lang: string; ok: number; failed: number; ratio: number | null }
@@ -262,6 +266,8 @@ export interface Work {
    *  vignette : `null` tant que la série n'a jamais été jugée, et facultatif
    *  parce qu'une API plus ancienne que le front ne le renvoie pas. */
   axisScores?: Record<string, number> | null
+  /** La prédiction interne, pour l'écart au juge. */
+  internalScores?: Record<string, number> | null
   catalog: { popularity: number; adult: boolean; exportedOn: string } | null
 }
 
