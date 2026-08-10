@@ -218,6 +218,7 @@ rafraîchie — et le front doit pouvoir les distinguer.
 | `catalog refresh` | recalcule la projection |
 | `training note -n <N>` | note les N séries les plus populaires pas encore jugées |
 | `training poids` | réentraîne la régression sur toutes les notes du barème |
+| `training encodeurs` | compare des encodeurs sur les notes rendues, sans rien écrire |
 
 `training note` est le remplissage de la phase 1 : la page Training note une
 œuvre à la fois, ce que soixante œuvres rendent intenable. Elle emprunte
@@ -268,6 +269,14 @@ docker compose run --rm admin training poids
 Il affiche le MAE de validation croisée par axe : c'est lui qui compte, pas le
 MAE d'ajustement, car il mesure ce que les poids feraient sur une œuvre jamais
 vue.
+
+`training encodeurs` répond à la question ouverte n°5 du plan de notation —
+« quel encodeur pour la traîne ? » — par la mesure. Les classements publics
+évaluent de la recherche documentaire ; notre tâche est une régression vers six
+axes de goût, et rien ne garantit que l'ordre se transpose. La commande rejoue
+donc l'entraînement avec chaque encodeur candidat et compare les erreurs de
+validation croisée. Elle n'écrit rien : le modèle retenu se change à la main
+dans `embed.py`, puis on réentraîne.
 
 L'ordre est celui du catalogue — popularité, puis note des votants. Ce n'est
 pas un biais de confort : les œuvres les plus vues ont les dossiers les plus

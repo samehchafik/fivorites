@@ -824,6 +824,90 @@ class TrainIn(BaseModel):
     rubricVersion: str
 
 
+# Les encodeurs mis en concurrence par `training encodeurs`. Tous à contexte
+# long sauf le dernier, gardé comme témoin : il est réputé meilleur sur les
+# classements publics mais ne lit que 512 tokens, et c'est précisément
+# l'hypothèse qu'on veut tester — la fenêtre pèse-t-elle plus que la qualité
+# brute de la représentation ?
+#
+# Les classements publics mesurent de la recherche documentaire ; notre tâche
+# est une régression linéaire vers six axes de goût. Rien ne garantit que
+# l'ordre se transpose, d'où cette comparaison sur les notes réelles.
+ENCODEURS_CANDIDATS = (
+    "jinaai/jina-embeddings-v2-small-en",
+    "nomic-ai/nomic-embed-text-v1.5-Q",
+    "jinaai/jina-embeddings-v2-base-en",
+    "BAAI/bge-small-en-v1.5",
+)
+
+
+async def comparer_encodeurs(
+    conn: Any, settings: Any, rubric: dict[str, Any], modeles: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """Met des encodeurs en concurrence sur les notes déjà rendues.
+
+    Le protocole est celui de l'entraînement, à ceci près qu'il ne stocke
+    rien : mêmes œuvres, mêmes notes, même régression, seul l'encodeur change.
+    On compare des erreurs de validation croisée — ce que chaque encodeur
+    permettrait de prédire sur une œuvre jamais vue.
+
+    Rien n'est écrit en base, et surtout pas dans `notation.embedding` : y
+    ranger les vecteurs des candidats écartés mêlerait des espaces vectoriels
+    incompatibles dans la table qui sert la production.
+    """
+    axes: list[str] = rubric["axes"]
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
+            from notation.score
+            where rubric_version = %s and modele <> %s and modele not like 'claude%%'
+              and valeur is not null
+            order by id_tmdb, axe, scored_at desc
+            """,
+            (rubric["version"], INTERNAL_MODEL),
+        )
+        rows = await cur.fetchall()
+
+    by_work: dict[int, dict[str, float]] = {}
+    for row in rows:
+        by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
+    if len(by_work) < MIN_TRAINING_WORKS:
+        raise PasAssezDOeuvres(len(by_work))
+
+    # Les dossiers, assemblés une seule fois : c'est la partie lente, et elle
+    # ne dépend pas de l'encodeur qu'on évalue.
+    textes: dict[int, str] = {}
+    for id_tmdb in by_work:
+        built = await build_dossier(conn, id_tmdb)
+        if built is not None:
+            textes[id_tmdb] = built["text"]
+
+    ids = [i for i in by_work if i in textes]
+    resultats: list[dict[str, Any]] = []
+    for modele in modeles:
+        vecteurs = await asyncio.to_thread(
+            embed_texts,
+            [textes[i] for i in ids],
+            cache_dir=settings.embed_cache_dir,
+            model=modele,
+        )
+        par_oeuvre = dict(zip(ids, vecteurs, strict=True))
+
+        par_axe: list[dict[str, Any]] = []
+        for axe in axes:
+            paires = [(par_oeuvre[i], by_work[i][axe]) for i in ids if axe in by_work[i]]
+            if len(paires) < MIN_TRAINING_WORKS:
+                continue
+            poids = train_axis(axe, [p[0] for p in paires], [p[1] for p in paires])
+            par_axe.append({"axe": axe, "maeCv": poids.mae_cv, "lambda": poids.lam})
+        moyenne = sum(a["maeCv"] for a in par_axe) / len(par_axe) if par_axe else None
+        resultats.append(
+            {"modele": modele, "dims": len(vecteurs[0]), "moyenne": moyenne, "axes": par_axe}
+        )
+    return sorted(resultats, key=lambda r: r["moyenne"] if r["moyenne"] is not None else 9)
+
+
 class PasAssezDOeuvres(RuntimeError):
     """Moins d'œuvres notées que le minimum : entraîner n'aurait pas de sens."""
 

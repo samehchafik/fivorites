@@ -46,8 +46,8 @@ DIMENSIONS = 512
 EMBEDDER = "jina-v2-small-en@512"
 
 
-@lru_cache(maxsize=1)
-def _model(cache_dir: str | None) -> Any:
+@lru_cache(maxsize=4)
+def _model(cache_dir: str | None, name: str) -> Any:
     """Le modèle, chargé une fois par processus.
 
     Quatre à cinq secondes au premier appel, une fraction de milliseconde
@@ -55,7 +55,7 @@ def _model(cache_dir: str | None) -> Any:
     """
     from fastembed import TextEmbedding
 
-    return TextEmbedding(MODEL_NAME, cache_dir=cache_dir)
+    return TextEmbedding(name, cache_dir=cache_dir)
 
 
 # 8 192 tokens ≈ 30 000 caractères de texte anglais. Le plafond est posé bien
@@ -66,8 +66,14 @@ def _model(cache_dir: str | None) -> Any:
 MAX_CHARS = 30_000
 
 
-def embed_texts(texts: list[str], *, cache_dir: str | None = None) -> list[list[float]]:
+def embed_texts(
+    texts: list[str], *, cache_dir: str | None = None, model: str | None = None
+) -> list[list[float]]:
     """Les vecteurs d'une liste de dossiers, dans l'ordre reçu.
+
+    `model` n'existe que pour la comparaison d'encodeurs (`training encodeurs`)
+    et n'est jamais passé par le chemin de production : celui-ci utilise le
+    modèle figé, sans quoi la table mélangerait des espaces vectoriels.
 
     Par lot plutôt qu'un par un : l'inférence ONNX vectorise, et vingt textes
     coûtent bien moins que vingt fois un seul. C'est ce qui rend l'encodage de
@@ -77,4 +83,4 @@ def embed_texts(texts: list[str], *, cache_dir: str | None = None) -> list[list[
     if not texts:
         return []
     tronques = [text[:MAX_CHARS] for text in texts]
-    return [vector.tolist() for vector in _model(cache_dir).embed(tronques)]
+    return [vector.tolist() for vector in _model(cache_dir, model or MODEL_NAME).embed(tronques)]

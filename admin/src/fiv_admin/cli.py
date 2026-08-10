@@ -284,6 +284,80 @@ def training_poids(
     _run(run())
 
 
+@training_app.command("encodeurs")
+def training_encodeurs(
+    bareme: Annotated[
+        str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
+    ] = None,
+    modeles: Annotated[
+        str | None,
+        typer.Option("--modeles", help="Liste séparée par des virgules. Défaut : les candidats."),
+    ] = None,
+) -> None:
+    """Compare des encodeurs sur les notes déjà rendues, et n'écrit rien.
+
+    C'est la façon de trancher la question ouverte n°5 du plan — « quel
+    encodeur pour la traîne ? » — par la mesure plutôt que par les classements
+    publics, qui évaluent de la recherche documentaire et non une régression
+    vers six axes de goût.
+
+    Le protocole est celui de l'entraînement : mêmes œuvres, mêmes notes, même
+    régression ; seul l'encodeur change. Le chiffre comparé est l'erreur de
+    validation croisée, c'est-à-dire ce que chaque encodeur permettrait de
+    prédire sur une œuvre jamais vue.
+
+    Rien n'est stocké : ni vecteurs, ni poids. Changer d'encodeur reste un
+    geste explicite, à faire dans `embed.py` au vu de ces chiffres.
+    """
+    from fiv_admin.routes.training import (
+        ENCODEURS_CANDIDATS,
+        PasAssezDOeuvres,
+        _rubric,
+        comparer_encodeurs,
+    )
+
+    settings = get_settings()
+    candidats = tuple(m.strip() for m in modeles.split(",")) if modeles else ENCODEURS_CANDIDATS
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            if bareme:
+                rubric = await _rubric(conn, bareme)
+            else:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric"
+                        " order by created_at desc limit 1"
+                    )
+                    rubric = await cur.fetchone()
+                if rubric is None:
+                    typer.echo("aucun barème en base.")
+                    raise typer.Exit(1)
+
+            typer.echo(
+                f"barème {rubric['version']} · {len(candidats)} encodeur(s) à comparer"
+                " — le premier passage télécharge les modèles."
+            )
+            try:
+                resultats = await comparer_encodeurs(conn, settings, rubric, candidats)
+            except PasAssezDOeuvres as exc:
+                typer.echo(f"ERREUR : {exc}")
+                raise typer.Exit(1) from exc
+
+            typer.echo("\nErreur de validation croisée — plus bas est meilleur :\n")
+            for rang, r in enumerate(resultats, start=1):
+                moy = f"{r['moyenne']:.3f}" if r["moyenne"] is not None else "—"
+                typer.echo(f"  {rang}. {r['modele']:<40} {r['dims']:>4} dims   moyenne {moy}")
+                detail = "  ".join(f"{a['axe'][:3]} {a['maeCv']:.2f}" for a in r["axes"])
+                typer.echo(f"     {detail}")
+            typer.echo(
+                "\nLe modèle retenu se change dans admin/src/fiv_admin/embed.py"
+                " (MODEL_NAME, DIMENSIONS, EMBEDDER), puis on réentraîne."
+            )
+
+    _run(run())
+
+
 @catalog_app.command("refresh")
 def catalog_refresh() -> None:
     """Recalcule les vignettes depuis le brut.
