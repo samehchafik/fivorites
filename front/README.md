@@ -118,6 +118,7 @@ lire.
 ?tri=note:desc                      trie par note décroissante
 ?puis=popularite:desc               départage à valeur égale
 ?puis=aucun                         retire le départage
+?page=3                             la page de la grille
 ?id=1399&onglet=training1           la fiche, ouverte sur l'atelier Training 1
 ?id=1399&lang=ar-SA&filtre=image    plusieurs à la fois
 ```
@@ -127,6 +128,11 @@ Les noms des tris se tapent comme ils se lisent — `date`, `annee`, `titre`,
 `?tri=note:desc`, parce que « les mieux notées » est ce qu'on veut neuf fois sur
 dix. `puis=aucun` existe parce que le défaut *a* un départage : sans mot pour
 dire son absence, l'avoir retiré ne survivrait pas au partage du lien.
+
+`?page=1` ne s'écrit jamais : contrairement à la langue ou au tri, ce n'est pas
+une préférence dont le défaut pourrait changer, c'est le début de la liste.
+Changer un filtre ou un tri ramène à la première page — mais pas au chargement,
+sinon un `?page=3` partagé ouvrirait la page 1 sans rien dire.
 
 L'URL est **la source au chargement**, puis l'état la réécrit : la barre
 d'adresse est donc toujours copiable telle quelle, et une URL collée dans une

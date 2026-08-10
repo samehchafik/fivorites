@@ -146,8 +146,9 @@ que la grille la contienne n'a pas de flèches, faute de voisines à désigner.
 
 ### La langue
 
-Le sélecteur est dans l'en-tête **et** dans la fiche : c'est le même état, pas
-une copie. Il change cinq choses :
+Le sélecteur est dans l'en-tête **et** sur la barre d'onglets de la fiche —
+c'est le même état, pas une copie, et depuis la fiche il reste sous les yeux au
+lieu de disparaître au premier défilement. Il change cinq choses :
 
 * le compteur de couverture de chaque carte et de chaque ligne ;
 * **le pays** dont on affiche les plateformes de streaming ;
@@ -167,6 +168,7 @@ complète serait le contraire de ce que ce tableau de bord mesure.
 ?lang=ar-SA                         choisit la langue
 ?filtre=image,description           coche les deux cases et applique les filtres
 ?tri=note:desc&puis=popularite:desc les deux critères de tri, et leur sens
+?page=3                             la page de la grille
 ?id=1399&onglet=training1           ouvre la fiche directement sur l'atelier Training 1
 ```
 

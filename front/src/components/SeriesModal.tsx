@@ -190,17 +190,39 @@ export function SeriesModal({
           onChange={(next) => next && onTab(next as ModalTab)}
           keepMounted={false}
         >
-          <Tabs.List px="lg" pt="xs">
-            <Tabs.Tab value="presentation" leftSection={<IconId size={16} />}>
-              {data.name ?? `Série ${data.id}`}
-            </Tabs.Tab>
-            <Tabs.Tab value="training1" leftSection={<IconSchool size={16} />}>
-              Training 1
-            </Tabs.Tab>
-            <Tabs.Tab value="training2" leftSection={<IconScale size={16} />}>
-              Training 2
-            </Tabs.Tab>
-          </Tabs.List>
+          {/* La langue se choisit sur la barre d'onglets, pas dans le corps
+              de la fiche : elle y était, sous les liens externes, mais elle
+              disparaissait au premier défilement — or c'est précisément en
+              lisant un synopsis qu'on veut basculer. Ici elle reste sous les
+              yeux, et elle vaut pour les trois onglets.
+
+              Des drapeaux plutôt qu'une liste déroulante : cinq choix, et l'on
+              bascule souvent de l'un à l'autre pour comparer. */}
+          <Group justify="space-between" align="center" px="lg" pt="xs" wrap="nowrap" gap="md">
+            <Tabs.List style={{ flex: 1 }}>
+              <Tabs.Tab value="presentation" leftSection={<IconId size={16} />}>
+                {data.name ?? `Série ${data.id}`}
+              </Tabs.Tab>
+              <Tabs.Tab value="training1" leftSection={<IconSchool size={16} />}>
+                Training 1
+              </Tabs.Tab>
+              <Tabs.Tab value="training2" leftSection={<IconScale size={16} />}>
+                Training 2
+              </Tabs.Tab>
+            </Tabs.List>
+
+            {languages.length > 1 && (
+              <SegmentedControl
+                size="xs"
+                value={lang}
+                onChange={onLang}
+                data={languages.map((entry) => ({
+                  value: entry.code,
+                  label: `${entry.flag} ${entry.code.slice(0, 2).toUpperCase()}`,
+                }))}
+              />
+            )}
+          </Group>
 
           <Tabs.Panel value="presentation">
         <Stack gap={0}>
@@ -336,27 +358,6 @@ export function SeriesModal({
                   )}
                 </Group>
 
-                {/* Le même sélecteur qu'en en-tête, à portée de main là où la
-                    langue compte le plus : c'est ici que le texte change
-                    vraiment, pas seulement un compteur. Des drapeaux plutôt
-                    qu'une liste déroulante — cinq choix, et l'on bascule
-                    souvent de l'un à l'autre pour comparer. */}
-                {languages.length > 1 && (
-                  <Group gap="xs" align="center">
-                    <Text size="xs" c="dimmed">
-                      Afficher en
-                    </Text>
-                    <SegmentedControl
-                      size="xs"
-                      value={lang}
-                      onChange={onLang}
-                      data={languages.map((entry) => ({
-                        value: entry.code,
-                        label: `${entry.flag} ${entry.code.slice(0, 2).toUpperCase()}`,
-                      }))}
-                    />
-                  </Group>
-                )}
               </Stack>
             </Group>
           </Box>

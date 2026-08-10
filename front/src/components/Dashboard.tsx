@@ -17,7 +17,7 @@ import { useDebouncedValue } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { IconAlertTriangle, IconLogout, IconRefresh, IconUser } from '@tabler/icons-react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { ApiError, api } from '../api'
 import { formatNumber } from '../display'
@@ -100,7 +100,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     withPoster: depuisUrl.withPoster,
     withOverview: depuisUrl.withOverview,
   })
-  const [gridPage, setGridPage] = useState(1)
+  const [gridPage, setGridPage] = useState(depuisUrl.page ?? 1)
   // Le passage d'une page à l'autre par les flèches de la fiche. On ne peut pas
   // ouvrir la voisine tout de suite : elle est sur la page suivante, qui n'est
   // pas encore chargée. On note donc quelle page on attend et par quel bout la
@@ -126,6 +126,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       lang,
       tri: { cle: grid.sort, sens: grid.order },
       puis: { cle: grid.sort2, sens: grid.order2 },
+      page: gridPage,
       withPoster: grid.withPoster,
       withOverview: grid.withOverview,
     })
@@ -139,6 +140,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     grid.order2,
     grid.withPoster,
     grid.withOverview,
+    gridPage,
   ])
 
   const meta = useQuery<Meta>({ queryKey: ['meta'], queryFn: api.meta, staleTime: 5 * 60_000 })
@@ -283,7 +285,18 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     filters.order,
     filters.pageSize,
   ])
-  useEffect(() => setGridPage(1), [
+  // Changer de tri ou de filtre ramène à la première page — mais **pas au
+  // premier rendu** : l'URL vient d'y poser la page demandée, et cet effet la
+  // remettrait à 1 avant que rien ne soit affiché. Un `?page=3` partagé
+  // ouvrirait la page 1, silencieusement.
+  const premierRendu = useRef(true)
+  useEffect(() => {
+    if (premierRendu.current) {
+      premierRendu.current = false
+      return
+    }
+    setGridPage(1)
+  }, [
     lang,
     gridSearch,
     grid.sort,

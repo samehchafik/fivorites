@@ -8,6 +8,7 @@
  *     ?filtre=image,description
  *     ?lang=ar-SA
  *     ?tri=note:desc&puis=popularite:desc
+ *     ?page=3
  *     ?id=1399&lang=ar-SA&filtre=description
  *
  * Le sens de la lecture compte : **l'URL est la source**, l'état de
@@ -99,6 +100,8 @@ export interface UrlState {
   tri: Tri | null
   /** Le départage — `cle: ''` veut dire « aucun », explicitement. */
   puis: Tri | null
+  /** La page de la grille, ou null pour la première. */
+  page: number | null
   withPoster: boolean
   withOverview: boolean
 }
@@ -124,6 +127,9 @@ export function readUrl(search = window.location.search): UrlState {
 
   const lang = params.get('lang')
 
+  const numero = params.get('page')
+  const page = numero === null ? Number.NaN : Number(numero)
+
   // Un onglet inconnu retombe sur la présentation, comme un tri inconnu garde
   // le défaut : une URL abîmée ouvre quelque chose plutôt que rien.
   const onglet = params.get('onglet')
@@ -134,6 +140,7 @@ export function readUrl(search = window.location.search): UrlState {
     lang: lang !== null && CODE_LANGUE.test(lang) ? lang : null,
     tri: lireTri(params.get('tri')),
     puis: lireTri(params.get('puis'), true),
+    page: Number.isInteger(page) && page > 1 ? page : null,
     withPoster: actifs.includes('image'),
     withOverview: actifs.includes('description'),
   }
@@ -167,6 +174,13 @@ export function writeUrl(state: UrlState, replace = true): void {
 
   if (state.puis !== null) params.set('puis', ecrireTri(state.puis))
   else params.delete('puis')
+
+  // La première page ne s'écrit pas. Contrairement à la langue ou au tri, ce
+  // n'est pas une préférence dont le défaut pourrait changer : c'est le début
+  // de la liste, et un `?page=1` traînerait dans toutes les URL sans jamais
+  // rien apprendre à personne.
+  if (state.page !== null && state.page > 1) params.set('page', String(state.page))
+  else params.delete('page')
 
   const filtres = (Object.keys(FILTRES) as (keyof typeof FILTRES)[]).filter(
     (nom) => state[FILTRES[nom]],
