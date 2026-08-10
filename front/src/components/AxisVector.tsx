@@ -1,26 +1,41 @@
 import { Badge, Group, Tooltip } from '@mantine/core'
 
 /**
- * L'ordre et le libellé français des six axes du barème v1
- * (doc/v2-notation-axes.md). Un axe inconnu — un futur barème qui en ajoute
- * un septième — s'affiche quand même, avec son nom brut : l'ordre n'est ici
- * qu'un confort de lecture, jamais une liste fermée.
+ * L'ordre, le libellé français et la teinte des dimensions connues.
+ *
+ * En tête, les six de l'empreinte culturelle (barème `empreinte-v1`), qui est
+ * le référentiel courant. À la suite, les six axes de goût des barèmes v1 et
+ * v2 : leurs notes restent en base et l'atelier permet de les relire, donc
+ * elles gardent leur libellé. Une dimension inconnue s'affiche quand même,
+ * avec son nom brut — l'ordre n'est qu'un confort de lecture, jamais une
+ * liste fermée.
  */
 const KNOWN_AXES = [
-  { key: 'luminosite', label: 'Luminosité' },
-  { key: 'intensite', label: 'Intensité' },
-  { key: 'humour', label: 'Humour' },
-  { key: 'exigence', label: 'Exigence' },
-  { key: 'etrangete', label: 'Étrangeté' },
-  { key: 'sensoriel', label: 'Sensoriel' },
+  { key: 'joie', label: 'Joie', color: 'yellow' },
+  { key: 'reve', label: 'Rêve', color: 'violet' },
+  { key: 'tristesse', label: 'Tristesse', color: 'blue' },
+  { key: 'peur', label: 'Peur', color: 'dark' },
+  { key: 'reflexion', label: 'Réflexion', color: 'teal' },
+  { key: 'action', label: 'Action', color: 'red' },
+
+  { key: 'luminosite', label: 'Luminosité', color: 'indigo' },
+  { key: 'intensite', label: 'Intensité', color: 'indigo' },
+  { key: 'humour', label: 'Humour', color: 'indigo' },
+  { key: 'exigence', label: 'Exigence', color: 'indigo' },
+  { key: 'etrangete', label: 'Étrangeté', color: 'indigo' },
+  { key: 'sensoriel', label: 'Sensoriel', color: 'indigo' },
 ]
 
-function orderedAxes(scores: Record<string, number>): { key: string; label: string }[] {
+const DEFAULT_COLOR = 'indigo'
+
+type Axe = { key: string; label: string; color: string }
+
+function orderedAxes(scores: Record<string, number>): Axe[] {
   const known = KNOWN_AXES.filter((axe) => axe.key in scores)
   const rest = Object.keys(scores)
     .filter((key) => !KNOWN_AXES.some((axe) => axe.key === key))
     .sort()
-    .map((key) => ({ key, label: key }))
+    .map((key) => ({ key, label: key, color: DEFAULT_COLOR }))
   return [...known, ...rest]
 }
 
@@ -30,10 +45,15 @@ function orderedAxes(scores: Record<string, number>): { key: string; label: stri
  * une série jamais jugée — ni barres vides, ni tirets : le silence dit « pas
  * encore notée » mieux qu'un rang de zéros, qui n'existe pas dans le barème.
  *
- * Volontairement une seule teinte : les six axes ne partagent pas d'échelle
- * de qualité — humour élevé n'est ni mieux ni moins bien qu'humour faible —
- * une couleur par axe suggérerait un classement qui n'existe pas. Seule la
- * hauteur porte l'information.
+ * Une teinte par dimension, mais seulement pour l'empreinte culturelle. Les
+ * axes de goût s'affichaient d'une seule couleur, et pour une bonne raison :
+ * ils ne partagent pas d'échelle de qualité — humour élevé n'est ni mieux ni
+ * moins bien qu'humour faible — donc une couleur par axe aurait suggéré un
+ * classement inexistant. L'argument tombe avec des émotions nommées : Joie et
+ * Peur ne se rangent pas non plus l'une devant l'autre, mais elles ont chacune
+ * une couleur que tout le monde leur donne déjà, et l'empreinte devient
+ * reconnaissable d'un coup d'œil. Les barèmes v1 et v2 gardent donc leur
+ * teinte unique.
  */
 export function AxisVector({
   scores,
@@ -64,7 +84,7 @@ export function AxisVector({
 
   return (
     <Group gap={size === 'sm' ? 3 : 5} align="flex-end" wrap="nowrap">
-      {orderedAxes(scores).map(({ key, label }) => {
+      {orderedAxes(scores).map(({ key, label, color }) => {
         const value = scores[key]
         return (
           <Tooltip key={key} label={`${label} : ${value}/10`} withinPortal>
@@ -84,7 +104,7 @@ export function AxisVector({
                 style={{
                   width: '100%',
                   height: `${(value / 10) * 100}%`,
-                  background: 'var(--mantine-color-indigo-5)',
+                  background: `var(--mantine-color-${color}-5)`,
                   borderRadius: 2,
                 }}
               />

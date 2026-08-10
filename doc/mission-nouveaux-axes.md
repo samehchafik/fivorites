@@ -1,5 +1,16 @@
 # Mission : ajouter six axes au barème
 
+> **Mise à jour du 2026-08-10** — la décision prise n'a pas été d'*ajouter* six
+> axes mais de **remplacer** les six existants par les dimensions de
+> l'empreinte culturelle (voir
+> [`mission-empreinte-culturelle.md`](mission-empreinte-culturelle.md), livré
+> par la migration `009_empreinte_v1.sql`).
+>
+> Cette note garde toute sa valeur pour ce qui compte : **§3** (comment un axe
+> est calculé, de bout en bout) et **§5** (les règles de conception, chacune
+> tirée d'une panne réelle) ont directement servi à rédiger le nouveau barème.
+> Seuls les §1, §4 et §7 raisonnent sur une addition plutôt qu'un remplacement.
+
 Note de passation, rédigée le 2026-08-10. Elle est **autonome** : elle contient
 tout ce qu'il faut pour concevoir six nouveaux axes et les mettre en service,
 sans autre lecture. Les renvois à [`v2-notation-axes.md`](v2-notation-axes.md)

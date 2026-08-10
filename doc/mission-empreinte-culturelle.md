@@ -301,13 +301,12 @@ Pour être complet, et parce que ces gains sont réels :
 
 ## 9. Plan de bascule
 
-1. **Arrêter le barème** — les six définitions et leurs ancres (proposition en
-   §11). *C'est la seule étape qui demande une décision ; tout le reste est
-   mécanique.*
-2. **Écrire la migration** `009_empreinte_v1.sql` : prompt complet à six
-   dimensions, `axes` en jsonb, `note` expliquant la rupture. **Ne pas toucher
-   à v1 ni v2** — le schéma est append-only, elles restent lisibles et
-   comparables pour rien.
+1. ~~**Arrêter le barème**~~ — **fait**, §11.
+2. ~~**Écrire la migration** `009_empreinte_v1.sql`~~ — **fait**. v1 et v2 sont
+   intactes ; le barème le plus récent devenant le défaut, `empreinte-v1` est
+   désormais celui que l'atelier et la ligne de commande appliquent.
+   Les libellés et couleurs du front sont posés dans le même geste.
+   **Reste à appliquer sur le serveur :** `db migrate`.
 3. **Noter 30 à 50 œuvres** avec le juge, examiner à la main dans l'atelier,
    contre-noter avec Claude, corriger les définitions qui divergent. Itérer ici
    coûte quelques centimes ; itérer après 500 œuvres coûte une version.

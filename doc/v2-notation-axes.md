@@ -1,5 +1,30 @@
 # Le système de notation — des axes au vecteur
 
+> ## ⚠️ Référentiel remplacé le 2026-08-10
+>
+> Les six axes de goût décrits ici (`luminosite`, `intensite`, `humour`,
+> `exigence`, `etrangete`, `sensoriel`) **ne sont plus le référentiel courant**.
+> Ils cèdent la place aux six dimensions de l'**empreinte culturelle** du
+> programme de R&D — Joie, Rêve, Tristesse, Peur, Réflexion, Action — livrées
+> par la migration `009_empreinte_v1.sql`.
+>
+> Voir [`mission-empreinte-culturelle.md`](mission-empreinte-culturelle.md) pour
+> le barème, l'analyse d'impact et ce qui reste à faire.
+>
+> **Ce qui reste valable ici** : §1 (le principe d'un axe-mesure), §3 (comment
+> on obtient les nombres — ancrage, matière, budget, contrôle qualité), §4 (le
+> stockage, inchangé), §6 (le cross-média) et §8 (comment valider).
+>
+> **Ce qui est périmé** : §2 (les six axes eux-mêmes et leurs frottements) et
+> §7 (les décisions ouvertes, qui portaient sur ces axes-là).
+>
+> **Ce qui est à réécrire, et pas seulement à retoucher : le §5.** Le vecteur
+> utilisateur y est construit sur « position + tolérance par axe », avec une
+> pondération par l'inverse de la variance. Ce raisonnement vaut pour des axes
+> bipolaires ; les six nouvelles dimensions sont des **composantes d'un
+> mélange**, et la distance devient un cosine. Le détail du problème est en
+> §5.1 et §5.2 de la note d'impact.
+
 > Spécification de la **couche 2** (les axes de goût). La couche 1 (collecte) est décrite
 > dans [`v2-acquisition-series.md`](v2-acquisition-series.md) et implémentée dans
 > `sourcing/`. La couche 3 (facettes d'usage) est déduite des deux premières et n'a pas
