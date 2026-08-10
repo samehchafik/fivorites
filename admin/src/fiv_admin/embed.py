@@ -58,12 +58,21 @@ def _model(cache_dir: str | None, name: str) -> Any:
     return TextEmbedding(name, cache_dir=cache_dir)
 
 
-# 8 192 tokens ≈ 30 000 caractères de texte anglais. Le plafond est posé bien
-# au-dessus des dossiers courants (~5 000) et sert de garde-fou aux fiches
-# hors gabarit — une série de vingt-deux saisons cumule des résumés sans
-# limite. Tronquer là est sans conséquence : on coupe la fin de la dernière
-# section, pas une section entière.
-MAX_CHARS = 30_000
+# La mémoire de l'attention croît avec le CARRÉ de la longueur, multipliée
+# par la taille du lot. Les premiers réglages — 30 000 caractères, lot de 256
+# hérité du défaut de fastembed — ont demandé 198 Go sur le serveur : la
+# comparaison d'encodeurs est morte au premier lot. Les deux bornes vont donc
+# ensemble, et se calculent au lieu de se mesurer :
+#
+#   mémoire ≈ lot × têtes × tokens² × 4 octets
+#   4 × 8 × 3 000² × 4  ≈  1,2 Go   — tenable partout, serveur compris
+#
+# 12 000 caractères ≈ 3 000 tokens : plus du double du dossier courant
+# (~5 000 caractères), donc la troncature ne touche que les fiches hors
+# gabarit — celles qui cumulent vingt saisons de résumés — et leur coupe la
+# fin de la dernière section, pas une section entière.
+MAX_CHARS = 12_000
+LOT = 4
 
 
 def embed_texts(
@@ -83,4 +92,5 @@ def embed_texts(
     if not texts:
         return []
     tronques = [text[:MAX_CHARS] for text in texts]
-    return [vector.tolist() for vector in _model(cache_dir, model or MODEL_NAME).embed(tronques)]
+    modele = _model(cache_dir, model or MODEL_NAME)
+    return [vector.tolist() for vector in modele.embed(tronques, batch_size=LOT)]
