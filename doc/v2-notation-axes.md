@@ -516,7 +516,7 @@ se déduit de son historique, pas d'un paramètre déclaré.
 | 2 | Combien d'ancres par axe, et faut-il un jeu par aire culturelle ? | fidélité test-retest par aire |
 | 3 | La valeur de `k` dans la contraction (§5.2) | validation croisée sur la reconstitution des fives |
 | 4 | Le seuil de confiance d'entrée en production | courbe précision/couverture |
-| 5 | Modèle distillé : quel encodeur pour la traîne ? | après avoir noté la tête |
+| 5 | ~~Modèle distillé : quel encodeur pour la traîne ?~~ **Tranchée le 2026-08-10** : `jina-embeddings-v2-small-en` (local, ONNX, 8 192 tokens). Mesuré sur 149 œuvres notées contre nomic-v1.5 (1,038) et bge-small (1,042) : égalité à 0,006 près, MAE cv ≈ 1,04 pour les trois — la représentation n'est pas le goulot. On garde le plus léger déjà en place. | `fiv-admin training encodeurs` pour re-mesurer |
 
 **La question 1 est bloquante pour le reste** : elle change le nombre d'axes, donc le schéma,
 les ancres et le coût de notation. Elle se répond en quelques jours.
