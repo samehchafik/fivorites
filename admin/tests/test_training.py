@@ -750,6 +750,37 @@ def test_la_ridge_discrimine_des_embeddings_normalises() -> None:
     assert poids.mae_cv < 1.0, "la validation croisée doit trouver un λ qui généralise ici"
 
 
+def test_la_recalibration_rend_leurs_extremes_aux_predictions() -> None:
+    """Le cas Always Sunny : le juge dit 9, la ridge rendait 7. La
+    régularisation comprime l'échelle vers la moyenne — pente mesurée entre
+    0,49 et 0,68 en production — et la recalibration l'inverse, mesurée sur
+    les prédictions hors-pli. On vérifie ici qu'un signal bruité mais réel
+    ressort à la bonne amplitude, pas seulement dans le bon ordre."""
+    rng = random.Random(7)
+    dims, n = 128, 60
+    vx, vy = [], []
+    for _ in range(n):
+        signal = rng.uniform(-1, 1)
+        v = [0.0] * dims
+        v[0] = 0.1 * signal
+        v[1] = 0.95
+        for j in range(2, dims):
+            v[j] = rng.gauss(0, 0.03)
+        vx.append(v)
+        vy.append(max(1.0, min(10.0, 5.5 + 3.5 * signal + rng.gauss(0, 0.6))))
+
+    poids = train_axis("test", vx, vy)
+    preds = [predict(v, poids.intercept, poids.coef) for v in vx]
+
+    assert poids.pente > 1.0, "la compression existe : la calibration doit s'engager"
+    etendue_reelle = max(vy) - min(vy)
+    etendue_predite = max(preds) - min(preds)
+    assert etendue_predite > 0.7 * etendue_reelle, (
+        f"étendue prédite {etendue_predite:.1f} contre réelle {etendue_reelle:.1f} — "
+        "les extrêmes restent écrasés malgré la calibration"
+    )
+
+
 def test_la_ridge_ne_recopie_pas_le_juge() -> None:
     """Le bug du second lot réel : 41 œuvres, 256 dimensions, et une régression
     qui rendait EXACTEMENT les notes d'OpenAI — maeFit à 0,003. Avec moins

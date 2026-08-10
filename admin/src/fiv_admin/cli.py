@@ -268,7 +268,8 @@ def training_poids(
                 else:
                     typer.echo(
                         f"  {axe['axe']:12s} MAE cv {axe['maeCv']:5.2f}"
-                        f"  (ajustement {axe['maeFit']:5.2f}, lambda {axe['lambda']})"
+                        f"  (ajustement {axe['maeFit']:5.2f}, lambda {axe['lambda']},"
+                        f" recalibration ×{axe.get('pente', 1.0)})"
                     )
             if bilan.get("skipped"):
                 typer.echo(

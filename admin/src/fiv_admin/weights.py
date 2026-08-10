@@ -31,6 +31,10 @@ LAMBDA_GRID = (1e-3, 3e-3, 1e-2, 3e-2, 0.1, 0.3, 1.0, 3.0, 10.0)
 
 SCALE_MIN, SCALE_MAX = 1.0, 10.0
 
+# En dessous, une pente estimée sur les prédictions hors-pli est du bruit :
+# on ne calibre pas, on garde la prédiction prudente.
+MIN_CALIBRATION = 30
+
 
 @dataclass(frozen=True, slots=True)
 class AxisWeights:
@@ -44,6 +48,10 @@ class AxisWeights:
     # flatte d'autant plus qu'on a moins d'exemples que de dimensions.
     lam: float
     mae_cv: float
+    # Le facteur de recalibration appliqué (1,0 = aucun) : la ridge comprime
+    # l'échelle vers la moyenne, la pente mesurée sur les prédictions
+    # hors-pli sert à la redilater. Replié dans coef/intercept.
+    pente: float = 1.0
 
 
 def _fit(xc: np.ndarray, yc: np.ndarray, lam: float) -> np.ndarray:
@@ -67,12 +75,23 @@ def _erreur_croisee(
     virgule près. Mesurer sur des points réellement écartés ne peut pas
     dégénérer de cette façon.
     """
-    # `x_eval` sert au diagnostic des visuels : on apprend sur une
-    # représentation et on évalue sur une autre, pour chiffrer ce que coûte
-    # d'appliquer des poids entraînés sur dossiers enrichis à des dossiers
-    # nus. Sans lui, on ne mesure jamais ce décalage-là.
-    cible = x if x_eval is None else x_eval
-    erreurs: list[np.ndarray] = []
+    preds = _predictions_croisees(x, y, lam, plis, x_eval=x_eval)
+    ok = ~np.isnan(preds)
+    if not ok.any():
+        return float("inf")
+    return float(np.abs(np.clip(preds[ok], SCALE_MIN, SCALE_MAX) - y[ok]).mean())
+
+
+def _predictions_croisees(
+    x: np.ndarray, y: np.ndarray, lam: float, plis: int, x_eval: np.ndarray | None = None
+) -> np.ndarray:
+    """Les prédictions hors-pli, NaN pour les points jamais mis de côté.
+
+    Non bornées à l'échelle, exprès : la calibration mesure la compression sur
+    la prédiction brute, et borner d'abord fausserait la pente aux extrêmes —
+    là où, précisément, la compression se voit.
+    """
+    preds = np.full(len(y), np.nan)
     for pli in range(plis):
         # Découpage par pas plutôt qu'en blocs : sans mélange aléatoire, des
         # blocs contigus suivraient l'ordre d'insertion en base, qui n'a
@@ -85,10 +104,9 @@ def _erreur_croisee(
 
         x_mean, y_mean = x[garde].mean(axis=0), float(y[garde].mean())
         coef = _fit(x[garde] - x_mean, y[garde] - y_mean, lam)
-        pred = np.clip((cible[test] - x_mean) @ coef + y_mean, SCALE_MIN, SCALE_MAX)
-        erreurs.append(np.abs(pred - y[test]))
-
-    return float(np.concatenate(erreurs).mean()) if erreurs else float("inf")
+        cible = x if x_eval is None else x_eval
+        preds[test] = (cible[test] - x_mean) @ coef + y_mean
+    return preds
 
 
 def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> AxisWeights:
@@ -114,6 +132,38 @@ def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> Axi
     coef = _fit(x - x_mean, y - y_mean, best_lam)
     intercept = y_mean - float(x_mean @ coef)
 
+    # La recalibration. Une ridge tire ses prédictions vers la moyenne — c'est
+    # le mécanisme même de la régularisation — et la compression se paie aux
+    # extrêmes : mesurée en production, la pente prédite/réel tombait entre
+    # 0,49 et 0,68 selon l'axe, et les « humour 9 » du juge sortaient à 7.
+    # On mesure la pente sur les prédictions hors-pli (donc honnêtes) et on
+    # l'inverse. Ridge et correction étant linéaires toutes deux, la
+    # correction se replie dans les coefficients : rien ne change ni au
+    # schéma ni à la prédiction, qui reste `intercept + coef · x`.
+    #
+    # Contrepartie assumée : redilater l'échelle redilate aussi le bruit, le
+    # MAE remonte un peu. C'est l'arbitrage voulu — des extrêmes justes
+    # comptent plus, pour un vecteur de goût, qu'un dixième de MAE.
+    preds = _predictions_croisees(x, y, best_lam, plis)
+    ok = ~np.isnan(preds)
+    pente = 1.0
+    if ok.sum() >= MIN_CALIBRATION:
+        p, cible = preds[ok], y[ok]
+        var = float(p.var())
+        corr = float(np.corrcoef(p, cible)[0, 1]) if var > 1e-9 else 0.0
+        if corr > 0.2:
+            # Bornée : une pente démesurée signale des prédictions presque
+            # plates (le régime « moyenne partout » déjà rencontré), et
+            # l'amplifier fabriquerait du délire calibré.
+            pente = float(np.clip(float(np.cov(cible, p)[0, 1]) / var, 1.0, 2.5))
+    if pente != 1.0:
+        recentrage = float(y.mean()) - pente * float(np.nanmean(preds))
+        coef = coef * pente
+        intercept = intercept * pente + recentrage
+        best_cv = float(
+            np.abs(np.clip(preds[ok] * pente + recentrage, SCALE_MIN, SCALE_MAX) - y[ok]).mean()
+        )
+
     fitted = np.clip(x @ coef + intercept, SCALE_MIN, SCALE_MAX)
     mae = float(np.abs(fitted - y).mean())
 
@@ -125,6 +175,7 @@ def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> Axi
         mae_fit=round(mae, 3),
         lam=best_lam,
         mae_cv=round(best_cv, 3),
+        pente=round(pente, 2),
     )
 
 

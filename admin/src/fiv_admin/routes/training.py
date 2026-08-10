@@ -1094,6 +1094,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
                     "maeFit": result.mae_fit,
                     "maeCv": result.mae_cv,
                     "lambda": result.lam,
+                    "pente": result.pente,
                 }
             )
             weights_json[axe] = {
@@ -1103,6 +1104,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
                 "maeFit": result.mae_fit,
                 "maeCv": result.mae_cv,
                 "lambda": result.lam,
+                "pente": result.pente,
             }
 
         # Le journal des poids : tous les axes dans une ligne, datée — c'est
