@@ -134,8 +134,18 @@ dans les deux sens : elle n'est pas mal notée, elle n'est pas notée.
 Au clic sur une carte, en fenêtre : **où regarder la série** (par pays), un
 accordéon par saison — les épisodes ne se chargent qu'à l'ouverture du volet,
 une série de huit saisons en porte deux cents —, la galerie de visuels, la
-distribution, et un onglet technique. Un clic sur n'importe quelle image
-l'agrandit en 800 × 600.
+distribution, **les sources tierces**, et un onglet technique. Un clic sur
+n'importe quelle image l'agrandit en 800 × 600.
+
+L'onglet **Sources** montre ce que `sourcing.riche_source` a rapporté, groupé
+par source : une carte par source (Wikipédia, Wikidata, TVmaze), et à
+l'intérieur une ligne par langue — Wikipédia en porte cinq, les deux autres une
+seule, leur contenu n'étant pas linguistique. Les faits affichés sont
+**canoniques** (`normalize.py` leur impose les mêmes clés quelle que soit la
+source), ce qui est précisément ce qui permet de les rendre sans savoir d'où ils
+viennent. Le texte n'est pas rapatrié en entier — un article pèse des centaines
+de kilooctets : on en montre les 1 500 premiers caractères, le compte exact, et
+le lien vers la source. L'onglet ne charge rien tant qu'on ne l'ouvre pas.
 
 Deux flèches en haut de la fenêtre passent à l'œuvre précédente ou suivante,
 **dans l'ordre affiché par la grille** — tri, second critère et filtres
@@ -198,6 +208,7 @@ d'entraînement de la notation ajoute les siennes sous `/api/training`.
 | `GET /api/catalog/cards` | la grille — `lang`, `sort`/`sort2`, `withPoster`, `withOverview`, `page` |
 | `GET /api/catalog/works/{id}` | la fiche complète, relue **dans le brut** |
 | `GET /api/catalog/works/{id}/seasons/{n}` | les épisodes d'une saison, dans la langue demandée |
+| `GET /api/catalog/works/{id}/sources` | l'enrichissement — Wikipédia, Wikidata, TVmaze — groupé par source |
 | `POST /api/catalog/refresh` | recalcule la projection `admin.tv_card` |
 
 Chaque page de la grille embarque l'état de la projection : une grille vide a
@@ -420,8 +431,6 @@ détail.
 * **Les films.** Le sélecteur d'univers les propose, l'API répond qu'ils ne sont
   pas collectés. Le jour où le catalogue arrive, seul `catalog_table` dans
   [`media.py`](../admin/src/fiv_admin/media.py) est à renseigner.
-* **`riche_source` n'est pas exposée.** L'enrichissement (articles Wikipédia,
-  faits canoniques) existe en base mais aucun écran ne le montre.
 * **Le tri par titre** suit la collation de Postgres, qui range le latin avant
   l'arabe. Il n'y a pas d'ordre alphabétique commun à deux alphabets.
 * **Le freinage des connexions est en mémoire** : remis à zéro au redémarrage,

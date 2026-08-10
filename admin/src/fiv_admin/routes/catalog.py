@@ -17,6 +17,7 @@ from fiv_admin.catalog import (
     CardQuery,
     cards_state,
     fetch_cards,
+    fetch_rich,
     fetch_season,
     fetch_work,
     refresh_cards,
@@ -107,6 +108,18 @@ async def season(
             f"saison {season_number} non collectée en {lang}",
         )
     return detail
+
+
+@router.get("/catalog/works/{work_id}/sources")
+async def work_sources(user: CurrentUser, conn: Conn, work_id: int) -> dict[str, Any]:
+    """Ce que les sources tierces apportent sur cette œuvre, par source.
+
+    Pas de 404 quand il n'y a rien : une série non enrichie est un état normal
+    — l'enrichissement passe après la collecte TMDB et ne couvre pas encore le
+    catalogue. La réponse le dit avec une liste vide, que le front sait
+    afficher ; une erreur ferait croire à une panne.
+    """
+    return await fetch_rich(conn, work_id)
 
 
 @router.post("/catalog/refresh")

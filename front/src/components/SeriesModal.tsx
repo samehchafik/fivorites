@@ -29,6 +29,7 @@ import {
   IconDeviceTv,
   IconExternalLink,
   IconId,
+  IconLibrary,
   IconPhoto,
   IconScale,
   IconSchool,
@@ -42,6 +43,7 @@ import { api, tmdbImage } from '../api'
 import { POSTER_FALLBACK, formatDate, formatNumber } from '../display'
 import type { Language, ModalTab, Work } from '../types'
 import { AxisVector } from './AxisVector'
+import { RichPanel } from './RichPanel'
 import { SeasonPanel } from './SeasonPanel'
 import { TrainingTab } from './TrainingTab'
 import { WatchPanel } from './WatchPanel'
@@ -378,8 +380,20 @@ export function SeriesModal({
               <Tabs.Tab value="gallery" leftSection={<IconPhoto size={16} />}>
                 Galerie ({data.gallery.backdrops.length + data.gallery.posters.length})
               </Tabs.Tab>
+              <Tabs.Tab value="rich" leftSection={<IconLibrary size={16} />}>
+                Sources
+              </Tabs.Tab>
               <Tabs.Tab value="technical">Technique</Tabs.Tab>
             </Tabs.List>
+
+            {/* Monté seulement quand on l'ouvre — `keepMounted={false}` plus
+                haut le garantit. La plupart des séries n'ont aucun
+                enrichissement, et celles qui en ont portent des articles de
+                cent kilooctets : les charger avec la fiche ferait payer à tout
+                le monde ce que peu de gens regardent. */}
+            <Tabs.Panel value="rich" p="lg">
+              <RichPanel id={data.id} />
+            </Tabs.Panel>
 
             <Tabs.Panel value="watch" p="lg">
               <WatchPanel watch={data.watch} languages={languages} />

@@ -449,3 +449,65 @@ export interface StoredScore {
   modele: string
   scored_at: string
 }
+
+/** Ce qu'une source tierce a rapporté sur une œuvre, dans une langue.
+ *
+ *  `lang` est vide pour les sources dont le contenu n'est pas linguistique —
+ *  Wikidata décrit des faits, TVmaze une fiche unique en anglais. */
+export interface RichEntry {
+  lang: string
+  sourceId: string
+  url: string | null
+  /** Par quel chemin le raccordement a réussi : `sitelink`, `imdb`, `titre`…
+   *  Un rattachement par titre est moins sûr qu'un rattachement par
+   *  identifiant, et c'est là qu'on peut en douter. */
+  resolvedBy: string | null
+  fetchedAt: string
+  contentChars: number
+  /** Le début du texte. Le texte entier se lit chez la source (`url`). */
+  extract: string
+  truncated: boolean
+  /** Les faits **canoniques** : mêmes clés quelle que soit la source. */
+  facts: RichFacts
+  media: { type?: string; url?: string }[]
+  mediaCount: number
+}
+
+/** Le schéma canonique du sourcing (`normalize.py`). Une clé sans valeur est
+ *  absente — jamais nulle, jamais une liste vide de remplissage. */
+export interface RichFacts {
+  titre?: string
+  titres_alternatifs?: string[]
+  annee?: number
+  statut?: 'en_cours' | 'terminee' | 'annulee'
+  pays?: string[]
+  langues?: string[]
+  lieux?: { type: string; nom: string }[]
+  diffuseur?: string
+  calendrier?: { jours?: string[]; heure?: string }
+  episodes?: { total?: number; dates?: number; resumes?: number }
+  ids?: { tmdb?: number; imdb?: string; wikidata?: string; tvmaze?: number }
+}
+
+export interface RichGroup {
+  source: string
+  entries: RichEntry[]
+  /** Les totaux de la source, tous ses `entries` confondus. */
+  chars: number
+  media: number
+}
+
+export interface RichSources {
+  workId: number
+  /** Le pivot d'identité, ou null : une œuvre jamais enrichie n'en a pas. */
+  oeuvre: {
+    id: number
+    univers: string
+    titre: string | null
+    annee: number | null
+    wikidataQid: string | null
+    imdbId: string | null
+    tvmazeId: number | null
+  } | null
+  sources: RichGroup[]
+}

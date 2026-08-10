@@ -9,6 +9,7 @@ import type {
   Phase1Result,
   Phase2Result,
   Projection,
+  RichSources,
   Rubric,
   SeasonDetail,
   StoredScore,
@@ -100,6 +101,8 @@ export const api = {
     request<SeasonDetail>(
       `/api/catalog/works/${id}/seasons/${seasonNumber}?${query({ lang })}`,
     ),
+
+  rich: (id: number) => request<RichSources>(`/api/catalog/works/${id}/sources`),
 
   refreshCatalog: () => request<Projection>('/api/catalog/refresh', { method: 'POST' }),
 

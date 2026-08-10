@@ -162,6 +162,7 @@ inutilisable. Contrepartie assumée — « précédent » ne referme pas la fich
 | [`src/components/SeriesCard.tsx`](src/components/SeriesCard.tsx) | une vignette — affiche à gauche, l'essentiel à droite |
 | [`src/components/SeriesModal.tsx`](src/components/SeriesModal.tsx) | la fiche : saisons, distribution, galerie, technique |
 | [`src/components/SeasonPanel.tsx`](src/components/SeasonPanel.tsx) | les épisodes d'une saison, dans la langue choisie |
+| [`src/components/RichPanel.tsx`](src/components/RichPanel.tsx) | l'enrichissement des sources tierces, groupé par source |
 | [`src/components/WatchPanel.tsx`](src/components/WatchPanel.tsx) | où regarder la série, dans le pays de la langue choisie |
 | [`src/components/AcquisitionTable.tsx`](src/components/AcquisitionTable.tsx) | le tableau d'avancement sur tout le catalogue |
 | [`src/urlState.ts`](src/urlState.ts) | l'état partageable : la fiche ouverte et les filtres |

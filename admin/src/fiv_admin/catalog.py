@@ -941,3 +941,115 @@ async def cards_state(conn: psycopg.AsyncConnection) -> dict[str, Any]:
         "stale": disponibles > total,
         "lastAt": projection.get("last_at"),
     }
+
+
+# Combien de texte la fiche rapporte par source enrichie.
+#
+# Un article de Wikipédia pèse couramment cent kilooctets ; cinq langues en
+# feraient un demi-mégaoctet dans une fenêtre que personne ne lira en entier.
+# On en montre le début — de quoi juger de la matière — et le compte exact de
+# caractères dit ce qu'il y a derrière. Le texte complet se lit chez la source,
+# dont l'URL est fournie.
+EXTRAIT_CHARS = 1500
+
+
+async def fetch_rich(conn: psycopg.AsyncConnection, work_id: int) -> dict[str, Any]:
+    """L'enrichissement d'une œuvre, groupé par source.
+
+    `riche_source` porte une ligne par (œuvre, source, langue) : Wikipédia en
+    cinq langues fait cinq lignes, Wikidata et TVmaze une seule chacune (leur
+    contenu n'est pas linguistique). Le groupement par source est donc celui de
+    la lecture : « qu'apporte Wikipédia ? », pas « qu'y a-t-il en français ? ».
+
+    Les `facts` sont **canoniques** — mêmes clés quelle que soit la source
+    (`titre`, `annee`, `statut`, `pays`, `langues`, `lieux`, `diffuseur`,
+    `calendrier`, `episodes`, `ids`). C'est la promesse de `normalize.py` côté
+    sourcing, et c'est ce qui permet de les afficher sans savoir d'où ils
+    viennent.
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Le pivot d'identité, s'il existe : c'est lui qui porte les
+        # identifiants externes, et son absence est en soi l'information
+        # « cette série n'a jamais été enrichie ».
+        await cur.execute(
+            """
+            select id, univers, wikidata_qid, imdb_id, tvmaze_id, titre, annee
+            from oeuvre where id_tmdb = %(id)s order by id limit 1
+            """,
+            {"id": work_id},
+        )
+        oeuvre = await cur.fetchone()
+
+        # Par `oeuvre_id` quand le pivot existe — c'est le lien qui fait foi et
+        # il couvre les lignes dont l'`id_tmdb` est nul. Sinon par `id_tmdb`,
+        # qui reste renseigné sur ce que l'enrichissement a écrit avant que le
+        # pivot ne soit posé.
+        await cur.execute(
+            sql.SQL(
+                """
+                select source, lang, source_id, url, resolved_by, fetched_at,
+                       content_chars, media_count, facts, media,
+                       left(content, %(extrait)s) as extrait
+                from riche_source
+                where {lien}
+                order by source, lang, source_id
+                """
+            ).format(
+                lien=sql.SQL("oeuvre_id = %(oeuvre)s") if oeuvre else sql.SQL("id_tmdb = %(id)s")
+            ),
+            {"id": work_id, "oeuvre": oeuvre["id"] if oeuvre else None, "extrait": EXTRAIT_CHARS},
+        )
+        lignes = await cur.fetchall()
+
+    groupes: dict[str, list[dict[str, Any]]] = {}
+    for ligne in lignes:
+        caracteres = int(ligne["content_chars"] or 0)
+        extrait = ligne["extrait"] or ""
+        groupes.setdefault(ligne["source"], []).append(
+            {
+                # La langue de requête, vide pour les sources qui n'en ont pas
+                # (Wikidata, TVmaze) : `''` plutôt que null, c'est la valeur par
+                # défaut de la colonne et le front n'a pas à distinguer.
+                "lang": ligne["lang"] or "",
+                "sourceId": ligne["source_id"],
+                "url": ligne["url"],
+                # Par quel chemin le raccordement a réussi (`sitelink`,
+                # `imdb`…). Ce n'est pas un détail de plomberie : un
+                # rattachement par titre est moins sûr qu'un rattachement par
+                # identifiant, et c'est ici qu'on peut en douter.
+                "resolvedBy": ligne["resolved_by"],
+                "fetchedAt": ligne["fetched_at"],
+                "contentChars": caracteres,
+                "extract": extrait,
+                # Le front n'a pas à recalculer la troncature : elle dépend
+                # d'une constante d'ici.
+                "truncated": caracteres > len(extrait),
+                "facts": ligne["facts"] or {},
+                "media": ligne["media"] or [],
+                "mediaCount": int(ligne["media_count"] or 0),
+            }
+        )
+
+    return {
+        "workId": work_id,
+        "oeuvre": {
+            "id": oeuvre["id"],
+            "univers": oeuvre["univers"],
+            "titre": oeuvre["titre"],
+            "annee": oeuvre["annee"],
+            "wikidataQid": oeuvre["wikidata_qid"],
+            "imdbId": oeuvre["imdb_id"],
+            "tvmazeId": oeuvre["tvmaze_id"],
+        }
+        if oeuvre
+        else None,
+        "sources": [
+            {
+                "source": source,
+                "entries": entrees,
+                "chars": sum(entree["contentChars"] for entree in entrees),
+                "media": sum(entree["mediaCount"] for entree in entrees),
+            }
+            for source, entrees in sorted(groupes.items())
+        ],
+    }

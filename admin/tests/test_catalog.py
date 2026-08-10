@@ -15,9 +15,11 @@ import pytest
 
 from conftest import requires_db
 from fiv_admin.catalog import (
+    EXTRAIT_CHARS,
     CardQuery,
     cards_state,
     fetch_cards,
+    fetch_rich,
     fetch_season,
     fetch_work,
     refresh_cards,
@@ -636,6 +638,117 @@ async def test_the_rating_sort_combines_with_popularity(conn: psycopg.AsyncConne
         conn, CardQuery(lang="fr-FR", sort="rating", sort2="popularity", descending2=False)
     )
     assert [row["id"] for row in rows if row["id"] in lot] == [9101, 9102]
+
+
+async def test_rich_sources_are_grouped_by_source(conn: psycopg.AsyncConnection) -> None:
+    """L'enrichissement tel que la fiche le montre.
+
+    Le groupement par source est celui de la lecture : Wikipédia porte une ligne
+    par langue, Wikidata et TVmaze une seule chacune — leur contenu n'est pas
+    linguistique. « Qu'apporte Wikipédia ? » est la question qu'on se pose, pas
+    « qu'y a-t-il en français ? ».
+    """
+    await seed(conn)
+    await conn.execute(
+        """
+        insert into oeuvre (univers, id_tmdb, wikidata_qid, imdb_id, tvmaze_id, titre, annee)
+        values ('series', 1399, 'Q23572', 'tt0944947', 82, 'Game of Thrones', 2011)
+        """
+    )
+    oeuvre = await (await conn.execute("select id from oeuvre where id_tmdb = 1399")).fetchone()
+    assert oeuvre is not None
+
+    long_article = "Le Trône de fer est une série télévisée. " * 100
+    for source, lang, source_id, url, content, media, facts, voie in (
+        (
+            "wikipedia",
+            "fr",
+            "Le Trône de fer",
+            "https://fr.wikipedia.org/wiki/Le_Trone_de_fer",
+            long_article,
+            [],
+            {},
+            "sitelink",
+        ),
+        ("wikipedia", "en", "Game of Thrones", None, "A television series.", [], {}, "sitelink"),
+        (
+            "wikidata",
+            "",
+            "Q23572",
+            "https://www.wikidata.org/wiki/Q23572",
+            None,
+            [],
+            {"pays": ["US"], "ids": {"wikidata": "Q23572", "imdb": "tt0944947"}},
+            "qid",
+        ),
+        (
+            "tvmaze",
+            "",
+            "82",
+            "https://www.tvmaze.com/shows/82",
+            "Résumé TVmaze.",
+            [{"type": "poster", "url": "https://exemple.test/poster.jpg"}],
+            {"statut": "terminee", "diffuseur": "HBO"},
+            "imdb",
+        ),
+    ):
+        await conn.execute(
+            """
+            insert into riche_source (oeuvre_id, id_tmdb, source, lang, source_id, url,
+                                      content, media, facts, resolved_by)
+            values (%s, 1399, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
+            """,
+            (
+                oeuvre[0],
+                source,
+                lang,
+                source_id,
+                url,
+                content,
+                json.dumps(media),
+                json.dumps(facts),
+                voie,
+            ),
+        )
+
+    rich = await fetch_rich(conn, 1399)
+
+    assert rich["oeuvre"]["wikidataQid"] == "Q23572"
+    assert rich["oeuvre"]["tvmazeId"] == 82
+    assert [groupe["source"] for groupe in rich["sources"]] == ["tvmaze", "wikidata", "wikipedia"]
+
+    wikipedia = next(g for g in rich["sources"] if g["source"] == "wikipedia")
+    assert [entree["lang"] for entree in wikipedia["entries"]] == ["en", "fr"]
+    assert wikipedia["chars"] == len(long_article) + len("A television series.")
+
+    # L'article long est tronqué, le court ne l'est pas — et le compte de
+    # caractères dit la taille réelle dans les deux cas.
+    longue = next(e for e in wikipedia["entries"] if e["lang"] == "fr")
+    assert longue["truncated"] is True
+    assert len(longue["extract"]) == EXTRAIT_CHARS
+    assert longue["contentChars"] == len(long_article)
+
+    courte = next(e for e in wikipedia["entries"] if e["lang"] == "en")
+    assert courte["truncated"] is False
+    assert courte["extract"] == "A television series."
+
+    # Les faits canoniques traversent tels quels : c'est `normalize.py` qui
+    # garantit leurs clés, l'admin n'a rien à réinterpréter.
+    tvmaze = next(g for g in rich["sources"] if g["source"] == "tvmaze")
+    assert tvmaze["entries"][0]["facts"]["diffuseur"] == "HBO"
+    assert tvmaze["media"] == 1
+    assert tvmaze["entries"][0]["media"][0]["type"] == "poster"
+
+
+async def test_rich_sources_of_a_work_never_enriched(conn: psycopg.AsyncConnection) -> None:
+    """Le cas le plus fréquent aujourd'hui : rien. Ce n'est pas une erreur —
+    l'enrichissement passe après la collecte et ne couvre pas le catalogue."""
+    await seed(conn)
+
+    rich = await fetch_rich(conn, 1399)
+
+    assert rich["oeuvre"] is None
+    assert rich["sources"] == []
 
 
 async def test_a_collection_that_stored_nothing_never_lights_the_banner(
