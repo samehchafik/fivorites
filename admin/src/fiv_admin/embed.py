@@ -46,7 +46,7 @@ DIMENSIONS = 512
 EMBEDDER = "jina-v2-small-en@512"
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=1)
 def _model(cache_dir: str | None, name: str) -> Any:
     """Le modèle, chargé une fois par processus.
 
@@ -94,3 +94,16 @@ def embed_texts(
     tronques = [text[:MAX_CHARS] for text in texts]
     modele = _model(cache_dir, model or MODEL_NAME)
     return [vector.tolist() for vector in modele.embed(tronques, batch_size=LOT)]
+
+
+def liberer_modeles() -> None:
+    """Vide le cache de modèles — à appeler entre deux candidats d'une comparaison.
+
+    Un seul modèle vit en mémoire à la fois (`maxsize=1`), mais l'éviction du
+    précédent n'a lieu qu'au chargement du suivant : sans libération explicite,
+    une comparaison de quatre encodeurs finit avec le dernier modèle ET les
+    arènes ONNX des précédents — ces arènes gardent leurs pics d'allocation et
+    ne rendent jamais rien. Vu en production : douze gigaoctets résidents pour
+    une comparaison, sur une machine qui en partage cent vingt.
+    """
+    _model.cache_clear()

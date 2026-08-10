@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 
 from fiv_admin.deps import Config, Conn, CurrentUser
 from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
-from fiv_admin.embed import EMBEDDER, embed_texts
+from fiv_admin.embed import EMBEDDER, embed_texts, liberer_modeles
 from fiv_admin.llm import LlmError, caption_openai, score_anthropic, score_openai
 from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
@@ -892,6 +892,9 @@ async def comparer_encodeurs(
             cache_dir=settings.embed_cache_dir,
             model=modele,
         )
+        # Chaque candidat évalué est aussitôt déchargé : sans ça, les
+        # arènes ONNX des quatre modèles s'empilent en mémoire résidente.
+        liberer_modeles()
         par_oeuvre = dict(zip(ids, vecteurs, strict=True))
 
         par_axe: list[dict[str, Any]] = []
