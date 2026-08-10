@@ -1,9 +1,13 @@
 """Les juges : OpenAI (le noteur), Anthropic Haiku (le contre-juge).
 
-Deux familles de modèles, exprès. La chaîne d'entraînement descend entièrement
-d'OpenAI (notes, embeddings, poids) : un juge d'une autre famille est le seul à
-pouvoir détecter un biais que toute la lignée partagerait. Haiku ne note pas la
-masse — il contredit, ou pas.
+Deux familles de modèles, exprès. Les notes de masse descendent d'OpenAI, et
+les poids internes s'apprennent dessus : un juge d'une autre famille est le
+seul à pouvoir détecter un biais que toute la lignée partagerait. Haiku ne
+note pas la masse — il contredit, ou pas.
+
+Ce module ne contient plus que des appels payants à des juges. L'encodage des
+dossiers, lui, est local (`embed.py`) : la traîne du catalogue ne doit
+dépendre d'aucune API.
 
 La sortie est **contrainte** au schéma dans les deux cas : six entiers et six
 confiances, jamais de prose à reparser. Les bornes 1-10 sont vérifiées ici (les
@@ -225,47 +229,3 @@ async def caption_openai(
         raise LlmError(f"réponse vision illisible : {exc}") from exc
 
     return {"model": body.get("model", model), "captions": captions}
-
-
-# Le modèle d'embedding refuse au-delà de 8 192 tokens. La borne est posée en
-# caractères, faute de compter les tokens sans dépendance supplémentaire :
-# 20 000 laisse de la marge même sur du texte dense en noms propres, où le
-# rapport descend vers trois caractères par token.
-#
-# Tronquer plutôt qu'échouer, parce qu'un dossier n'est pas un texte suivi :
-# c'est une suite de sections, et les premières — titre, faits, genres,
-# synopsis — portent l'essentiel de ce qui distingue une œuvre d'une autre.
-# Une série de vingt-deux saisons dépassait la limite sur ses seuls résumés de
-# saison, et faisait échouer l'entraînement entier au huitième appel.
-EMBED_MAX_CHARS = 20_000
-
-
-async def embed_openai(
-    http: httpx.AsyncClient,
-    *,
-    api_key: str,
-    model: str,
-    dimensions: int,
-    text: str,
-) -> list[float]:
-    """L'embedding du dossier, pour la régression interne.
-
-    `dimensions` réduit le vecteur côté OpenAI (Matryoshka) : 256 dimensions
-    suffisent largement à une ridge entraînée sur quelques centaines d'œuvres,
-    et divisent par six le poids stocké et le nombre de coefficients à estimer.
-
-    Le texte est tronqué à `EMBED_MAX_CHARS` : au-delà l'API refuse la
-    requête, et perdre la fin d'un dossier vaut mieux que perdre le lot.
-    """
-    response = await http.post(
-        f"{OPENAI_BASE}/embeddings",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={"model": model, "input": text[:EMBED_MAX_CHARS], "dimensions": dimensions},
-        timeout=TIMEOUT,
-    )
-    if response.status_code != 200:
-        raise LlmError(f"OpenAI embeddings {response.status_code} : {response.text[:300]}")
-    try:
-        return response.json()["data"][0]["embedding"]
-    except (KeyError, IndexError) as exc:
-        raise LlmError(f"réponse embeddings illisible : {exc}") from exc

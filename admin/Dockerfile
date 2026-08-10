@@ -56,7 +56,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV FIV_MODELS=/opt/models
 RUN --mount=type=cache,target=/root/.cache/uv \
     .venv/bin/python -c "from fastembed import TextEmbedding; \
-        TextEmbedding('sentence-transformers/all-MiniLM-L6-v2', cache_dir='/opt/models')"
+        TextEmbedding('jinaai/jina-embeddings-v2-small-en', cache_dir='/opt/models')"
 
 # --- exécution ---------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim-bookworm
