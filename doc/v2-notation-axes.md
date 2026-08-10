@@ -262,6 +262,23 @@ noter mais de **choisir ce qui entre au catalogue**.
 
 Le modèle distillé s'entraîne sur les notations de la tête. Il n'invente rien, il généralise.
 
+**Les légendes visuelles suivent cette coupure, et c'est mesuré** (2026-08-10,
+521 œuvres, `fiv-admin training visuels`) : décrire les images d'une œuvre
+n'apporte que **+0,034** à la représentation, et ne pas les avoir ne coûte que
+**+0,031** à une œuvre jugée par des poids entraînés avec — négligeable face à
+un MAE de 0,94.
+
+Elles restent pourtant indispensables **sur la tête**, pour une raison qui n'est
+pas celle qu'on croyait : elles servent au **juge**, pas à l'encodeur. Sans
+section MEDIA, le barème interdit à l'axe `sensoriel` de se prononcer et il
+rend `null` presque partout ; avec elles, il note. Le gain de 0,09 observé en
+passant aux légendes venait donc des **étiquettes obtenues**, pas du texte
+encodé — deux effets que le premier essai confondait, faute de les avoir
+séparés.
+
+Conséquence : `--legendes` sur les lots de notation, rien sur la passe de masse
+— environ 750 $ économisés sur 250 000 œuvres.
+
 ### 3.4 Le droit de ne pas savoir
 
 **Un vecteur absent vaut mieux qu'un vecteur inventé.** La consigne doit autoriser
