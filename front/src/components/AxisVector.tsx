@@ -11,22 +11,26 @@ import { Badge, Group, Tooltip } from '@mantine/core'
  * liste fermée.
  */
 const KNOWN_AXES = [
-  { key: 'joie', label: 'Joie', color: 'yellow' },
-  { key: 'reve', label: 'Rêve', color: 'violet' },
-  { key: 'tristesse', label: 'Tristesse', color: 'blue' },
-  { key: 'peur', label: 'Peur', color: 'dark' },
-  { key: 'reflexion', label: 'Réflexion', color: 'teal' },
-  { key: 'action', label: 'Action', color: 'red' },
+  { key: 'joie', label: 'Joie', color: 'var(--mantine-color-yellow-5)' },
+  { key: 'reve', label: 'Rêve', color: 'var(--mantine-color-violet-5)' },
+  { key: 'tristesse', label: 'Tristesse', color: 'var(--mantine-color-blue-5)' },
+  // La peur veut du noir, et la teinte `dark` de Mantine est un gris moyen —
+  // invisible sur la piste, qui est grise elle aussi. `--mantine-color-text`
+  // suit le thème : quasi noire en clair, quasi blanche en sombre. C'est le
+  // noir demandé, sans disparaître quand l'admin bascule en mode sombre.
+  { key: 'peur', label: 'Peur', color: 'var(--mantine-color-text)' },
+  { key: 'reflexion', label: 'Réflexion', color: 'var(--mantine-color-teal-5)' },
+  { key: 'action', label: 'Action', color: 'var(--mantine-color-red-5)' },
 
-  { key: 'luminosite', label: 'Luminosité', color: 'indigo' },
-  { key: 'intensite', label: 'Intensité', color: 'indigo' },
-  { key: 'humour', label: 'Humour', color: 'indigo' },
-  { key: 'exigence', label: 'Exigence', color: 'indigo' },
-  { key: 'etrangete', label: 'Étrangeté', color: 'indigo' },
-  { key: 'sensoriel', label: 'Sensoriel', color: 'indigo' },
+  { key: 'luminosite', label: 'Luminosité', color: 'var(--mantine-color-indigo-5)' },
+  { key: 'intensite', label: 'Intensité', color: 'var(--mantine-color-indigo-5)' },
+  { key: 'humour', label: 'Humour', color: 'var(--mantine-color-indigo-5)' },
+  { key: 'exigence', label: 'Exigence', color: 'var(--mantine-color-indigo-5)' },
+  { key: 'etrangete', label: 'Étrangeté', color: 'var(--mantine-color-indigo-5)' },
+  { key: 'sensoriel', label: 'Sensoriel', color: 'var(--mantine-color-indigo-5)' },
 ]
 
-const DEFAULT_COLOR = 'indigo'
+const DEFAULT_COLOR = 'var(--mantine-color-indigo-5)'
 
 type Axe = { key: string; label: string; color: string }
 
@@ -104,7 +108,7 @@ export function AxisVector({
                 style={{
                   width: '100%',
                   height: `${(value / 10) * 100}%`,
-                  background: `var(--mantine-color-${color}-5)`,
+                  background: color,
                   borderRadius: 2,
                 }}
               />
