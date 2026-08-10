@@ -169,35 +169,37 @@ explicite : *la dispersion des empreintes prédites est-elle comparable à celle
 des empreintes notées ?* Une erreur moyenne faible avec une dispersion écrasée
 est le pire des cas, et c'est celui vers lequel une ridge tend naturellement.
 
-### 5.3 Le positionnement à froid par les genres — et ce qu'on en sait déjà
+### 5.3 Ce qui n'est **pas** retenu du PDF : l'amorçage par les genres
 
 Le PDF propose de positionner chaque objet **à froid depuis ses genres**, puis
-d'ajuster. C'est séduisant : c'est **gratuit, instantané, et applicable
-immédiatement aux 100 millions d'objets** de la base search, toutes familles
-confondues. Aucun appel LLM, aucun budget.
+d'ajuster les coordonnées. **Cette partie n'est pas reprise.** La notation reste
+faite par le juge LLM, exactement comme aujourd'hui : même dossier, même appel,
+même table, même contre-juge, même régression. **On change le barème qu'il
+applique, et rien d'autre.**
 
-Mais nous avons déjà mesuré, par accident, ce que vaut ce régime. Le premier
-encodeur retenu (`all-MiniLM-L6-v2`) avait une fenêtre de 128 tokens : il ne
-lisait que le titre, les faits, **les genres** et une partie des mots-clés —
-rien du synopsis, des résumés de saison, des épisodes ni de Wikipédia. La
-régression prédisait donc les axes essentiellement à partir des genres, et
-**elle plafonnait**. C'est consigné dans `admin/src/fiv_admin/embed.py`.
+C'est le bon choix, et on peut le justifier par une mesure qu'on a faite sans le
+vouloir. Le premier encodeur retenu (`all-MiniLM-L6-v2`) avait une fenêtre de
+128 tokens : il ne lisait que le titre, les faits, **les genres** et une partie
+des mots-clés — rien du synopsis, des résumés de saison, des épisodes ni de
+Wikipédia. La régression prédisait donc les axes essentiellement à partir des
+genres, et **elle plafonnait**. C'est consigné dans
+`admin/src/fiv_admin/embed.py`. Les genres seuls ne séparent pas les œuvres :
+deux séries du même genre auraient reçu la même empreinte, ce que le vecteur
+existe précisément pour éviter — « un axe n'est pas une catégorie, c'est une
+mesure ».
 
-Ce n'est pas un argument contre l'empreinte culturelle : c'est un argument pour
-prendre le PDF au mot sur le mot **« d'abord »**. Le positionnement par genres
-est un **amorçage**, pas un résultat.
+**Mais le risque ne disparaît pas : il se déplace dans le prompt.** Le juge lit
+la section `GENRES` du dossier. Si les définitions des six dimensions nomment
+les genres qui les portent — « Joie : comédie, comique, humour » — le juge se
+contentera de recopier l'étiquette, et l'empreinte redeviendra une taxonomie
+déguisée par un autre chemin.
 
-Le risque à nommer explicitement : **deux séries du même genre auront la même
-empreinte à froid.** Or c'est exactement ce que le vecteur de goût existe pour
-éviter — la première phrase de la spécification actuelle est « un axe n'est pas
-une catégorie, c'est une mesure ». Si l'on s'arrête à l'amorçage, on remplace
-une mesure par une taxonomie déguisée, et le pouvoir de discrimination
-intra-genre s'effondre.
-
-→ **La couche de notation LLM garde donc toute sa raison d'être** : elle
-devient l'étage d'« ajustement des coordonnées » que le PDF prévoit. On ne jette
-rien du dispositif — dossier, juge, contre-juge, ridge, recalibration : on
-change le barème qu'il applique.
+→ **Les définitions doivent décrire l'émotion, jamais le genre qui la porte
+d'habitude.** C'est exactement la règle qui protégeait déjà `humour` (« ce n'est
+pas l'étiquette de genre comédie ») ; elle devient centrale ici, puisque le
+référentiel du PDF est justement présenté par ses genres. Les genres du schéma
+servent à *nous* faire comprendre le référentiel — ils ne doivent pas entrer
+dans la consigne du juge.
 
 ### 5.4 Normalisation : la question de conception à trancher
 
@@ -245,32 +247,37 @@ apprentissage, là où « Étrangeté 7 » demandait une explication.
 
 ---
 
-## 7. Points à formaliser avant d'écrire le barème
+## 7. Le seul vrai travail : écrire le barème
 
-1. **Le rattachement genre → pôles.** Le schéma du PDF est un continuum où
-   « Catastrophe » nourrit Tristesse, Peur *et* Action. Il faut une table de
-   correspondance explicite, avec des **poids** (ex. Catastrophe → Peur 0,4 /
-   Action 0,4 / Tristesse 0,2), sinon chaque implémentation l'interprétera
-   autrement.
-2. **La couverture des genres réels.** Les genres TMDB (`Sci-Fi & Fantasy`,
-   `Kids`, `Reality`, `Talk`, `News`, `Soap`, `War & Politics`, `Western`…) ne
-   recouvrent pas la liste du schéma. Il faut décider où tombent `Reality`,
-   `Talk`, `News`, `Kids` — ou admettre qu'ils n'ont pas d'empreinte à froid.
-3. **`Documentaire` est placé entre Rêve et Réflexion** dans le schéma, ce qui
-   surprend. À confirmer : c'est probablement Réflexion, avec le documentaire
-   de nature/espace tirant vers Rêve.
-4. **Les ancres.** Six œuvres-repères par dimension, couvrant toute la portée,
-   **sans qu'aucune œuvre serve d'ancre à deux dimensions** — c'est la leçon la
-   plus coûteuse de la v2 (voir [`mission-nouveaux-axes.md`](mission-nouveaux-axes.md) §5.3).
-5. **La règle de preuve.** `sensoriel` avait besoin d'indices explicites sous
-   peine de deviner. `Peur` et `Joie` sont dans le même cas : un synopsis dit ce
-   qui se passe, pas ce qu'on ressent. Prévoir `null` plutôt que la déduction
-   par le genre — sinon l'empreinte n'est qu'une paraphrase des genres, ce qui
-   nous ramène au §5.3.
-6. **Le nom du référentiel.** `v3` prolonge la lignée, mais ce n'est pas une
-   révision du même barème : c'est un autre référentiel. Proposer
-   `empreinte-v1` rend la rupture lisible dans la base et évite qu'on compare
-   par erreur un écart v2 à un écart v3.
+Puisque le pipeline ne change pas, **tout le travail tient dans le texte du
+prompt** — six définitions et leurs ancres. Les règles qui s'y appliquent sont
+celles déjà payées en v1 → v2 (détail dans
+[`mission-nouveaux-axes.md`](mission-nouveaux-axes.md) §5) :
+
+1. **Décrire l'émotion, jamais le genre** (§5.3) — la règle la plus importante
+   ici, puisque le référentiel du PDF est présenté par ses genres.
+2. **Trois à cinq ancres par dimension**, couvrant toute la portée : une près de
+   1, une près de 10, au moins une au milieu.
+3. **Aucune œuvre ne sert d'ancre à deux dimensions** — c'est la leçon la plus
+   coûteuse de la v2, où *Twin Peaks* ancrait `exigence` **et** `etrangete`,
+   soit les deux axes dont on cherchait justement à savoir s'ils fusionnaient.
+4. **Une ligne « ce n'est pas »** par dimension : c'est là que les notations
+   dérapent, et c'est la ligne qui fait le plus de travail.
+5. **La ligne de calibration doit changer de nature.** En v2 elle disait « la
+   télévision courante vit en zone 4-6 ». C'est vrai de positions, **faux de
+   composantes** : une œuvre porte typiquement une ou deux émotions dominantes
+   et peu du reste. La nouvelle consigne doit dire l'inverse — *ne pas répartir
+   les six notes uniformément ; l'asymétrie est le signal.*
+6. **La règle de preuve.** Un synopsis dit ce qui se passe, pas ce qu'on
+   ressent. `Peur` et `Joie` y sont particulièrement exposées — c'est la même
+   difficulté que `humour`, resté bloqué à 1,25. Prévoir `null` plutôt que la
+   déduction par le genre.
+7. **Le nom du référentiel.** `v3` prolonge la lignée, mais ce n'est pas une
+   révision du même barème : c'est un autre référentiel. `empreinte-v1` rend la
+   rupture lisible dans la base et évite qu'on compare par erreur un écart v2 à
+   un écart v3.
+
+Une proposition complète de barème est donnée en §11.
 
 ---
 
@@ -282,8 +289,6 @@ Pour être complet, et parce que ces gains sont réels :
   écartés du socle faute de tenir sur tous les univers. Joie, Tristesse, Peur,
   Rêve, Réflexion, Action tiennent en musique, en littérature et en BD sans
   reformulation. C'est exactement ce que le socle devait faire.
-- **La couverture froide est immédiate et gratuite** sur toute la base search,
-  toutes familles — là où la notation LLM ne couvrira jamais que la tête.
 - **L'alignement avec le programme de R&D** : le Lot 11 prévoit l'intégration
   des empreintes dans Neo4j et un score utilisable par le moteur FIVO existant.
   Les six axes de goût, eux, n'avaient pas de point d'entrée dans le moteur
@@ -296,33 +301,31 @@ Pour être complet, et parce que ces gains sont réels :
 
 ## 9. Plan de bascule
 
-1. **Formaliser** les points du §7 — table genre → pôles pondérée, couverture
-   TMDB, ancres disjointes, règle de preuve. *C'est la seule étape qui demande
-   une décision ; tout le reste est mécanique.*
+1. **Arrêter le barème** — les six définitions et leurs ancres (proposition en
+   §11). *C'est la seule étape qui demande une décision ; tout le reste est
+   mécanique.*
 2. **Écrire la migration** `009_empreinte_v1.sql` : prompt complet à six
    dimensions, `axes` en jsonb, `note` expliquant la rupture. **Ne pas toucher
    à v1 ni v2** — le schéma est append-only, elles restent lisibles et
    comparables pour rien.
-3. **Amorçage à froid** : une commande qui calcule l'empreinte de toute œuvre
-   ayant des genres, sans LLM. Gratuit, et donne immédiatement une couverture
-   de 100 %.
-4. **Noter 30 à 50 œuvres** avec le juge, examiner à la main dans l'atelier,
-   contre-noter, corriger les définitions. Itérer ici coûte quelques centimes ;
-   itérer après 500 œuvres coûte une version.
-5. **Mesurer l'écart amorçage-à-froid / notation LLM.** C'est le test décisif :
-   si le LLM ne fait que confirmer les genres, l'étage de notation ne sert à
-   rien sur ce référentiel et l'on économise tout le budget. S'il s'en écarte
-   nettement, on tient la discrimination intra-genre que le §5.3 réclame.
-6. **Renoter le lot complet** (521 œuvres, ~2 $), puis `training poids`.
-7. **Contrôler la dispersion** des empreintes prédites (§5.2), pas seulement
+3. **Noter 30 à 50 œuvres** avec le juge, examiner à la main dans l'atelier,
+   contre-noter avec Claude, corriger les définitions qui divergent. Itérer ici
+   coûte quelques centimes ; itérer après 500 œuvres coûte une version.
+4. **Vérifier que l'empreinte ne recopie pas les genres.** Le contrôle le plus
+   utile du lot : prendre deux séries de mêmes genres et de tons opposés — par
+   exemple *Brooklyn Nine-Nine* et *The Shield*, toutes deux « policier » — et
+   regarder si leurs empreintes diffèrent. Si elles se ressemblent, la consigne
+   parle encore de genre (§5.3).
+5. **Renoter le lot complet** (521 œuvres, ~2 $), puis `training poids`.
+6. **Contrôler la dispersion** des empreintes prédites (§5.2), pas seulement
    l'erreur moyenne.
-8. **Réécrire** §2, §3.1, §5 et §7 de [`v2-notation-axes.md`](v2-notation-axes.md).
-9. **Front** : libellés, couleurs, radar.
+7. **Réécrire** §2, §3.1, §5 et §7 de [`v2-notation-axes.md`](v2-notation-axes.md).
+8. **Front** : libellés, couleurs, radar.
 
 Le PDF prévoyait 25,5 jours/homme pour le Lot 11 sur la plate-forme V1. Sur la
-V2, l'essentiel de cette charge est déjà payé — le pipeline de notation, le
-stockage versionné, la régression et l'atelier existent. Ce qui reste est
-l'étape 1 (conception) et les étapes 3 et 9 (amorçage, affichage).
+V2, l'essentiel est déjà payé — le pipeline de notation, le stockage versionné,
+la régression et l'atelier existent. Ce qui reste tient dans l'étape 1
+(le barème) et l'étape 8 (l'affichage).
 
 ---
 
@@ -334,7 +337,112 @@ c'est le dernier instant où la bascule ne casse rien.
 
 Les deux pièges à ne pas manquer :
 
-- **s'arrêter à l'amorçage par genres**, et transformer une mesure en
-  taxonomie déguisée (§5.3) ;
+- **laisser les genres entrer dans la consigne du juge**, et transformer une
+  mesure en taxonomie déguisée. Le référentiel du PDF se présente par ses genres
+  (« Joie : comédie, comique, humour ») ; les définitions envoyées au juge, elles,
+  ne doivent parler que de l'émotion (§5.3) ;
 - **laisser la ridge contracter vers la moyenne**, ce qui en distance cosine
   annule la discrimination sans qu'aucune métrique d'erreur ne le montre (§5.2).
+
+---
+
+## 11. Proposition de barème `empreinte-v1`
+
+Brouillon à discuter, appliquant les sept règles du §7. Rédigé en anglais,
+comme les barèmes v1 et v2 — la langue de notation décidée le 2026-08-07.
+
+### 11.1 L'en-tête
+
+> You are a cultural-work rater. Read the dossier about a TV series and score
+> it on six emotional dimensions, each from 1 to 10. These dimensions are
+> **not opposites on a scale** — they are components of a mixture. A score of 1
+> means the work carries almost none of that emotion; 10 means it is a dominant
+> emotional register of the work.
+>
+> **Most works carry one or two dominant emotions and little of the rest. Do
+> not spread the six scores evenly — the asymmetry is the signal.** A comedy
+> scoring high on Joy should score low on Fear. A work scoring 6 or above on
+> four dimensions is almost certainly mis-scored.
+>
+> Anchor works define each scale. Place the series relative to them.
+>
+> **Score the emotion the work delivers, never its genre label.** Genres are
+> listed in the dossier for context only; two works of the same genre routinely
+> have very different emotional fingerprints, and telling them apart is the
+> entire purpose of this exercise.
+>
+> For each dimension give an integer 1-10 and a confidence 0.0-1.0. A synopsis
+> describes what happens, not what it feels like — if the dossier gives no
+> reliable basis for a dimension, return null with low confidence rather than
+> inferring it from the genre. A missing score is better than an invented one.
+
+### 11.2 Les six dimensions
+
+| | Dimension | 1 | 10 |
+|---|---|---|---|
+| 1 | **`joie`** — Joy | aucune légèreté, aucun plaisir | euphorique, réjouissant |
+| 2 | **`reve`** — Wonder | strictement le monde réel | pur imaginaire, merveilleux |
+| 3 | **`tristesse`** — Sorrow | aucun chagrin | déchirant, endeuillé |
+| 4 | **`peur`** — Fear | aucune angoisse | terrifiant, oppressant |
+| 5 | **`reflexion`** — Thought | ne demande rien à l'esprit | interroge le monde en continu |
+| 6 | **`action`** — Action | immobile, verbal | physique, en mouvement constant |
+
+**`joie` — Joy.** *How much lightness, pleasure, warmth does the work deliver?*
+**NOT** the comedy genre, and **NOT** a happy ending. A bleak comedy scores low;
+a serious drama with real warmth between its characters scores mid. Score the
+lift the work gives, not what it is filed under.
+*Anchors : Chernobyl = 1, Mad Men = 4, Modern Family = 8, Parks and Recreation = 10.*
+
+**`reve` — Wonder.** *How far does the work depart from the real world?*
+**NOT** the budget or the special effects. A low-budget fairy tale scores high;
+an expensive, meticulously realistic war series scores low. Score the presence
+of the imaginary — the marvellous, the impossible, the dreamlike.
+*Anchors : The Wire = 1, The Crown = 2, Doctor Who = 8, The Sandman = 10.*
+
+**`tristesse` — Sorrow.** *How much grief, loss, melancholy does the work carry?*
+**NOT** darkness or hopelessness — a sorrowful work can be tender and
+consoling. **NOT** the quality of its drama. Score the weight of sadness the
+viewer actually carries away.
+*Anchors : Seinfeld = 1, Breaking Bad = 6, This Is Us = 9, Six Feet Under = 10.*
+
+**`peur` — Fear.** *How much dread, anxiety, threat does the work generate?*
+**NOT** violence and **NOT** gore: a very violent series with no sense of dread
+scores low, and a quiet series where something feels deeply wrong scores high.
+Score the anxiety, not the body count.
+*Anchors : Downton Abbey = 1, Stranger Things = 6, The Walking Dead = 8, The Haunting of Hill House = 10.*
+
+**`reflexion` — Thought.** *Does the work make you think about something beyond
+its own plot?* **NOT** difficulty — that is a separate matter. An accessible
+documentary scores high; a dense, twisty thriller that raises no question scores
+low. Score whether the work is *about* something.
+*Anchors : NCIS = 1, Grey's Anatomy = 3, Westworld = 8, Black Mirror = 10.*
+
+**`action` — Action.** *How much physical movement, confrontation and bodily
+stakes does the work contain?* **NOT** editing pace: a fast-talking series with
+people in rooms scores low. Score what the bodies do.
+*Anchors : Friends = 1, Sherlock = 4, Game of Thrones = 8, 24 = 10.*
+
+### 11.3 Vérifications appliquées à cette proposition
+
+- **24 œuvres-ancres, toutes distinctes** — aucune ne sert deux dimensions
+  (§7.3). C'est la contrainte qui a le plus guidé les choix.
+- **Portée couverte** partout : chaque dimension a une ancre à 1, une haute et
+  une à 10, et une intermédiaire — sauf `reve` dont l'intermédiaire est à 2, à
+  compléter si le premier lot montre un trou dans le milieu.
+- **Aucune définition ne cite un nom de genre**, sauf pour le nier
+  explicitement (« NOT the comedy genre »).
+- **Les six « ce n'est pas »** visent les confusions les plus probables :
+  joie/comédie, rêve/budget, tristesse/noirceur, peur/violence,
+  réflexion/difficulté, action/rythme.
+- `tristesse` **ne reprend pas** `luminosite` : l'une mesure le chagrin porté,
+  l'autre mesurait le regard sur le monde. Un récit peut être très triste et
+  peu désespéré — c'est la distinction que la ligne « NOT darkness » protège.
+
+### 11.4 Ce qui reste à décider
+
+- Les six ancres à 10 sont des séries anglo-saxonnes prestigieuses. C'est le
+  défaut connu de la v2, et il pèse surtout sur `joie` — ce qui est drôle voyage
+  mal d'une culture à l'autre. À revoir si le catalogue s'ouvre.
+- `reflexion` et `reve` peuvent se recouvrir sur la SF d'idées (*Black Mirror*,
+  *Westworld* sont tous deux les deux). C'est la paire à surveiller dans la
+  matrice de corrélation, comme `exigence` × `etrangete` l'était en v2.
