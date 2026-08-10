@@ -28,6 +28,21 @@ SOURCE = "tmdb"
 KIND_SERIES = "tv"
 KIND_SEASON = "tv_season"
 
+# Le barème courant : le plus récent, la même règle que l'atelier et la ligne
+# de commande appliquent pour noter.
+#
+# Sans ce filtre, l'affichage agrège les notes de tous les barèmes confondus :
+# `distinct on (id_tmdb, axe)` groupe par *nom* d'axe, or deux référentiels
+# n'ont pas les mêmes noms. Une œuvre notée sous l'ancien barème et sous le
+# nouveau montrerait donc les douze axes empilés — un vecteur chimère qui
+# n'existe dans aucun référentiel. Et tant que rien n'est noté sous le barème
+# courant, elle montrerait uniquement les axes de l'ancien.
+#
+# Les notes des barèmes précédents restent en base : la version EST la
+# provenance, on n'écrase jamais. Elles se relisent depuis l'atelier, qui sait
+# de quel barème il parle — l'affichage général, lui, n'a qu'un référentiel.
+BAREME_COURANT = "(select version from notation.rubric order by created_at desc limit 1)"
+
 # La note, pondérée par le nombre de votants.
 #
 # Trier sur `vote_average` brut donne un classement inutile : une série notée
@@ -333,16 +348,18 @@ async def fetch_cards(
                       and split_part(s.source_id, '/', 1) = any (array(select id::text from page))
                     group by 1
                 ),
-                -- Le vecteur de goût courant : la note la plus récente par axe,
-                -- venue du juge (jamais la contre-note manuelle, jamais la
-                -- prédiction interne — c'est le verdict qui fait foi tant que la
-                -- régression n'est pas devenue la référence). Absent tant qu'une
-                -- série n'a jamais été notée : `null`, pas des zéros.
+                -- L'empreinte courante : la note la plus récente par axe, sous
+                -- le barème courant (cf. BAREME_COURANT), venue du juge —
+                -- jamais la contre-note manuelle, jamais la prédiction interne,
+                -- c'est le verdict qui fait foi tant que la régression n'est
+                -- pas devenue la référence. Absent tant qu'une série n'a jamais
+                -- été notée sous ce barème : `null`, pas des zéros.
                 scores as (
                     select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
                     from notation.score
                     where id_tmdb = any (array(select id from page))
                       and valeur is not null
+                      and rubric_version = {bareme}
                       and modele <> 'interne-ridge' and modele not like 'claude%%'
                     order by id_tmdb, axe, scored_at desc
                 ),
@@ -358,6 +375,7 @@ async def fetch_cards(
                     from notation.score
                     where id_tmdb = any (array(select id from page))
                       and valeur is not null and modele = 'interne-ridge'
+                      and rubric_version = {bareme}
                     order by id_tmdb, axe, scored_at desc
                 ),
                 vecteurs_internes as (
@@ -383,6 +401,7 @@ async def fetch_cards(
                 where=where,
                 order=order,
                 order_page=order_page,
+                bareme=sql.SQL(BAREME_COURANT),
                 traductions=_TRADUCTIONS if traduire else sql.SQL(""),
                 traduction=(
                     sql.SQL("coalesce(x.data, '[]'::jsonb) as traduction")
@@ -613,14 +632,15 @@ async def fetch_work(
         )
         catalog = await cur.fetchone()
 
-        # Le vecteur de goût courant — même règle que sur les vignettes : le
-        # dernier verdict du juge par axe, jamais la contre-note manuelle, ni
-        # la prédiction interne.
+        # L'empreinte courante — même règle que sur les vignettes : le dernier
+        # verdict du juge par axe sous le barème courant, jamais la contre-note
+        # manuelle, ni la prédiction interne.
         await cur.execute(
-            """
+            f"""
             select distinct on (axe) axe, valeur
             from notation.score
             where id_tmdb = %s and valeur is not null
+              and rubric_version = {BAREME_COURANT}
               and modele <> 'interne-ridge' and modele not like 'claude%%'
             order by axe, scored_at desc
             """,
@@ -630,10 +650,11 @@ async def fetch_work(
 
         # La prédiction interne, pour afficher l'écart avec le juge.
         await cur.execute(
-            """
+            f"""
             select distinct on (axe) axe, valeur
             from notation.score
             where id_tmdb = %s and valeur is not null and modele = 'interne-ridge'
+              and rubric_version = {BAREME_COURANT}
             order by axe, scored_at desc
             """,
             (work_id,),

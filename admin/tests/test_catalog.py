@@ -318,6 +318,39 @@ async def test_card_carries_the_axis_vector_when_scored(conn: psycopg.AsyncConne
     assert non_notee["axisScores"] is None
 
 
+async def test_only_the_current_rubric_shows(conn: psycopg.AsyncConnection) -> None:
+    """Changer de référentiel ne fait pas cohabiter deux jeux d'axes.
+
+    `distinct on (id_tmdb, axe)` groupe par *nom* d'axe, et deux barèmes n'ont
+    pas les mêmes noms : sans filtre sur la version, une œuvre notée sous
+    l'ancien barème et sous le nouveau montrerait les axes des deux empilés —
+    un vecteur chimère qui n'existe dans aucun référentiel. Et tant que rien
+    n'est noté sous le barème courant, elle montrerait ceux de l'ancien.
+    """
+    await seed(conn)
+    await conn.execute(
+        "insert into notation.rubric (version, prompt, axes) values"
+        " ('v-suivant', 'p', '[\"joie\"]'::jsonb)"
+    )
+    await conn.execute(
+        """
+        insert into notation.score
+            (id_tmdb, axe, valeur, confiance, rubric_version, modele,
+             input_sha256, prompt_sha256)
+        values
+            (1399, 'luminosite', 4, 0.8, 'v1',        'gpt-test', 'sha-in', 'sha-p'),
+            (1399, 'joie',       7, 0.8, 'v-suivant', 'gpt-test', 'sha-in', 'sha-p')
+        """
+    )
+
+    rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR"))
+    vignette = next(row for row in rows if row["id"] == 1399)
+    fiche = await fetch_work(conn, 1399, lang="fr-FR")
+
+    assert vignette["axisScores"] == {"joie": 7.0}, "l'ancien axe n'a rien à faire là"
+    assert fiche["axisScores"] == {"joie": 7.0}, "la fiche suit la même règle"
+
+
 async def test_the_cards_are_translated_too(conn: psycopg.AsyncConnection) -> None:
     """La grille lit la projection, qui ne stocke que le titre français. Les
     traductions viennent du payload de la fiche, ouvert pour les seules séries
