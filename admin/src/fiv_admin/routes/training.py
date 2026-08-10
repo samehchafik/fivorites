@@ -885,7 +885,13 @@ async def comparer_encodeurs(
 
     ids = [i for i in by_work if i in textes]
     resultats: list[dict[str, Any]] = []
-    for modele in modeles:
+    for rang, modele in enumerate(modeles, start=1):
+        # Le journal tient lieu de barre de progression : chaque encodage dure
+        # des minutes, et un silence de ce calibre ne se distingue pas d'un
+        # blocage — on l'a pris pour tel en production.
+        log.info(
+            "encodeur %d/%d : %s — %d dossiers à encoder", rang, len(modeles), modele, len(ids)
+        )
         vecteurs = await asyncio.to_thread(
             embed_texts,
             [textes[i] for i in ids],
@@ -895,6 +901,12 @@ async def comparer_encodeurs(
         # Chaque candidat évalué est aussitôt déchargé : sans ça, les
         # arènes ONNX des quatre modèles s'empilent en mémoire résidente.
         liberer_modeles()
+        log.info(
+            "encodeur %d/%d : %s — encodage terminé, régression en cours",
+            rang,
+            len(modeles),
+            modele,
+        )
         par_oeuvre = dict(zip(ids, vecteurs, strict=True))
 
         par_axe: list[dict[str, Any]] = []
