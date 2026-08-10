@@ -141,8 +141,17 @@ async def load_seasons(
     )
 
 
-async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str, Any] | None:
-    """Le dossier anglais d'une série, ou None si elle n'est pas collectée."""
+async def build_dossier(
+    conn: psycopg.AsyncConnection, id_tmdb: int, *, medias: bool = True
+) -> dict[str, Any] | None:
+    """Le dossier anglais d'une série, ou None si elle n'est pas collectée.
+
+    `medias=False` assemble le même dossier **sans** la section des légendes
+    visuelles. Ce n'est pas un réglage de production — c'est ce qui permet de
+    mesurer ce que les visuels apportent réellement, en comparant deux
+    dossiers qui ne diffèrent que par elle. Sans ça, la question « faut-il
+    payer les légendes sur la traîne ? » ne se répond que par conviction.
+    """
     fiche = await load_fiche(conn, id_tmdb)
     if fiche is None:
         return None
@@ -241,7 +250,7 @@ async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str
             f"S{ep['season']}E{ep['episode']} {ep['name']}: {ep['overview']}" for ep in episodes
         ]
         parts.append("EPISODE SYNOPSES (sampled across the whole run):\n" + "\n".join(lines))
-    if captions:
+    if captions and medias:
         parts.append(
             "MEDIA (what the official images show, auto-described):\n"
             + "\n".join(f"{row['label']}: {row['caption']}" for row in captions)
@@ -263,7 +272,7 @@ async def build_dossier(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str
             "seasonOverviews": len(season_overviews),
             "episodeCount": len(episodes),
             "episodeChars": sum(len(ep["overview"]) for ep in episodes),
-            "mediaLines": len(captions),
+            "mediaLines": len(captions) if medias else 0,
             "wikipediaChars": len(wikipedia),
             "keywords": len(keywords),
         },

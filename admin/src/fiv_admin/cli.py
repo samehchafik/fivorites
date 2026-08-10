@@ -358,6 +358,83 @@ def training_encodeurs(
     _run(run())
 
 
+@training_app.command("visuels")
+def training_visuels(
+    bareme: Annotated[
+        str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
+    ] = None,
+) -> None:
+    """Chiffre ce que les légendes visuelles apportent, et ce que leur absence coûte.
+
+    Mêmes œuvres, mêmes notes, deux dossiers qui ne diffèrent que par la
+    section MEDIA. Trois colonnes en sortie :
+
+    * `avec`   — le modèle actuel, entraîné et évalué sur dossiers légendés ;
+    * `sans`   — le même, entraîné et évalué sans les légendes : l'écart avec
+      la première dit ce que les visuels apportent réellement ;
+    * `décalé` — poids appris AVEC, appliqués à une œuvre SANS. C'est la
+      situation exacte de la traîne si on décide de ne pas la légender, et
+      elle ne se déduit d'aucune des deux autres.
+
+    N'écrit rien, n'appelle aucune API : tout est local et gratuit. La
+    décision — payer les légendes sur la traîne, ou non — se prend au vu de
+    ces chiffres.
+    """
+    from fiv_admin.routes.training import PasAssezDOeuvres, _rubric, comparer_visuels
+
+    settings = get_settings()
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            if bareme:
+                rubric = await _rubric(conn, bareme)
+            else:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric"
+                        " order by created_at desc limit 1"
+                    )
+                    rubric = await cur.fetchone()
+                if rubric is None:
+                    typer.echo("aucun barème en base.")
+                    raise typer.Exit(1)
+
+            typer.echo(f"barème {rubric['version']} — assemblage des deux jeux de dossiers…")
+            try:
+                bilan = await comparer_visuels(conn, settings, rubric)
+            except PasAssezDOeuvres as exc:
+                typer.echo(f"ERREUR : {exc}")
+                raise typer.Exit(1) from exc
+
+            typer.echo(
+                f"\n{bilan['oeuvres']} œuvre(s), dont {bilan['legendees']} légendée(s)."
+                " Erreur de validation croisée, plus bas est meilleur :\n"
+            )
+            typer.echo(f"  {'axe':<12} {'avec':>7} {'sans':>7} {'décalé':>8}   apport   coût")
+            apports, couts = [], []
+            for a in bilan["axes"]:
+                apport = a["sans"] - a["avec"]
+                cout = a["decale"] - a["avec"]
+                apports.append(apport)
+                couts.append(cout)
+                typer.echo(
+                    f"  {a['axe']:<12} {a['avec']:7.3f} {a['sans']:7.3f} {a['decale']:8.3f}"
+                    f"  {apport:+7.3f} {cout:+6.3f}"
+                )
+            if apports:
+                typer.echo(
+                    f"  {'MOYENNE':<12} {'':7} {'':7} {'':8}"
+                    f"  {sum(apports) / len(apports):+7.3f} {sum(couts) / len(couts):+6.3f}"
+                )
+            typer.echo(
+                "\n« apport » = ce que les légendes font gagner quand elles sont là."
+                "\n« coût »   = ce que perd une œuvre non légendée jugée par ces poids."
+                "\nLe second décide de la traîne : faible, elle peut rester nue."
+            )
+
+    _run(run())
+
+
 @catalog_app.command("refresh")
 def catalog_refresh() -> None:
     """Recalcule les vignettes depuis le brut.

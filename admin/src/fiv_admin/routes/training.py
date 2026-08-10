@@ -34,7 +34,7 @@ from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
 from fiv_admin.embed import EMBEDDER, embed_texts, liberer_modeles
 from fiv_admin.llm import LlmError, caption_openai, score_anthropic, score_openai
 from fiv_admin.stills import select_images
-from fiv_admin.weights import predict, train_axis
+from fiv_admin.weights import diagnostic_visuels, predict, train_axis
 
 log = logging.getLogger(__name__)
 
@@ -921,6 +921,75 @@ async def comparer_encodeurs(
             {"modele": modele, "dims": len(vecteurs[0]), "moyenne": moyenne, "axes": par_axe}
         )
     return sorted(resultats, key=lambda r: r["moyenne"] if r["moyenne"] is not None else 9)
+
+
+async def comparer_visuels(conn: Any, settings: Any, rubric: dict[str, Any]) -> dict[str, Any]:
+    """Chiffre ce que les légendes visuelles apportent, et ce que leur absence coûte.
+
+    Les mêmes œuvres, les mêmes notes, deux dossiers qui ne diffèrent que par
+    la section MEDIA : tout écart mesuré vient donc des visuels et de rien
+    d'autre. C'est la seule façon de répondre à « faut-il légender la traîne ? »
+    autrement que par conviction — et la réponse engage plusieurs centaines
+    d'euros à l'échelle du catalogue.
+
+    N'écrit rien : ni vecteurs, ni poids. Les embeddings « sans médias » ne
+    doivent surtout pas entrer dans `notation.embedding`, qui sert la
+    production et n'a qu'une clé par œuvre et par empreinte.
+    """
+    axes: list[str] = rubric["axes"]
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
+            from notation.score
+            where rubric_version = %s and modele <> %s and modele not like 'claude%%'
+              and valeur is not null
+            order by id_tmdb, axe, scored_at desc
+            """,
+            (rubric["version"], INTERNAL_MODEL),
+        )
+        rows = await cur.fetchall()
+
+    by_work: dict[int, dict[str, float]] = {}
+    for row in rows:
+        by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
+    if len(by_work) < MIN_TRAINING_WORKS:
+        raise PasAssezDOeuvres(len(by_work))
+
+    avec: dict[int, str] = {}
+    sans: dict[int, str] = {}
+    legendees = 0
+    for id_tmdb in by_work:
+        a = await build_dossier(conn, id_tmdb)
+        b = await build_dossier(conn, id_tmdb, medias=False)
+        if a is None or b is None:
+            continue
+        avec[id_tmdb], sans[id_tmdb] = a["text"], b["text"]
+        if a["sections"]["mediaLines"] > 0:
+            legendees += 1
+
+    ids = list(avec)
+    log.info("diagnostic visuels : %d œuvres, dont %d légendées", len(ids), legendees)
+    v_avec = await asyncio.to_thread(
+        embed_texts, [avec[i] for i in ids], cache_dir=settings.embed_cache_dir
+    )
+    v_sans = await asyncio.to_thread(
+        embed_texts, [sans[i] for i in ids], cache_dir=settings.embed_cache_dir
+    )
+    index = {i: n for n, i in enumerate(ids)}
+
+    par_axe = []
+    for axe in axes:
+        retenus = [i for i in ids if axe in by_work[i]]
+        if len(retenus) < MIN_TRAINING_WORKS:
+            continue
+        d = diagnostic_visuels(
+            [v_avec[index[i]] for i in retenus],
+            [v_sans[index[i]] for i in retenus],
+            [by_work[i][axe] for i in retenus],
+        )
+        par_axe.append({"axe": axe, "notees": len(retenus), **d})
+    return {"oeuvres": len(ids), "legendees": legendees, "axes": par_axe}
 
 
 class PasAssezDOeuvres(RuntimeError):

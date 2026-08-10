@@ -219,6 +219,7 @@ rafraîchie — et le front doit pouvoir les distinguer.
 | `training note -n <N>` | note les N séries les plus populaires pas encore jugées |
 | `training poids` | réentraîne la régression sur toutes les notes du barème |
 | `training encodeurs` | compare des encodeurs sur les notes rendues, sans rien écrire |
+| `training visuels` | chiffre l'apport des légendes, et le coût de leur absence |
 
 `training note` est le remplissage de la phase 1 : la page Training note une
 œuvre à la fois, ce que soixante œuvres rendent intenable. Elle emprunte
@@ -269,6 +270,16 @@ docker compose run --rm admin training poids
 Il affiche le MAE de validation croisée par axe : c'est lui qui compte, pas le
 MAE d'ajustement, car il mesure ce que les poids feraient sur une œuvre jamais
 vue.
+
+`training visuels` répond à « faut-il payer les légendes sur la traîne ? »
+— une décision à plusieurs centaines d'euros à l'échelle du catalogue. Mêmes
+œuvres, mêmes notes, deux dossiers qui ne diffèrent que par la section MEDIA,
+donc tout écart mesuré vient des visuels. Trois colonnes : `avec` et `sans`
+(entraînés et évalués chacun sur sa matière — leur écart est l'apport réel des
+légendes), et `décalé` (poids appris AVEC, appliqués à une œuvre SANS — la
+situation exacte d'une traîne non légendée). C'est le troisième chiffre qui
+décide, et il ne se déduit pas des deux autres. La commande n'écrit rien et
+n'appelle aucune API.
 
 `training encodeurs` répond à la question ouverte n°5 du plan de notation —
 « quel encodeur pour la traîne ? » — par la mesure. Les classements publics

@@ -2,9 +2,9 @@
 
 C'est l'apprenti du processus d'entraînement. Le LLM juge ; cette régression
 n'a jamais de jugement — elle interpole entre les jugements déjà rendus. Une
-ridge en forme fermée suffit : sur des vecteurs de 256 dimensions et quelques
-centaines d'exemples, tout se calcule en millisecondes, sans dépendance
-au-delà de numpy.
+ridge en forme fermée suffit : sur des vecteurs de quelques centaines de
+dimensions et autant d'exemples, tout se calcule en millisecondes, sans
+dépendance au-delà de numpy.
 
 λ n'est PAS une constante, et c'est une leçon payée sur données réelles : un
 λ=10 fixe, posé « par prudence », face à des embeddings OpenAI de norme 1
@@ -13,9 +13,9 @@ XᵀX valent ~0,3, le facteur de rétrécissement 0,3/10,3. Résultat observé s
 le premier lot : les six axes prédits quasi identiques pour treize œuvres
 très différentes — la régression rendait la moyenne d'entraînement, partout,
 et son MAE *sur ses propres données* dépassait 1 point. λ se choisit donc par
-validation croisée leave-one-out, en forme fermée elle aussi : pour une ridge,
-le résidu LOO s'obtient du résidu d'ajustement divisé par (1 − hᵢᵢ), sans
-réentraîner n fois.
+validation croisée, en réajustant sur chaque pli — la forme fermée du LOO,
+essayée d'abord, dégénère quand les exemples sont moins nombreux que les
+dimensions (voir `_erreur_croisee`).
 """
 
 from __future__ import annotations
@@ -52,7 +52,9 @@ def _fit(xc: np.ndarray, yc: np.ndarray, lam: float) -> np.ndarray:
     return vt.T @ ((s / (s**2 + lam)) * (u.T @ yc))
 
 
-def _erreur_croisee(x: np.ndarray, y: np.ndarray, lam: float, plis: int) -> float:
+def _erreur_croisee(
+    x: np.ndarray, y: np.ndarray, lam: float, plis: int, x_eval: np.ndarray | None = None
+) -> float:
     """L'erreur sur des points que le modèle n'a pas vus.
 
     Réajustée à chaque pli, exprès. La forme fermée du LOO — résidu divisé par
@@ -65,6 +67,11 @@ def _erreur_croisee(x: np.ndarray, y: np.ndarray, lam: float, plis: int) -> floa
     virgule près. Mesurer sur des points réellement écartés ne peut pas
     dégénérer de cette façon.
     """
+    # `x_eval` sert au diagnostic des visuels : on apprend sur une
+    # représentation et on évalue sur une autre, pour chiffrer ce que coûte
+    # d'appliquer des poids entraînés sur dossiers enrichis à des dossiers
+    # nus. Sans lui, on ne mesure jamais ce décalage-là.
+    cible = x if x_eval is None else x_eval
     erreurs: list[np.ndarray] = []
     for pli in range(plis):
         # Découpage par pas plutôt qu'en blocs : sans mélange aléatoire, des
@@ -78,7 +85,7 @@ def _erreur_croisee(x: np.ndarray, y: np.ndarray, lam: float, plis: int) -> floa
 
         x_mean, y_mean = x[garde].mean(axis=0), float(y[garde].mean())
         coef = _fit(x[garde] - x_mean, y[garde] - y_mean, lam)
-        pred = np.clip((x[test] - x_mean) @ coef + y_mean, SCALE_MIN, SCALE_MAX)
+        pred = np.clip((cible[test] - x_mean) @ coef + y_mean, SCALE_MIN, SCALE_MAX)
         erreurs.append(np.abs(pred - y[test]))
 
     return float(np.concatenate(erreurs).mean()) if erreurs else float("inf")
@@ -125,3 +132,45 @@ def predict(vector: list[float], intercept: float, coef: list[float]) -> float:
     """La note interne d'un axe, bornée à l'échelle."""
     raw = intercept + float(np.asarray(vector, dtype=np.float64) @ np.asarray(coef))
     return round(float(np.clip(raw, SCALE_MIN, SCALE_MAX)), 1)
+
+
+def diagnostic_visuels(
+    vecteurs_avec: list[list[float]], vecteurs_sans: list[list[float]], values: list[float]
+) -> dict[str, float]:
+    """Ce que les légendes visuelles apportent, en trois chiffres.
+
+    Deux questions distinctes, qu'on confond facilement :
+
+    * `avec` contre `sans` — les visuels enrichissent-ils la représentation ?
+      Les deux régimes sont entraînés ET évalués sur la même matière, donc
+      l'écart mesure l'apport réel des légendes.
+    * `decale` — que coûte d'appliquer des poids appris sur dossiers enrichis
+      à une œuvre qui n'a pas de légendes ? C'est la situation exacte de la
+      traîne si l'on décide de ne pas la légender, et elle ne se déduit
+      d'aucune des deux premières.
+
+    Le λ est choisi indépendamment pour chaque régime, comme le ferait un
+    entraînement réel ; pour le décalé, on garde celui du régime « avec »,
+    puisque c'est bien ce modèle-là qu'on appliquerait.
+    """
+    x_avec = np.asarray(vecteurs_avec, dtype=np.float64)
+    x_sans = np.asarray(vecteurs_sans, dtype=np.float64)
+    y = np.asarray(values, dtype=np.float64)
+    plis = len(y) if len(y) <= 60 else 10
+
+    def meilleur(x: np.ndarray) -> tuple[float, float]:
+        lam, err = LAMBDA_GRID[-1], float("inf")
+        for candidat in LAMBDA_GRID:
+            e = _erreur_croisee(x, y, candidat, plis)
+            if e < err:
+                lam, err = candidat, e
+        return lam, err
+
+    lam_avec, err_avec = meilleur(x_avec)
+    _, err_sans = meilleur(x_sans)
+    err_decale = _erreur_croisee(x_avec, y, lam_avec, plis, x_eval=x_sans)
+    return {
+        "avec": round(err_avec, 3),
+        "sans": round(err_sans, 3),
+        "decale": round(err_decale, 3),
+    }
