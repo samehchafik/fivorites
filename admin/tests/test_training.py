@@ -1008,26 +1008,24 @@ async def test_le_dossier_porte_les_critiques_de_spectateurs(
     assert "2 viewer review(s)" in built["text"], "MATERIAL doit annoncer ce qui est là"
 
 
-def test_les_voisins_battent_la_ridge_sur_une_structure_non_lineaire() -> None:
-    """Le cas Lucifer, réduit à sa mécanique.
+def test_les_modeles_non_lineaires_passent_un_controle_que_la_ridge_echoue() -> None:
+    """Le garde-fou de la comparaison elle-même.
 
-    Deux amas dans l'espace des embeddings, chacun avec sa note, mais placés de
-    telle sorte qu'aucun hyperplan ne les sépare : une projection linéaire ne
-    peut que rendre la moyenne des deux — exactement ce qu'on observe quand une
-    comédie à l'intrigue de policier surnaturel se retrouve notée 3,1 en joie
-    au lieu de 6.
+    Quatre amas notés en XOR : aucun hyperplan ne les sépare, donc la ridge ne
+    peut qu'en rendre la moyenne. Les trois autres doivent réussir — sinon un
+    « ils perdent tous » ne voudrait rien dire, puisqu'on ne saurait pas
+    distinguer un plafond réel d'une implémentation défaillante.
 
-    Un voisinage, lui, lit la structure locale. Ce test échouerait si
-    `comparer_modeles` ne mesurait pas ce qu'il prétend.
+    Ce test a déjà servi deux fois. Il a montré que le réseau plafonnait avec
+    une descente à inertie, corrigée par Adam ; puis qu'il apprenait son pli
+    par cœur parce qu'on réduisait les entrées, ce qui amplifiait les
+    dimensions de bruit jusqu'au niveau du signal.
     """
     rng = random.Random(3)
-    dims = 32
     vecteurs, notes = [], []
-    # Quatre amas aux coins d'un carré, notés en XOR : la configuration qui
-    # n'est séparable par aucune droite.
     for cx, cy, note in ((1.0, 1.0, 8.0), (-1.0, -1.0, 8.0), (1.0, -1.0, 2.0), (-1.0, 1.0, 2.0)):
         for _ in range(30):
-            v = [rng.gauss(0, 0.05) for _ in range(dims)]
+            v = [rng.gauss(0, 0.05) for _ in range(32)]
             v[0] = cx + rng.gauss(0, 0.15)
             v[1] = cy + rng.gauss(0, 0.15)
             vecteurs.append(v)
@@ -1036,13 +1034,13 @@ def test_les_voisins_battent_la_ridge_sur_une_structure_non_lineaire() -> None:
     bilan = comparer_modeles(axe="test", vectors=vecteurs, values=notes)
 
     assert bilan["oeuvres"] == 120
-    ridge, voisins = bilan["ridge"], bilan["voisins"]
-    assert voisins, "un voisinage doit avoir été retenu"
-    assert voisins["maeCv"] < ridge["maeCv"] / 2, (
-        f"voisins {voisins['maeCv']} contre ridge {ridge['maeCv']} — la comparaison "
-        "ne détecte pas une structure que le linéaire ne peut pas voir"
-    )
-    assert voisins["dispersion"] > 0.8, (
-        "les voisins recopient de vraies notes : ils doivent rendre l'amplitude"
-    )
-    assert ridge["dispersion"] < 0.5, "la ridge, elle, ne peut que tasser vers la moyenne"
+    ridge = bilan["ridge"]
+    assert ridge["maeCv"] > 2.0, "la ridge ne peut pas voir un XOR : c'est le point du test"
+    for nom in ("voisins", "noyau", "reseau"):
+        modele = bilan[nom]
+        assert modele, f"{nom} n'a rien renvoye"
+        assert modele["maeCv"] < 1.0, (
+            f"{nom} rend {modele['maeCv']} sur une structure qu'il devrait lire — "
+            "la comparaison mesurerait l'implementation, pas la question posee"
+        )
+        assert modele["correlation"] > 0.9, f"{nom} ne retrouve pas l'ordre"

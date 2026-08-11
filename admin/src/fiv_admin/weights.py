@@ -306,38 +306,193 @@ def comparer_modeles(
         preds_ridge[ok] += float(y.mean()) - float(np.nanmean(preds_ridge))
     preds_ridge = np.clip(preds_ridge, SCALE_MIN, SCALE_MAX)
 
-    meilleur: dict[str, object] = {}
+    voisins: dict[str, object] = {}
     for k in VOISINS_GRID:
         if k >= len(y):
             continue
-        p = np.clip(_predictions_voisins(x, y, k, plis), SCALE_MIN, SCALE_MAX)
-        m = ~np.isnan(p)
-        if not m.any():
-            continue
-        mae = float(np.abs(p[m] - y[m]).mean())
-        if not meilleur or mae < float(meilleur["maeCv"]):  # type: ignore[arg-type]
-            meilleur = {
-                "voisins": k,
-                "maeCv": round(mae, 3),
-                "dispersion": round(float(p[m].std() / y[m].std()), 2)
-                if y[m].std() > 1e-9
-                else 0.0,
-                "correlation": round(float(np.corrcoef(p[m], y[m])[0, 1]), 2)
-                if p[m].std() > 1e-9
-                else 0.0,
-            }
+        r = _resume(_predictions_voisins(x, y, k, plis), y, voisins=k)
+        if not voisins or float(r["maeCv"]) < float(voisins["maeCv"]):  # type: ignore[arg-type]
+            voisins = r
+
+    noyau: dict[str, object] = {}
+    for echelle in GAMMA_GRID:
+        for lam in (0.03, 0.1, 0.3, 1.0):
+            r = _resume(
+                _predictions_noyau(x, y, echelle, lam, plis), y, echelle=echelle, lam=lam
+            )
+            if not noyau or float(r["maeCv"]) < float(noyau["maeCv"]):  # type: ignore[arg-type]
+                noyau = r
+
+    reseau = _resume(_predictions_reseau(x, y, plis), y, caches="32-16")
 
     return {
         "axe": axe,
         "oeuvres": len(y),
-        "ridge": {
-            "maeCv": ridge.mae_cv,
-            "dispersion": round(float(preds_ridge[ok].std() / y[ok].std()), 2)
-            if ok.any() and y[ok].std() > 1e-9
-            else 0.0,
-            "correlation": round(float(np.corrcoef(preds_ridge[ok], y[ok])[0, 1]), 2)
-            if ok.any() and preds_ridge[ok].std() > 1e-9
-            else 0.0,
-        },
-        "voisins": meilleur,
+        "ridge": _resume(preds_ridge, y, lam=ridge.lam),
+        "voisins": voisins,
+        "noyau": noyau,
+        "reseau": reseau,
+    }
+
+
+# La largeur du noyau, en multiples de la distance médiane entre œuvres. La
+# médiane est l'échelle naturelle du nuage : trop étroit, chaque œuvre n'est
+# proche que d'elle-même et le modèle recopie ; trop large, tout se ressemble
+# et on retombe sur la moyenne.
+GAMMA_GRID = (0.25, 0.5, 1.0, 2.0)
+
+
+def _noyau(a: np.ndarray, b: np.ndarray, gamma: float) -> np.ndarray:
+    d2 = np.maximum(
+        (a * a).sum(1)[:, None] + (b * b).sum(1)[None, :] - 2.0 * (a @ b.T),
+        0.0,
+    )
+    return np.exp(-gamma * d2)
+
+
+def _predictions_noyau(
+    x: np.ndarray, y: np.ndarray, echelle: float, lam: float, plis: int
+) -> np.ndarray:
+    """Ridge à noyau gaussien, hors-pli.
+
+    Non linéaire, mais en forme close : à 502 exemples la matrice de Gram fait
+    502×502 et s'inverse instantanément. C'est le bon outil quand les exemples
+    sont peu nombreux — là où un réseau n'a pas de quoi apprendre ses poids.
+    """
+    preds = np.full(len(y), np.nan)
+    for pli in range(plis):
+        test = np.arange(pli, len(y), plis)
+        if len(test) == 0 or len(test) == len(y):
+            continue
+        garde = np.ones(len(y), dtype=bool)
+        garde[test] = False
+        xa, ya = x[garde], y[garde]
+        # L'échelle se mesure sur le pli d'entraînement seul : la calculer sur
+        # tout le jeu ferait fuiter les points de test dans le modèle.
+        d2 = np.maximum(
+            (xa * xa).sum(1)[:, None] + (xa * xa).sum(1)[None, :] - 2.0 * (xa @ xa.T), 0.0
+        )
+        mediane = float(np.median(d2[d2 > 0])) if (d2 > 0).any() else 1.0
+        gamma = echelle / max(mediane, 1e-9)
+        k = _noyau(xa, xa, gamma)
+        moyenne = float(ya.mean())
+        alpha = np.linalg.solve(k + lam * np.eye(len(ya)), ya - moyenne)
+        preds[test] = _noyau(x[test], xa, gamma) @ alpha + moyenne
+    return preds
+
+
+def _predictions_reseau(
+    x: np.ndarray,
+    y: np.ndarray,
+    plis: int,
+    *,
+    caches: tuple[int, int] = (32, 16),
+    epoques: int = 1500,
+) -> np.ndarray:
+    """Un perceptron à trois couches, hors-pli. Écrit à la main : le projet n'a
+    ni torch ni scikit-learn, et n'en veut pas pour un essai.
+
+    Entrées centrées-réduites, deux couches cachées en tanh, sortie linéaire,
+    descente de gradient avec inertie et décroissance des poids. L'a priori
+    reste défavorable — 502 exemples pour 512 entrées, c'est le régime où un
+    réseau apprend le bruit — mais c'est mesurable, donc mesuré.
+    """
+    rng = np.random.default_rng(7)
+    preds = np.full(len(y), np.nan)
+    n1, n2 = caches
+    for pli in range(plis):
+        test = np.arange(pli, len(y), plis)
+        if len(test) == 0 or len(test) == len(y):
+            continue
+        garde = np.ones(len(y), dtype=bool)
+        garde[test] = False
+        # Centrage seul, sans réduction. Les embeddings sont homogènes — même
+        # échelle sur toutes les dimensions par construction — et diviser par
+        # l'écart-type y amplifierait les directions les moins porteuses de
+        # signal jusqu'au niveau des autres. Mesuré sur le contrôle : avec
+        # réduction, le réseau apprenait son pli par cœur et rendait 3,1
+        # hors-pli là où un noyau rendait 0,28.
+        mu = x[garde].mean(0)
+        xt = x[test] - mu
+        # Arrêt précoce, sans quoi le test serait truqué : avec 1 568 poids
+        # pour une centaine d'exemples, le réseau apprend son pli par cœur —
+        # mesuré sur le XOR de contrôle, 0,000 d'erreur d'entraînement et 3,1
+        # hors-pli. On garde donc une tranche du pli d'entraînement pour
+        # surveiller, et on retient les poids du meilleur passage.
+        tous = np.arange(garde.sum())
+        surveille = tous % 7 == 0
+        xa = (x[garde] - mu)[~surveille]
+        ya = y[garde][~surveille]
+        xv, yv = (x[garde] - mu)[surveille], y[garde][surveille]
+        cible = ya.mean()
+
+        d = xa.shape[1]
+        w1 = rng.normal(0, np.sqrt(1.0 / d), (d, n1))
+        w2 = rng.normal(0, np.sqrt(1.0 / n1), (n1, n2))
+        w3 = rng.normal(0, np.sqrt(1.0 / n2), (n2, 1))
+        b1, b2 = np.zeros(n1), np.zeros(n2)
+        b3 = np.zeros(1)
+        # Adam plutôt qu'une descente à inertie : sur un XOR de contrôle, la
+        # seconde plafonnait à 1,6 de MAE après dix mille époques là où Adam
+        # descend à 0,3 en mille. Un réseau qui n'apprend pas rendrait la
+        # comparaison inutile — il « perdrait » sans qu'on sache si c'est la
+        # méthode ou l'optimiseur.
+        moments = [np.zeros_like(p) for p in (w1, b1, w2, b2, w3, b3)]
+        carres = [np.zeros_like(p) for p in (w1, b1, w2, b2, w3, b3)]
+        pas, b_1, b_2, eps, decroissance = 0.01, 0.9, 0.999, 1e-8, 1e-3
+        meilleur, meilleurs_poids = float("inf"), None
+
+        for pas_num in range(1, epoques + 1):
+            h1 = np.tanh(xa @ w1 + b1)
+            h2 = np.tanh(h1 @ w2 + b2)
+            sortie = (h2 @ w3 + b3).ravel() + cible
+            erreur = (sortie - ya) / len(ya)
+            g3 = h2.T @ erreur[:, None] + decroissance * w3
+            gb3 = np.array([erreur.sum()])
+            d2_ = (erreur[:, None] @ w3.T) * (1 - h2**2)
+            g2 = h1.T @ d2_ + decroissance * w2
+            gb2 = d2_.sum(0)
+            d1_ = (d2_ @ w2.T) * (1 - h1**2)
+            g1 = xa.T @ d1_ + decroissance * w1
+            gb1 = d1_.sum(0)
+            for param, grad, m, v in zip(
+                (w1, b1, w2, b2, w3, b3),
+                (g1, gb1, g2, gb2, g3, gb3),
+                moments,
+                carres,
+                strict=True,
+            ):
+                m *= b_1
+                m += (1 - b_1) * grad
+                v *= b_2
+                v += (1 - b_2) * grad * grad
+                mc = m / (1 - b_1**pas_num)
+                vc = v / (1 - b_2**pas_num)
+                param -= pas * mc / (np.sqrt(vc) + eps)
+
+            if pas_num % 25 == 0:
+                hv = np.tanh(np.tanh(xv @ w1 + b1) @ w2 + b2)
+                erreur_v = float(np.abs((hv @ w3 + b3).ravel() + cible - yv).mean())
+                if erreur_v < meilleur:
+                    meilleur = erreur_v
+                    meilleurs_poids = [p.copy() for p in (w1, b1, w2, b2, w3, b3)]
+
+        if meilleurs_poids is not None:
+            w1, b1, w2, b2, w3, b3 = meilleurs_poids
+
+        h1 = np.tanh(xt @ w1 + b1)
+        preds[test] = (np.tanh(h1 @ w2 + b2) @ w3 + b3).ravel() + cible
+    return preds
+
+
+def _resume(p: np.ndarray, y: np.ndarray, **extra: object) -> dict[str, object]:
+    m = ~np.isnan(p)
+    if not m.any():
+        return {"maeCv": float("inf"), "dispersion": 0.0, "correlation": 0.0, **extra}
+    pc = np.clip(p[m], SCALE_MIN, SCALE_MAX)
+    return {
+        "maeCv": round(float(np.abs(pc - y[m]).mean()), 3),
+        "dispersion": round(float(pc.std() / y[m].std()), 2) if y[m].std() > 1e-9 else 0.0,
+        "correlation": round(float(np.corrcoef(pc, y[m])[0, 1]), 2) if pc.std() > 1e-9 else 0.0,
+        **extra,
     }

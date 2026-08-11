@@ -489,31 +489,33 @@ def training_modeles(
                 typer.echo(f"ERREUR : {exc}")
                 raise typer.Exit(1) from exc
 
-            typer.echo(f"\n{bilan['oeuvres']} œuvre(s).\n")
+            typer.echo(f"\n{bilan['oeuvres']} œuvre(s). MAE cv, plus bas est meilleur.\n")
             typer.echo(
-                f"  {'axe':<12} {'ridge':>21}   {'plus proches voisins':>28}"
+                f"  {'axe':<11}{'ridge':>21}{'voisins':>21}{'noyau RBF':>21}{'réseau 3c':>21}"
             )
-            typer.echo(
-                f"  {'':<12} {'MAE':>6} {'disp':>6} {'corr':>6}"
-                f"   {'k':>3} {'MAE':>7} {'disp':>6} {'corr':>6}   gain"
-            )
-            gains = []
+            entete = f"{'MAE':>7}{'disp':>7}{'corr':>7}"
+            typer.echo(f"  {'':<11}{entete}{entete}{entete}{entete}")
+            gains: dict[str, list[float]] = {"voisins": [], "noyau": [], "reseau": []}
             for a in bilan["axes"]:
-                r, v = a["ridge"], a["voisins"]
-                if not v:
-                    continue
-                gain = r["maeCv"] - v["maeCv"]
-                gains.append(gain)
-                typer.echo(
-                    f"  {a['axe']:<12} {r['maeCv']:6.3f} {r['dispersion']:6.0%}"
-                    f" {r['correlation']:6.2f}   {v['voisins']:3} {v['maeCv']:7.3f}"
-                    f" {v['dispersion']:6.0%} {v['correlation']:6.2f}  {gain:+6.3f}"
-                )
-            if gains:
-                typer.echo(f"\n  gain moyen des voisins : {sum(gains) / len(gains):+.3f}")
+                ligne = f"  {a['axe']:<11}"
+                for nom in ("ridge", "voisins", "noyau", "reseau"):
+                    m = a[nom]
+                    if not m:
+                        ligne += f"{'—':>21}"
+                        continue
+                    ligne += f"{m['maeCv']:>7.3f}{m['dispersion']:>7.0%}{m['correlation']:>7.2f}"
+                    if nom != "ridge":
+                        gains[nom].append(a["ridge"]["maeCv"] - m["maeCv"])
+                typer.echo(ligne)
+            typer.echo("")
+            for nom, valeurs in gains.items():
+                if valeurs:
+                    moyenne = sum(valeurs) / len(valeurs)
+                    verdict = "mieux que la ridge" if moyenne > 0.02 else "pas mieux"
+                    typer.echo(f"  gain moyen {nom:<9}: {moyenne:+.3f}   {verdict}")
             typer.echo(
-                "\nUn gain positif dit que la forme du modèle était le plafond,"
-                "\npas la matière — et qu'il faut passer la production aux voisins."
+                "\nUn gain positif dirait que la forme du modèle était le plafond."
+                "\nS'ils perdent tous, il ne reste que la matière — donc l'enrichissement."
             )
 
     _run(run())
