@@ -952,3 +952,57 @@ def test_la_ridge_ne_recopie_pas_le_juge() -> None:
 def test_la_prediction_est_bornee_a_l_echelle() -> None:
     assert predict([1000.0], 0.0, [1.0]) == 10.0
     assert predict([-1000.0], 0.0, [1.0]) == 1.0
+
+
+async def test_le_dossier_porte_les_critiques_de_spectateurs(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Le cas Lucifer : le juge la note 6 en joie, le modèle interne 3,1.
+
+    Le dossier ne racontait qu'un policier surnaturel — la comédie est dans le
+    jeu, pas dans l'intrigue, et aucune section ne la portait. `reviews` est
+    pourtant collecté par TMDB depuis le premier jour : c'est la seule matière
+    qui parle du ton plutôt que des faits.
+
+    Les plus longues d'abord : une critique de trois lignes dit « super
+    série », une de trois paragraphes dit pourquoi.
+    """
+    id_tmdb = 2400
+    await conn.execute(
+        "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+        " values (%s, 'Serie drole', 1, current_date)",
+        (id_tmdb,),
+    )
+    payload = {
+        "original_name": "Serie drole",
+        "reviews": {
+            "results": [
+                {"author": "court", "content": "Bien."},
+                {"author": "long", "content": "Hilarious from start to finish. " * 30},
+                {"author": "moyen", "content": "Genuinely funny and warm. " * 10},
+            ]
+        },
+        "translations": {
+            "translations": [
+                {
+                    "iso_639_1": "en",
+                    "iso_3166_1": "US",
+                    "data": {"name": "Funny Show", "overview": "A detective solves murders."},
+                }
+            ]
+        },
+    }
+    await conn.execute(
+        "insert into raw_source (source, kind, source_id, lang, http_status, payload,"
+        " payload_sha256) values ('tmdb', 'tv', %s, 'fr-FR', 200, %s, sha256(%s::bytea))",
+        (str(id_tmdb), Jsonb(payload), str(id_tmdb)),
+    )
+
+    built = await build_dossier(conn, id_tmdb)
+
+    assert built is not None
+    assert "VIEWER REVIEWS" in built["text"]
+    assert "Hilarious from start to finish" in built["text"]
+    assert "Genuinely funny" in built["text"], "les deux plus longues sont retenues"
+    assert "Bien." not in built["text"], "la plus courte est écartée : elle ne dit rien du ton"
+    assert "2 viewer review(s)" in built["text"], "MATERIAL doit annoncer ce qui est là"

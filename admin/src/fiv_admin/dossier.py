@@ -43,6 +43,22 @@ WIKIPEDIA_MAX_CHARS = 6000
 # normalement courte ; la troncature n'est là que pour les fiches bavardes.
 SEASON_OVERVIEW_MAX_CHARS = 1500
 
+# Les critiques de spectateurs, collectées par TMDB (`reviews` est dans
+# `SERIES_APPEND` depuis le premier jour) et jamais lues jusqu'ici.
+#
+# C'est la seule source du dossier qui parle du **ton** plutôt que de
+# l'intrigue. Un synopsis dit ce qui se passe ; une critique dit « hilarant »,
+# « glaçant », « ça m'a fait pleurer ». Trois erreurs mesurées en production
+# viennent toutes de là : Lucifer prédit à 3,1 en joie contre 6 chez le juge —
+# le dossier ne raconte qu'un policier surnaturel, la comédie est dans le jeu ;
+# Docteur House à 6,7 en réflexion contre 8 ; et l'axe `humour` de l'ancien
+# barème, bloqué à 1,25 quels que soient le volume, l'encodeur ou les visuels.
+#
+# Deux critiques suffisent : au-delà, on paie du texte redondant et souvent
+# hors sujet (les plaintes sur une saison précise, les spoilers).
+REVIEWS_MAX = 2
+REVIEW_MAX_CHARS = 1200
+
 # En dessous, le dossier ne permet pas de noter : la consigne du barème
 # autorise le « ne sait pas », mais autant le dire avant de payer l'appel.
 MIN_CHARS = 400
@@ -198,6 +214,19 @@ async def build_dossier(
         k.get("name") for k in (payload.get("keywords") or {}).get("results") or [] if k.get("name")
     ]
     networks = [n.get("name") for n in payload.get("networks") or [] if n.get("name")]
+
+    # Les plus longues d'abord : une critique de trois lignes dit « super
+    # série », une de trois paragraphes dit pourquoi. C'est ce « pourquoi » qui
+    # porte le ton.
+    critiques = sorted(
+        (
+            r
+            for r in ((payload.get("reviews") or {}).get("results") or [])
+            if isinstance(r, dict) and (r.get("content") or "").strip()
+        ),
+        key=lambda r: len(r["content"]),
+        reverse=True,
+    )[:REVIEWS_MAX]
     wikipedia = _truncate_sentence((wiki["content"] if wiki else "").strip(), WIKIPEDIA_MAX_CHARS)
 
     # L'assemblage. Sections balisées, ordre fixe : le texte EST l'empreinte.
@@ -230,6 +259,7 @@ async def build_dossier(
         f"{len(season_overviews)} season overview(s)" if season_overviews else None,
         f"{len(episodes)} sampled episode synopses" if episodes else None,
         "Wikipedia article" if wikipedia else None,
+        f"{len(critiques)} viewer review(s)" if critiques else None,
         f"{len(captions)} visual caption(s)" if captions else None,
     ]
     parts.append("MATERIAL: " + ", ".join(m for m in material if m) + ".")
@@ -259,6 +289,13 @@ async def build_dossier(
     # répétitifs que la seule section qui dise de quoi la série parle.
     if wikipedia:
         parts.append("WIKIPEDIA (en):\n" + wikipedia)
+    if critiques:
+        parts.append(
+            "VIEWER REVIEWS (opinions, not facts — they describe how the show feels):\n"
+            + "\n\n".join(
+                f"— {_truncate_sentence(r['content'].strip(), REVIEW_MAX_CHARS)}" for r in critiques
+            )
+        )
     if captions and medias:
         parts.append(
             "MEDIA (what the official images show, auto-described):\n"
