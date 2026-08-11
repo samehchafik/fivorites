@@ -889,6 +889,28 @@ async def test_work_detail_orders_the_videos(conn: psycopg.AsyncConnection) -> N
     assert work["videos"][3]["season"] == 2
 
 
+async def test_work_detail_hides_dead_videos(conn: psycopg.AsyncConnection) -> None:
+    """Une bande-annonce retirée de YouTube reste en base — la re-projection
+    depuis le brut la recréerait — mais la fiche cesse d'en proposer le
+    lecteur. Une vidéo jamais vérifiée reste montrée : la prudence ne doit pas
+    vider l'onglet avant la première passe de contrôle."""
+    await seed(conn)
+    await conn.execute(
+        """
+        insert into sourcing.video (id_tmdb, site, cle, type, nom, lang, officiel, vivante)
+        values
+            (1399, 'YouTube', 'morte',    'Trailer', 'Retiree',  'fr', true, false),
+            (1399, 'YouTube', 'vivante',  'Trailer', 'Lisible',  'fr', true, true),
+            (1399, 'YouTube', 'inconnue', 'Trailer', 'Pas vue',  'fr', true, null)
+        """
+    )
+
+    work = await fetch_work(conn, 1399, "fr-FR")
+
+    assert work is not None
+    assert sorted(v["key"] for v in work["videos"]) == ["inconnue", "vivante"]
+
+
 async def test_work_detail_carries_the_axis_vector(conn: psycopg.AsyncConnection) -> None:
     await seed(conn)
     await conn.execute(

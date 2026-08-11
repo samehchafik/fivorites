@@ -6,7 +6,16 @@ import psycopg
 import pytest
 from psycopg.types.json import Jsonb
 
-from fiv_sourcing.video import bilan, extraire, projeter_serie, series_a_projeter
+from fiv_sourcing.video import (
+    IndisponibleTemporairement,
+    bilan,
+    extraire,
+    marquer,
+    projeter_serie,
+    series_a_projeter,
+    verifier_une,
+    videos_a_verifier,
+)
 
 
 def video(cle: str, **surcharges):
@@ -211,4 +220,87 @@ async def test_le_bilan_compte_ce_qui_est_couvert(conn) -> None:
         "videos": 2,
         "annonces_officielles": 1,
         "series_en_francais": 1,
+        "jamais_verifiees": 2,
+        "mortes": 0,
     }
+
+
+# --- la vérification de validité ---------------------------------------------
+
+
+class FauxFetcher:
+    """Un hébergeur simulé : à chaque clé son code HTTP."""
+
+    def __init__(self, codes: dict[str, int]) -> None:
+        self.codes = codes
+        self.appels: list[str] = []
+
+    async def get_json(self, url: str):
+        self.appels.append(url)
+        cle = next((k for k in self.codes if k in url), None)
+        return type("R", (), {"status": self.codes.get(cle, 200)})()
+
+
+async def test_une_video_lisible_est_marquee_vivante(conn) -> None:
+    await seed(conn, 1500, {"videos": {"results": [video("vivante")]}})
+    await projeter_serie(conn, 1500)
+
+    ok, statut = await verifier_une(FauxFetcher({"vivante": 200}), "YouTube", "vivante")
+    assert (ok, statut) == (True, 200)
+    await marquer(conn, 1500, "YouTube", "vivante", vivante=ok, statut=statut)
+
+    async with conn.cursor() as cur:
+        await cur.execute("select vivante, statut, verifiee_le is not null from video")
+        assert await cur.fetchone() == (True, 200, True)
+
+
+async def test_une_video_retiree_est_marquee_morte_mais_conservee(conn) -> None:
+    """On ne supprime pas : la re-projection depuis le brut la recréerait, et
+    une vidéo privée redevient parfois publique."""
+    await seed(conn, 1501, {"videos": {"results": [video("morte")]}})
+    await projeter_serie(conn, 1501)
+
+    ok, statut = await verifier_une(FauxFetcher({"morte": 404}), "YouTube", "morte")
+    assert (ok, statut) == (False, 404)
+    await marquer(conn, 1501, "YouTube", "morte", vivante=ok, statut=statut)
+
+    async with conn.cursor() as cur:
+        await cur.execute("select count(*), bool_and(vivante is false) from video")
+        assert await cur.fetchone() == (1, True), "la ligne reste, seulement marquée"
+
+
+async def test_un_hebergeur_injoignable_ne_condamne_rien(conn) -> None:
+    """Le cas dangereux : une panne de YouTube ou un 429 ferait autrement
+    disparaître tout le catalogue d'un coup."""
+    for code in (0, 429, 500, 503):
+        with pytest.raises(IndisponibleTemporairement):
+            await verifier_une(FauxFetcher({"x": code}), "YouTube", "x")
+
+
+async def test_les_jamais_verifiees_passent_en_premier(conn) -> None:
+    await seed(conn, 1502, {"videos": {"results": [video("a"), video("b")]}})
+    await projeter_serie(conn, 1502)
+    await marquer(conn, 1502, "YouTube", "a", vivante=True, statut=200)
+
+    assert [c for _, _, c in await videos_a_verifier(conn)] == ["b", "a"]
+
+
+async def test_lage_borne_la_reprise(conn) -> None:
+    """Sans ça, une passe quotidienne revérifierait tout le catalogue
+    chaque jour."""
+    await seed(conn, 1503, {"videos": {"results": [video("recente")]}})
+    await projeter_serie(conn, 1503)
+    await marquer(conn, 1503, "YouTube", "recente", vivante=True, statut=200)
+
+    assert await videos_a_verifier(conn, age_jours=30) == [], "vue à l'instant : on n'y revient pas"
+    assert len(await videos_a_verifier(conn, age_jours=0)) == 1
+
+
+async def test_le_bilan_compte_les_mortes(conn) -> None:
+    await seed(conn, 1504, {"videos": {"results": [video("a"), video("b")]}})
+    await projeter_serie(conn, 1504)
+    await marquer(conn, 1504, "YouTube", "a", vivante=False, statut=404)
+
+    etat = await bilan(conn)
+    assert etat["mortes"] == 1
+    assert etat["jamais_verifiees"] == 1

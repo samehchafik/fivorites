@@ -15,7 +15,7 @@ provenance.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -198,14 +198,104 @@ async def bilan(conn: psycopg.AsyncConnection) -> dict[str, int]:
                    (select count(*) from video_scan where videos > 0),
                    (select count(*) from video),
                    (select count(*) from video where type = 'Trailer' and officiel),
-                   (select count(distinct id_tmdb) from video where lang = 'fr')
+                   (select count(distinct id_tmdb) from video where lang = 'fr'),
+                   (select count(*) from video where vivante is null),
+                   (select count(*) from video where vivante is false)
             """
         )
-        examinees, avec, total, annonces, en_francais = await cur.fetchone()  # type: ignore[misc]
+        row = await cur.fetchone()
+    examinees, avec, total, annonces, en_francais, jamais, mortes = row  # type: ignore[misc]
     return {
         "examinees": examinees,
         "avec_video": avec,
         "videos": total,
         "annonces_officielles": annonces,
         "series_en_francais": en_francais,
+        "jamais_verifiees": jamais,
+        "mortes": mortes,
     }
+
+
+# ---------------------------------------------------------------------------
+# La vérification de validité
+# ---------------------------------------------------------------------------
+
+# Les points oEmbed des hébergeurs. Ils ne demandent pas de clé, ne consomment
+# aucun quota déclaré, et répondent 200 si et seulement si la vidéo est
+# lisible publiquement — ce qui est exactement la question posée. L'API
+# YouTube Data ferait la même chose en lots de 50, mais elle exige une clé et
+# un projet Google : trop de dépendance pour une vérification d'hygiène.
+OEMBED = {
+    "YouTube": "https://www.youtube.com/oembed?url=https%3A//www.youtube.com/watch%3Fv%3D{cle}&format=json",
+    "Vimeo": "https://vimeo.com/api/oembed.json?url=https%3A//vimeo.com/{cle}",
+}
+
+
+async def videos_a_verifier(
+    conn: psycopg.AsyncConnection, *, limit: int | None = None, age_jours: int | None = None
+) -> list[tuple[int, str, str]]:
+    """Les vidéos à contrôler, les plus anciennement vues d'abord.
+
+    `age_jours` borne la reprise : sans lui, une passe quotidienne revérifierait
+    tout le catalogue chaque jour. Avec `--age 30`, elle ne rouvre que ce qui
+    n'a pas été vu depuis un mois, et les jamais-vérifiées passent toujours en
+    premier.
+    """
+    condition = "" if age_jours is None else "and (verifiee_le is null or verifiee_le < %(seuil)s)"
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""
+            select id_tmdb, site, cle from video
+            where site = any(%(sites)s) {condition}
+            order by verifiee_le nulls first
+            limit %(limit)s
+            """,
+            {
+                "sites": list(OEMBED),
+                "limit": limit,
+                "seuil": (
+                    None
+                    if age_jours is None
+                    else datetime.now(UTC) - timedelta(days=max(0, age_jours))
+                ),
+            },
+        )
+        return [(r[0], r[1], r[2]) for r in await cur.fetchall()]
+
+
+async def verifier_une(fetcher: Any, site: str, cle: str) -> tuple[bool, int]:
+    """Une vidéo est-elle encore lisible ? Renvoie (vivante, code HTTP).
+
+    Tout ce qui n'est pas 200 est traité comme non lisible, sans chercher à
+    distinguer « retirée » de « privée » : pour la fiche, la conséquence est la
+    même. Le code est conservé quand même — c'est lui qui permettra de dire un
+    jour si une chaîne entière a disparu.
+
+    Les erreurs réseau (`status = 0`) ne condamnent pas la vidéo : un
+    hébergeur momentanément injoignable ferait autrement disparaître tout le
+    catalogue d'un coup.
+    """
+    resultat = await fetcher.get_json(OEMBED[site].format(cle=cle))
+    statut = int(resultat.status)
+    if statut == 0 or statut == 429 or statut >= 500:
+        raise IndisponibleTemporairement(statut)
+    return statut == 200, statut
+
+
+class IndisponibleTemporairement(Exception):
+    """L'hébergeur n'a pas répondu — on ne conclut rien, on réessaiera."""
+
+    def __init__(self, statut: int) -> None:
+        super().__init__(f"hébergeur injoignable (statut {statut})")
+        self.statut = statut
+
+
+async def marquer(
+    conn: psycopg.AsyncConnection, id_tmdb: int, site: str, cle: str, *, vivante: bool, statut: int
+) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update video set vivante = %s, statut = %s, verifiee_le = now()"
+            " where id_tmdb = %s and site = %s and cle = %s",
+            (vivante, statut, id_tmdb, site, cle),
+        )

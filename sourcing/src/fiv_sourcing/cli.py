@@ -373,11 +373,88 @@ def videos(
         typer.echo(f"séries examinées : {cibles}")
         typer.echo(f"vidéos retenues  : {trouvees}")
     typer.echo("")
+    _etat_video(etat)
+
+
+def _etat_video(etat: dict[str, int]) -> None:
     typer.echo(f"total examiné        : {etat['examinees']:>8}")
     typer.echo(f"dont avec vidéo      : {etat['avec_video']:>8}")
     typer.echo(f"vidéos en base       : {etat['videos']:>8}")
     typer.echo(f"annonces officielles : {etat['annonces_officielles']:>8}")
     typer.echo(f"séries avec du fr    : {etat['series_en_francais']:>8}")
+    typer.echo(f"jamais vérifiées     : {etat['jamais_verifiees']:>8}")
+    typer.echo(f"mortes               : {etat['mortes']:>8}")
+
+
+@app.command("videos-check")
+def videos_check(
+    limit: Annotated[
+        int | None, typer.Option("--limit", help="Nombre de vidéos à vérifier. Défaut : toutes.")
+    ] = None,
+    age: Annotated[
+        int | None,
+        typer.Option("--age", help="Ne revérifier que les vidéos vues il y a plus de N jours."),
+    ] = 30,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Compter le reste à faire, sans rien vérifier.")
+    ] = False,
+) -> None:
+    """Vérifie que les vidéos sont encore lisibles chez leur hébergeur.
+
+    Une clé YouTube n'est pas stable : la vidéo est retirée pour droits, passée
+    en privée à la fin d'une campagne, ou la chaîne disparaît. Rien ne nous en
+    avertit, et la fiche propose alors un lecteur mort.
+
+    Le contrôle passe par les points oEmbed publics — pas de clé, pas de quota
+    déclaré, et un 200 qui signifie exactement « lisible publiquement ». Les
+    vidéos mortes sont **marquées, jamais supprimées** : la re-projection
+    depuis le brut les recréerait, et une vidéo privée redevient parfois
+    publique.
+
+    Prévue pour tourner régulièrement — `--age 30` ne rouvre que ce qui n'a pas
+    été vu depuis un mois, en commençant toujours par les jamais-vérifiées.
+    """
+    from fiv_sourcing import video as canal
+    from fiv_sourcing.enrich import build_fetcher
+
+    settings = get_settings()
+
+    async def run() -> tuple[int, int, int, int, dict[str, int]]:
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            cibles = await canal.videos_a_verifier(conn, limit=limit, age_jours=age)
+            if dry_run:
+                return len(cibles), 0, 0, 0, await canal.bilan(conn)
+
+            vivantes = mortes = reportees = 0
+            fetcher = build_fetcher(settings)
+            async with fetcher:
+                for numero, (id_tmdb, site, cle) in enumerate(cibles, 1):
+                    try:
+                        ok, statut = await canal.verifier_une(fetcher, site, cle)
+                    except canal.IndisponibleTemporairement:
+                        # Ni vivante ni morte : on ne touche pas à la ligne,
+                        # sinon un hébergeur momentanément indisponible ferait
+                        # disparaître tout le catalogue d'un coup.
+                        reportees += 1
+                        continue
+                    await canal.marquer(conn, id_tmdb, site, cle, vivante=ok, statut=statut)
+                    vivantes, mortes = vivantes + ok, mortes + (not ok)
+                    if numero % 500 == 0:
+                        typer.echo(f"  {numero}/{len(cibles)} · {mortes} morte(s)")
+            return len(cibles), vivantes, mortes, reportees, await canal.bilan(conn)
+
+    cibles, vivantes, mortes, reportees, etat = _run_db(run)
+
+    if dry_run:
+        typer.echo(f"à vérifier : {cibles} vidéo(s)")
+    else:
+        typer.echo(f"vérifiées : {cibles}")
+        typer.echo(f"  vivantes : {vivantes}")
+        typer.echo(f"  mortes   : {mortes}")
+        if reportees:
+            typer.echo(f"  reportées: {reportees}  (hébergeur injoignable — rien conclu)")
+    typer.echo("")
+    _etat_video(etat)
 
 
 @crawl_app.command("wikidata")

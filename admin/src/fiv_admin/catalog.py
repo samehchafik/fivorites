@@ -667,11 +667,16 @@ async def fetch_work(
         # puis l'anglais, puis le reste. C'est un ordre d'affichage, pas un
         # filtre : une série dont la seule bande-annonce est italienne doit
         # quand même en avoir une.
+        #
+        # `vivante is not false` et non `is true` : une vidéo jamais vérifiée
+        # (null) reste montrée. La prudence ne doit pas vider l'onglet avant
+        # que la première passe de `videos-check` ait tourné — ce qui serait
+        # une régression garantie le jour de la mise en service.
         await cur.execute(
             """
             select site, cle, type, nom, lang, officiel, publie_le, definition, saison
             from sourcing.video
-            where id_tmdb = %s
+            where id_tmdb = %s and vivante is not false
             order by priorite,
                      case lang when 'fr' then 0 when 'en' then 1 else 2 end,
                      publie_le desc nulls last
