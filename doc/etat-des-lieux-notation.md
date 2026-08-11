@@ -7,6 +7,10 @@ refaire les mêmes mesures dans trois mois.
 Ordre de lecture si tu es pressé : le §7 dit ce qui est **établi**, le §8 ce
 qui **reste ouvert**. Le reste explique comment on y est arrivé.
 
+Tout ce qui suit porte sur les **séries**. Le pendant film — ce qui se duplique,
+ce qui résiste, et dans quel ordre — est dans
+[`mission-notation-films.md`](mission-notation-films.md).
+
 ---
 
 ## 1. Le changement principal : un autre référentiel
