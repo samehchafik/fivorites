@@ -25,7 +25,7 @@ from fiv_admin.dossier import build_dossier
 from fiv_admin.embed import MAX_CHARS
 from fiv_admin.security import hash_password
 from fiv_admin.stills import select_images
-from fiv_admin.weights import predict, train_axis
+from fiv_admin.weights import comparer_modeles, predict, train_axis
 
 pytestmark = [pytest.mark.integration, requires_db]
 
@@ -1006,3 +1006,43 @@ async def test_le_dossier_porte_les_critiques_de_spectateurs(
     assert "Genuinely funny" in built["text"], "les deux plus longues sont retenues"
     assert "Bien." not in built["text"], "la plus courte est écartée : elle ne dit rien du ton"
     assert "2 viewer review(s)" in built["text"], "MATERIAL doit annoncer ce qui est là"
+
+
+def test_les_voisins_battent_la_ridge_sur_une_structure_non_lineaire() -> None:
+    """Le cas Lucifer, réduit à sa mécanique.
+
+    Deux amas dans l'espace des embeddings, chacun avec sa note, mais placés de
+    telle sorte qu'aucun hyperplan ne les sépare : une projection linéaire ne
+    peut que rendre la moyenne des deux — exactement ce qu'on observe quand une
+    comédie à l'intrigue de policier surnaturel se retrouve notée 3,1 en joie
+    au lieu de 6.
+
+    Un voisinage, lui, lit la structure locale. Ce test échouerait si
+    `comparer_modeles` ne mesurait pas ce qu'il prétend.
+    """
+    rng = random.Random(3)
+    dims = 32
+    vecteurs, notes = [], []
+    # Quatre amas aux coins d'un carré, notés en XOR : la configuration qui
+    # n'est séparable par aucune droite.
+    for cx, cy, note in ((1.0, 1.0, 8.0), (-1.0, -1.0, 8.0), (1.0, -1.0, 2.0), (-1.0, 1.0, 2.0)):
+        for _ in range(30):
+            v = [rng.gauss(0, 0.05) for _ in range(dims)]
+            v[0] = cx + rng.gauss(0, 0.15)
+            v[1] = cy + rng.gauss(0, 0.15)
+            vecteurs.append(v)
+            notes.append(note + rng.gauss(0, 0.3))
+
+    bilan = comparer_modeles(axe="test", vectors=vecteurs, values=notes)
+
+    assert bilan["oeuvres"] == 120
+    ridge, voisins = bilan["ridge"], bilan["voisins"]
+    assert voisins, "un voisinage doit avoir été retenu"
+    assert voisins["maeCv"] < ridge["maeCv"] / 2, (
+        f"voisins {voisins['maeCv']} contre ridge {ridge['maeCv']} — la comparaison "
+        "ne détecte pas une structure que le linéaire ne peut pas voir"
+    )
+    assert voisins["dispersion"] > 0.8, (
+        "les voisins recopient de vraies notes : ils doivent rendre l'amplitude"
+    )
+    assert ridge["dispersion"] < 0.5, "la ridge, elle, ne peut que tasser vers la moyenne"

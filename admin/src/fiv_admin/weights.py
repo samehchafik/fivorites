@@ -239,3 +239,105 @@ def diagnostic_visuels(
         "sans": round(err_sans, 3),
         "decale": round(err_decale, 3),
     }
+
+
+# Les tailles de voisinage explorées. Trop petit, la prédiction recopie une
+# œuvre et hérite de son bruit ; trop grand, elle retombe sur la moyenne du
+# corpus, c'est-à-dire sur le défaut qu'on cherche justement à corriger.
+VOISINS_GRID = (3, 5, 10, 20, 40)
+
+
+def _predictions_voisins(x: np.ndarray, y: np.ndarray, k: int, plis: int) -> np.ndarray:
+    """Prédictions hors-pli par les k plus proches voisins, en cosine.
+
+    Même découpage que la ridge — le même `plis`, le même pas — sans quoi les
+    deux erreurs ne seraient pas comparables et la comparaison ne dirait rien.
+
+    Le cosine et non l'euclidien : c'est la distance dans laquelle vivent les
+    embeddings, et celle que la couche produit utilisera.
+    """
+    normes = np.linalg.norm(x, axis=1, keepdims=True)
+    xn = x / np.where(normes > 1e-12, normes, 1.0)
+    preds = np.full(len(y), np.nan)
+    for pli in range(plis):
+        test = np.arange(pli, len(y), plis)
+        if len(test) == 0 or len(test) == len(y):
+            continue
+        garde = np.ones(len(y), dtype=bool)
+        garde[test] = False
+        similarites = xn[test] @ xn[garde].T
+        voisins = np.argsort(-similarites, axis=1)[:, :k]
+        proches = np.take_along_axis(similarites, voisins, axis=1)
+        # Pondération par la similarité, ramenée à zéro au-delà du voisinage :
+        # une moyenne simple donnerait autant de poids au 40ᵉ voisin qu'au 1ᵉʳ,
+        # ce qui reproduit la moyenne du corpus dès que k grandit.
+        poids = np.clip(proches - proches[:, -1:], 0, None)
+        somme = poids.sum(axis=1, keepdims=True)
+        poids = np.where(somme > 1e-12, poids / np.where(somme > 1e-12, somme, 1.0), 1.0 / k)
+        preds[test] = (poids * y[garde][voisins]).sum(axis=1)
+    return preds
+
+
+def comparer_modeles(
+    axe: str, vectors: list[list[float]], values: list[float]
+) -> dict[str, object]:
+    """Ridge contre plus proches voisins, sur le même découpage.
+
+    La question que ça tranche : le plafond vient-il de la matière, ou de la
+    **forme** du modèle ? Une ridge est linéaire ; un espace d'embeddings ne
+    l'est pas. « Cette série est drôle malgré son intrigue de policier
+    surnaturel » n'est probablement pas une projection linéaire, mais c'est
+    exactement ce que dit un voisinage — à condition que les voisins soient les
+    bons.
+
+    On rend aussi l'écart-type restitué : une erreur moyenne identique peut
+    cacher deux comportements opposés, l'un qui range tout au centre et l'autre
+    qui ose les extrêmes. C'est cette seconde propriété qui fait un vecteur de
+    goût utilisable en cosine.
+    """
+    x = np.asarray(vectors, dtype=np.float64)
+    y = np.asarray(values, dtype=np.float64)
+    plis = len(y) if len(y) <= 60 else 10
+
+    ridge = train_axis(axe, vectors, values)
+    preds_ridge = _predictions_croisees(x, y, ridge.lam, plis) * ridge.pente
+    ok = ~np.isnan(preds_ridge)
+    if ok.any():
+        preds_ridge[ok] += float(y.mean()) - float(np.nanmean(preds_ridge))
+    preds_ridge = np.clip(preds_ridge, SCALE_MIN, SCALE_MAX)
+
+    meilleur: dict[str, object] = {}
+    for k in VOISINS_GRID:
+        if k >= len(y):
+            continue
+        p = np.clip(_predictions_voisins(x, y, k, plis), SCALE_MIN, SCALE_MAX)
+        m = ~np.isnan(p)
+        if not m.any():
+            continue
+        mae = float(np.abs(p[m] - y[m]).mean())
+        if not meilleur or mae < float(meilleur["maeCv"]):  # type: ignore[arg-type]
+            meilleur = {
+                "voisins": k,
+                "maeCv": round(mae, 3),
+                "dispersion": round(float(p[m].std() / y[m].std()), 2)
+                if y[m].std() > 1e-9
+                else 0.0,
+                "correlation": round(float(np.corrcoef(p[m], y[m])[0, 1]), 2)
+                if p[m].std() > 1e-9
+                else 0.0,
+            }
+
+    return {
+        "axe": axe,
+        "oeuvres": len(y),
+        "ridge": {
+            "maeCv": ridge.mae_cv,
+            "dispersion": round(float(preds_ridge[ok].std() / y[ok].std()), 2)
+            if ok.any() and y[ok].std() > 1e-9
+            else 0.0,
+            "correlation": round(float(np.corrcoef(preds_ridge[ok], y[ok])[0, 1]), 2)
+            if ok.any() and preds_ridge[ok].std() > 1e-9
+            else 0.0,
+        },
+        "voisins": meilleur,
+    }

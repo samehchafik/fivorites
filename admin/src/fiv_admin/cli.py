@@ -436,6 +436,89 @@ def training_visuels(
     _run(run())
 
 
+@training_app.command("modeles")
+def training_modeles(
+    bareme: Annotated[
+        str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
+    ] = None,
+) -> None:
+    """Ridge contre plus proches voisins, sur les mêmes œuvres et les mêmes plis.
+
+    La question jamais posée : le plafond vient-il de la matière, ou de la
+    **forme** du modèle ? Le volume a été éliminé (deux plateaux mesurés),
+    l'encodeur aussi (trois candidats à 0,006 près), et la calibration restitue
+    désormais 93 à 103 % de l'amplitude. Reste que la régression est linéaire,
+    et qu'un espace d'embeddings ne l'est pas.
+
+    Le cas qui l'a rendu visible : Lucifer, notée 6 en joie par le juge et 3,1
+    par la ridge — classée 98ᵉ sur 502 quand le juge la met 290ᵉ. Une erreur de
+    rang, qu'aucune calibration de sortie ne corrige.
+
+    Trois colonnes par modèle :
+
+    * `MAE cv`      — l'erreur sur des œuvres jamais vues, la seule honnête ;
+    * `dispersion`  — l'écart-type rendu, rapporté à celui du juge. 100 % = le
+      modèle ose autant que lui ; 60 % = il range tout au centre ;
+    * `corrélation` — l'accord sur l'ordre, qui est ce qui manque à Lucifer.
+
+    N'écrit rien et n'appelle aucune API : les embeddings sont déjà en cache.
+    """
+    from fiv_admin.routes.training import PasAssezDOeuvres, _rubric, comparer_modeles
+
+    settings = get_settings()
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            if bareme:
+                rubric = await _rubric(conn, bareme)
+            else:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric"
+                        " order by created_at desc limit 1"
+                    )
+                    rubric = await cur.fetchone()
+                if rubric is None:
+                    typer.echo("aucun barème en base.")
+                    raise typer.Exit(1)
+
+            typer.echo(f"barème {rubric['version']} — assemblage des dossiers…")
+            try:
+                bilan = await comparer_modeles(conn, settings, rubric)
+            except PasAssezDOeuvres as exc:
+                typer.echo(f"ERREUR : {exc}")
+                raise typer.Exit(1) from exc
+
+            typer.echo(f"\n{bilan['oeuvres']} œuvre(s).\n")
+            typer.echo(
+                f"  {'axe':<12} {'ridge':>21}   {'plus proches voisins':>28}"
+            )
+            typer.echo(
+                f"  {'':<12} {'MAE':>6} {'disp':>6} {'corr':>6}"
+                f"   {'k':>3} {'MAE':>7} {'disp':>6} {'corr':>6}   gain"
+            )
+            gains = []
+            for a in bilan["axes"]:
+                r, v = a["ridge"], a["voisins"]
+                if not v:
+                    continue
+                gain = r["maeCv"] - v["maeCv"]
+                gains.append(gain)
+                typer.echo(
+                    f"  {a['axe']:<12} {r['maeCv']:6.3f} {r['dispersion']:6.0%}"
+                    f" {r['correlation']:6.2f}   {v['voisins']:3} {v['maeCv']:7.3f}"
+                    f" {v['dispersion']:6.0%} {v['correlation']:6.2f}  {gain:+6.3f}"
+                )
+            if gains:
+                typer.echo(f"\n  gain moyen des voisins : {sum(gains) / len(gains):+.3f}")
+            typer.echo(
+                "\nUn gain positif dit que la forme du modèle était le plafond,"
+                "\npas la matière — et qu'il faut passer la production aux voisins."
+            )
+
+    _run(run())
+
+
 @catalog_app.command("refresh")
 def catalog_refresh() -> None:
     """Recalcule les vignettes depuis le brut.

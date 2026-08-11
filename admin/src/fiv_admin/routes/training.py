@@ -34,6 +34,7 @@ from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
 from fiv_admin.embed import EMBEDDER, embed_texts, liberer_modeles
 from fiv_admin.llm import LlmError, caption_openai, score_anthropic, score_openai
 from fiv_admin.stills import select_images
+from fiv_admin.weights import comparer_modeles as comparer_modeles_axe
 from fiv_admin.weights import diagnostic_visuels, predict, train_axis
 
 log = logging.getLogger(__name__)
@@ -1359,3 +1360,65 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
         "claude": {"scores": claude_scores, "origin": claude_origin},
         "gaps": _gaps(internal_scores, llm_scores, axes) if llm_scores else None,
     }
+
+
+async def comparer_modeles(conn: Any, settings: Any, rubric: dict[str, Any]) -> dict[str, Any]:
+    """Ridge contre plus proches voisins, sur les mêmes œuvres et les mêmes plis.
+
+    La question ouverte depuis le début, et jamais posée : le plafond vient-il
+    de la matière, ou de la **forme** du modèle ? On a éliminé le volume (deux
+    plateaux mesurés), l'encodeur (trois candidats à 0,006 près) et la
+    calibration (l'amplitude est restituée à 93-103 %). Reste que la régression
+    est **linéaire**, et qu'un espace d'embeddings ne l'est pas.
+
+    Le cas qui l'a rendu visible : Lucifer, notée 6 en joie par le juge et 3,1
+    par la ridge. Le modèle la classe 98ᵉ sur 502 quand le juge la met 290ᵉ —
+    ce n'est pas une erreur d'échelle mais de rang, et aucune calibration de
+    sortie ne la corrige. « Drôle malgré une intrigue de policier surnaturel »
+    n'est probablement pas une projection linéaire ; c'est en revanche
+    exactement ce que dit un voisinage, si les voisins sont les bons.
+
+    N'écrit rien : ni poids, ni vecteurs. C'est une mesure, pas un
+    entraînement, et elle ne coûte aucun appel payant — les embeddings sont
+    déjà en cache.
+    """
+    axes: list[str] = rubric["axes"]
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
+            from notation.score
+            where rubric_version = %s and modele <> %s and modele not like 'claude%%'
+              and valeur is not null
+            order by id_tmdb, axe, scored_at desc
+            """,
+            (rubric["version"], INTERNAL_MODEL),
+        )
+        rows = await cur.fetchall()
+
+    by_work: dict[int, dict[str, float]] = {}
+    for row in rows:
+        by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
+    if len(by_work) < MIN_TRAINING_WORKS:
+        raise PasAssezDOeuvres(len(by_work))
+
+    vectors: dict[int, list[float]] = {}
+    for id_tmdb in by_work:
+        built = await build_dossier(conn, id_tmdb)
+        if built is not None:
+            vectors[id_tmdb] = await _embedding(conn, settings, built)
+
+    resultats = []
+    for axe in axes:
+        paires = [
+            (vectors[i], scores[axe])
+            for i, scores in by_work.items()
+            if axe in scores and i in vectors
+        ]
+        if len(paires) < MIN_TRAINING_WORKS:
+            continue
+        resultats.append(
+            comparer_modeles_axe(axe, [p[0] for p in paires], [p[1] for p in paires])
+        )
+
+    return {"rubricVersion": rubric["version"], "oeuvres": len(vectors), "axes": resultats}
