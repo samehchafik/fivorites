@@ -856,6 +856,37 @@ async def test_work_detail_flattens_the_payload(conn: psycopg.AsyncConnection) -
     assert work["externalIds"]["wikidata_id"] == "Q23572"
     assert work["catalog"]["popularity"] == 400.0
     assert work["axisScores"] is None, "jamais notée : pas de vecteur, pas de zéros"
+    assert work["videos"] == [], "canal vidéo jamais passé : liste vide, pas d'absence"
+
+
+async def test_work_detail_orders_the_videos(conn: psycopg.AsyncConnection) -> None:
+    """La meilleure d'abord : `priorite` tranche le type et l'officialité, la
+    langue départage ensuite — français, puis anglais, puis le reste."""
+    await seed(conn)
+    await conn.execute(
+        """
+        insert into sourcing.video (id_tmdb, site, cle, type, nom, lang, officiel, saison)
+        values
+            (1399, 'YouTube', 'clip', 'Clip',    'Extrait',   'en', true,  null),
+            (1399, 'YouTube', 'vo',   'Trailer', 'Trailer',   'en', true,  null),
+            (1399, 'YouTube', 'vf',   'Trailer', 'Annonce',   'fr', true,  null),
+            (1399, 'YouTube', 'fan',  'Trailer', 'Officieux', 'fr', false, null),
+            (1399, 'YouTube', 's2',   'Teaser',  'Saison 2',  'en', true,  2)
+        """
+    )
+
+    work = await fetch_work(conn, 1399, "fr-FR")
+
+    assert work is not None
+    assert [v["key"] for v in work["videos"]] == ["vf", "vo", "fan", "s2", "clip"], (
+        "bande-annonce officielle française, puis anglaise, puis l'officieuse, "
+        "puis le teaser, l'extrait en dernier"
+    )
+    premiere = work["videos"][0]
+    assert premiere["site"] == "YouTube"
+    assert premiere["official"] is True
+    assert premiere["season"] is None
+    assert work["videos"][3]["season"] == 2
 
 
 async def test_work_detail_carries_the_axis_vector(conn: psycopg.AsyncConnection) -> None:

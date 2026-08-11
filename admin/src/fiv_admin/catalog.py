@@ -661,6 +661,38 @@ async def fetch_work(
         )
         internal_scores = {row["axe"]: float(row["valeur"]) for row in await cur.fetchall()}
 
+        # Les vidéos, la meilleure d'abord — `priorite` porte déjà la
+        # préférence de type et d'officialité (cf. migration 010). La langue
+        # départage ensuite : le français d'abord pour une interface française,
+        # puis l'anglais, puis le reste. C'est un ordre d'affichage, pas un
+        # filtre : une série dont la seule bande-annonce est italienne doit
+        # quand même en avoir une.
+        await cur.execute(
+            """
+            select site, cle, type, nom, lang, officiel, publie_le, definition, saison
+            from sourcing.video
+            where id_tmdb = %s
+            order by priorite,
+                     case lang when 'fr' then 0 when 'en' then 1 else 2 end,
+                     publie_le desc nulls last
+            """,
+            (work_id,),
+        )
+        videos = [
+            {
+                "site": row["site"],
+                "key": row["cle"],
+                "type": row["type"],
+                "name": row["nom"],
+                "lang": row["lang"] or None,
+                "official": row["officiel"],
+                "publishedAt": row["publie_le"],
+                "definition": row["definition"],
+                "season": row["saison"],
+            }
+            for row in await cur.fetchall()
+        ]
+
     by_season: dict[int, dict[str, Any]] = {}
     for row in collected:
         number = int(row["season"].removeprefix("s")) if row["season"].startswith("s") else -1
@@ -744,6 +776,10 @@ async def fetch_work(
         "raw": {"fetchedAt": head["fetched_at"], "httpStatus": head["http_status"]},
         "axisScores": axis_scores or None,
         "internalScores": internal_scores or None,
+        # Vide tant que `fiv-sourcing videos` n'a pas projeté la série : le
+        # brut contient les vidéos depuis toujours, la table qui les rend
+        # lisibles est remplie par une passe séparée.
+        "videos": videos,
         "catalog": (
             {
                 "popularity": float(catalog["popularity"]),

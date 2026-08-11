@@ -30,6 +30,7 @@ import {
   IconExternalLink,
   IconId,
   IconLibrary,
+  IconMovie,
   IconPhoto,
   IconScale,
   IconSchool,
@@ -45,6 +46,7 @@ import type { Language, ModalTab, Work } from '../types'
 import { AxisVector } from './AxisVector'
 import { RichPanel } from './RichPanel'
 import { SeasonPanel } from './SeasonPanel'
+import { VideoTab } from './VideoTab'
 import { TrainingTab } from './TrainingTab'
 import { WatchPanel } from './WatchPanel'
 
@@ -380,6 +382,9 @@ export function SeriesModal({
               <Tabs.Tab value="gallery" leftSection={<IconPhoto size={16} />}>
                 Galerie ({data.gallery.backdrops.length + data.gallery.posters.length})
               </Tabs.Tab>
+              <Tabs.Tab value="videos" leftSection={<IconMovie size={16} />}>
+                Vidéos ({data.videos?.length ?? 0})
+              </Tabs.Tab>
               <Tabs.Tab value="rich" leftSection={<IconLibrary size={16} />}>
                 Sources
               </Tabs.Tab>
@@ -526,6 +531,10 @@ export function SeriesModal({
                   onZoom={setZoom}
                 />
               </Stack>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="videos" p="lg">
+              <VideoTab videos={data.videos ?? []} />
             </Tabs.Panel>
 
             <Tabs.Panel value="technical" p="lg">

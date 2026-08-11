@@ -309,6 +309,77 @@ def enrich(
         typer.echo("Interrompu. Relancer la même commande reprend où on s'est arrêté.")
 
 
+@app.command()
+def videos(
+    ids: Annotated[
+        list[int] | None,
+        typer.Option("--id", help="Une série précise (répétable). Défaut : celles non examinées."),
+    ] = None,
+    limit: Annotated[
+        int | None, typer.Option("--limit", help="Nombre de séries à traiter. Défaut : toutes.")
+    ] = None,
+    order: Annotated[
+        str, typer.Option("--order", help="popularity (défaut), id, recent, random.")
+    ] = "popularity",
+    tout: Annotated[
+        bool, typer.Option("--tout", help="Reprendre aussi les séries déjà examinées.")
+    ] = False,
+    sans_saisons: Annotated[
+        bool, typer.Option("--sans-saisons", help="Ne lire que la fiche série, pas les saisons.")
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Compter le reste à faire, sans rien écrire.")
+    ] = False,
+) -> None:
+    """Projette les bandes-annonces du brut TMDB vers `video`.
+
+    Aucun appel réseau, aucun quota : TMDB sert déjà les vidéos dans le payload
+    des séries et des saisons, cette passe ne fait que les rendre
+    interrogeables. Une série doit donc être passée par `tmdb fetch` d'abord.
+
+    Les séries sans aucune vidéo sont marquées examinées elles aussi — sans
+    quoi chaque passe rouvrirait indéfiniment les mêmes fiches vides.
+    """
+    from fiv_sourcing import video as canal
+
+    settings = get_settings()
+
+    async def run() -> tuple[int, int, dict[str, int]]:
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            cibles = (
+                list(ids)
+                if ids
+                else await canal.series_a_projeter(conn, limit=limit, order=order, tout=tout)
+            )
+            if dry_run:
+                return len(cibles), 0, await canal.bilan(conn)
+
+            trouvees = 0
+            for numero, id_tmdb in enumerate(cibles, 1):
+                trouvees += await canal.projeter_serie(conn, id_tmdb, saisons=not sans_saisons)
+                if numero % 500 == 0:
+                    typer.echo(f"  {numero}/{len(cibles)} séries · {trouvees} vidéos")
+            return len(cibles), trouvees, await canal.bilan(conn)
+
+    try:
+        cibles, trouvees, etat = _run_db(run)
+    except ValueError as exc:
+        typer.echo(f"ERREUR : {exc}")
+        raise typer.Exit(1) from exc
+
+    if dry_run:
+        typer.echo(f"à examiner : {cibles} série(s)")
+    else:
+        typer.echo(f"séries examinées : {cibles}")
+        typer.echo(f"vidéos retenues  : {trouvees}")
+    typer.echo("")
+    typer.echo(f"total examiné        : {etat['examinees']:>8}")
+    typer.echo(f"dont avec vidéo      : {etat['avec_video']:>8}")
+    typer.echo(f"vidéos en base       : {etat['videos']:>8}")
+    typer.echo(f"annonces officielles : {etat['annonces_officielles']:>8}")
+    typer.echo(f"séries avec du fr    : {etat['series_en_francais']:>8}")
+
+
 @crawl_app.command("wikidata")
 def crawl_wikidata_cmd(
     langue: Annotated[

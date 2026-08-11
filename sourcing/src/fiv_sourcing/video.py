@@ -1,0 +1,211 @@
+"""Le canal vidéo : extraire du brut TMDB les bandes-annonces et extraits.
+
+Aucun appel réseau. TMDB sert déjà les vidéos dans `videos` — c'est dans
+`SERIES_APPEND` et `SEASON_APPEND` depuis le premier jour — et cette passe ne
+fait que projeter ce qui dort dans `raw_source.payload` vers une table
+interrogeable. D'où sa rapidité, et d'où le fait qu'elle puisse être relancée
+sans rien coûter d'autre que du temps machine.
+
+Ce qu'elle n'est pas : un fournisseur de vidéos. TMDB ne connaît qu'une partie
+des bandes-annonces, et presque jamais les doublages non anglophones. Compléter
+par un autre fournisseur se fera en ajoutant des lignes de `source` différente
+— la table est faite pour, la clé primaire portant l'hébergeur et non la
+provenance.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+import psycopg
+from psycopg.rows import dict_row
+
+# TMDB déclare le site en toutes lettres. On garde tel quel plutôt que de
+# normaliser : le jour où un troisième hébergeur apparaît, une valeur inconnue
+# vaut mieux qu'une valeur écrasée.
+SITES_LISIBLES = {"YouTube", "Vimeo"}
+
+
+def _date(valeur: Any) -> datetime | None:
+    """`published_at` arrive en ISO 8601 avec un Z final que `fromisoformat`
+    n'acceptait pas avant 3.11 — et parfois vide, parfois absent."""
+    if not isinstance(valeur, str) or not valeur:
+        return None
+    try:
+        return datetime.fromisoformat(valeur.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def extraire(payload: dict[str, Any] | None, *, saison: int | None = None) -> list[dict[str, Any]]:
+    """Les vidéos d'une fiche, normalisées. Liste vide si la fiche n'en a pas.
+
+    On ne filtre ni sur le type ni sur la langue : un « Featurette » ou une
+    bande-annonce italienne ne servent pas la fiche française, mais les jeter
+    ici obligerait à re-projeter tout le catalogue le jour où l'on en voudra.
+    Le tri se fait à la lecture, où il ne coûte rien.
+    """
+    if not payload:
+        return []
+    resultats = ((payload.get("videos") or {}).get("results")) or []
+    if not isinstance(resultats, list):
+        return []
+
+    videos: list[dict[str, Any]] = []
+    for v in resultats:
+        if not isinstance(v, dict):
+            continue
+        site, cle = v.get("site"), v.get("key")
+        if not site or not cle:
+            continue
+        videos.append(
+            {
+                "site": str(site),
+                "cle": str(cle),
+                "type": str(v.get("type") or "Autre"),
+                "nom": v.get("name") or None,
+                "lang": str(v.get("iso_639_1") or ""),
+                "officiel": bool(v.get("official")),
+                "publie_le": _date(v.get("published_at")),
+                "definition": v.get("size") if isinstance(v.get("size"), int) else None,
+                "saison": saison,
+            }
+        )
+    return videos
+
+
+async def projeter_serie(
+    conn: psycopg.AsyncConnection, id_tmdb: int, *, saisons: bool = True
+) -> int:
+    """Projette les vidéos d'une série — sa fiche, et celles de ses saisons.
+
+    Renvoie le nombre de vidéos distinctes retenues. Marque la série comme
+    examinée dans tous les cas, y compris quand elle n'en a aucune : sans ça,
+    chaque passe rouvrirait les mêmes fiches vides indéfiniment.
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select distinct on (kind, source_id) id, kind, source_id, payload
+            from raw_source
+            where source = 'tmdb' and http_status between 200 and 299
+              and (source_id = %(id)s::text
+                   or (%(saisons)s and kind = 'tv_season'
+                       and source_id like %(id)s::text || '/%%'))
+            order by kind, source_id, fetched_at desc
+            """,
+            {"id": id_tmdb, "saisons": saisons},
+        )
+        fiches = await cur.fetchall()
+
+    fiche_serie = next((f for f in fiches if f["kind"] == "tv"), None)
+    if fiche_serie is None:
+        # Série jamais collectée : rien à projeter, et rien à marquer non plus
+        # — la marquer prétendrait qu'on l'a examinée.
+        return 0
+
+    videos = extraire(fiche_serie["payload"])
+    for f in fiches:
+        if f["kind"] != "tv_season":
+            continue
+        numero = f["source_id"].partition("/s")[2]
+        videos += extraire(f["payload"], saison=int(numero) if numero.isdigit() else None)
+
+    async with conn.cursor() as cur:
+        for v in videos:
+            await cur.execute(
+                """
+                insert into video (id_tmdb, site, cle, source, type, nom, lang,
+                                   officiel, publie_le, definition, saison, raw_source_id)
+                values (%(id)s, %(site)s, %(cle)s, 'tmdb', %(type)s, %(nom)s, %(lang)s,
+                        %(officiel)s, %(publie_le)s, %(definition)s, %(saison)s, %(raw)s)
+                on conflict (id_tmdb, site, cle) do update set
+                    type = excluded.type, nom = excluded.nom, lang = excluded.lang,
+                    officiel = excluded.officiel, publie_le = excluded.publie_le,
+                    definition = excluded.definition, raw_source_id = excluded.raw_source_id,
+                    fetched_at = now()
+                """,
+                {**v, "id": id_tmdb, "raw": fiche_serie["id"]},
+            )
+        # `saison` volontairement absente du `do update` : une bande-annonce
+        # listée sur la série *et* sur une saison garde le rattachement de la
+        # première vue, sinon l'ordre de parcours déciderait du résultat.
+        await cur.execute(
+            """
+            insert into video_scan (id_tmdb, raw_source_id, videos)
+            values (%s, %s, %s)
+            on conflict (id_tmdb) do update set
+                raw_source_id = excluded.raw_source_id,
+                videos = excluded.videos,
+                scanned_at = now()
+            """,
+            (id_tmdb, fiche_serie["id"], len({(v["site"], v["cle"]) for v in videos})),
+        )
+    return len({(v["site"], v["cle"]) for v in videos})
+
+
+_ORDRES = {
+    "id": "c.id",
+    "popularity": "c.popularity desc nulls last",
+    "recent": "c.first_air_date desc nulls last, c.popularity desc nulls last",
+    "random": "random()",
+}
+
+
+async def series_a_projeter(
+    conn: psycopg.AsyncConnection,
+    *,
+    limit: int | None = None,
+    order: str = "popularity",
+    tout: bool = False,
+) -> list[int]:
+    """Les séries collectées dont les vidéos restent à projeter.
+
+    `tout` reprend aussi celles déjà examinées — utile après une re-collecte,
+    ou quand l'extraction elle-même a changé.
+    """
+    if order not in _ORDRES:
+        raise ValueError(f"ordre inconnu : {order} (attendus : {', '.join(_ORDRES)})")
+
+    # `exists` plutôt qu'un `left join` : on ne veut pas dédoublonner derrière
+    # une jointure sur `raw_source`, qui est append-only et compte plusieurs
+    # lignes par série.
+    condition = "" if tout else "and not exists (select 1 from video_scan s where s.id_tmdb = c.id)"
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""
+            select c.id from tmdb_catalog c
+            where exists (
+                select 1 from raw_source r
+                where r.source = 'tmdb' and r.kind = 'tv'
+                  and r.source_id = c.id::text and r.http_status between 200 and 299
+            ) {condition}
+            order by {_ORDRES[order]}
+            limit %s
+            """,
+            (limit,),
+        )
+        return [row[0] for row in await cur.fetchall()]
+
+
+async def bilan(conn: psycopg.AsyncConnection) -> dict[str, int]:
+    """De quoi dire, en fin de passe, ce que le canal couvre réellement."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select (select count(*) from video_scan),
+                   (select count(*) from video_scan where videos > 0),
+                   (select count(*) from video),
+                   (select count(*) from video where type = 'Trailer' and officiel),
+                   (select count(distinct id_tmdb) from video where lang = 'fr')
+            """
+        )
+        examinees, avec, total, annonces, en_francais = await cur.fetchone()  # type: ignore[misc]
+    return {
+        "examinees": examinees,
+        "avec_video": avec,
+        "videos": total,
+        "annonces_officielles": annonces,
+        "series_en_francais": en_francais,
+    }

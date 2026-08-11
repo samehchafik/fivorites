@@ -268,7 +268,31 @@ export interface Work {
   axisScores?: Record<string, number> | null
   /** La prédiction interne, pour l'écart au juge. */
   internalScores?: Record<string, number> | null
+  /** Les vidéos projetées par `fiv-sourcing videos`, la meilleure d'abord.
+   *
+   *  Tableau vide — jamais `undefined` côté API — tant que la passe n'a pas
+   *  traité la série : le brut TMDB contient les vidéos depuis toujours, mais
+   *  la table qui les rend lisibles se remplit séparément. Facultatif ici
+   *  parce qu'une API plus ancienne que le front ne renvoie pas le champ. */
+  videos?: Video[]
   catalog: { popularity: number; adult: boolean; exportedOn: string } | null
+}
+
+export interface Video {
+  /** L'hébergeur, tel que TMDB le nomme : `YouTube`, `Vimeo`. */
+  site: string
+  /** L'identifiant chez l'hébergeur — l'URL se reconstruit à partir de là. */
+  key: string
+  /** `Trailer`, `Teaser`, `Clip`, `Featurette`… */
+  type: string
+  name: string | null
+  lang: string | null
+  official: boolean
+  publishedAt: string | null
+  definition: number | null
+  /** Le numéro de saison quand la vidéo vient d'une fiche de saison, `null`
+   *  quand elle porte sur la série entière. */
+  season: number | null
 }
 
 export interface Episode {

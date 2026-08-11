@@ -51,10 +51,12 @@ async def conn(settings: Settings):
         await connection.execute(
             sql.SQL("set search_path to {}, public").format(sql.Identifier(settings.db_schema))
         )
-        # `riche_source` et `oeuvre` référencent `raw_source` et `tmdb_catalog` :
-        # un truncate qui les oublierait échouerait sur la contrainte.
+        # `riche_source`, `oeuvre`, `video` et `video_scan` référencent
+        # `raw_source` et `tmdb_catalog` : un truncate qui les oublierait
+        # échouerait sur la contrainte.
         await connection.execute(
-            "truncate raw_source, fetch_state, tmdb_catalog, riche_source, oeuvre"
+            "truncate raw_source, fetch_state, tmdb_catalog, riche_source, oeuvre,"
+            " video, video_scan"
         )
         yield connection
     finally:
