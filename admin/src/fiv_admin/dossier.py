@@ -56,6 +56,18 @@ SEASON_OVERVIEW_MAX_CHARS = 1500
 #
 # Deux critiques suffisent : au-delà, on paie du texte redondant et souvent
 # hors sujet (les plaintes sur une saison précise, les spoilers).
+#
+# ⚠️ La matière est rare, et ça ne se rattrapera pas. Mesuré le 2026-08-11 :
+# 114 fiches sur 228 429 portent une critique, et **13 sur les 500 séries les
+# plus populaires**. TMDB en a peu pour la télévision, et `reviews` suit le
+# `language` de la requête sans qu'aucun paramètre ne permette de l'élargir —
+# contrairement aux images et aux vidéos. Les récupérer en anglais demanderait
+# un appel séparé par série, pour 2,6 % de couverture sur la tête : ça ne vaut
+# pas la requête.
+#
+# La section reste parce qu'elle est écrite, testée, gratuite à l'exécution et
+# qu'elle sert ces 13 œuvres-là. Mais ce n'est pas le levier qu'on cherchait
+# pour le ton : Lucifer n'en a pas.
 REVIEWS_MAX = 2
 REVIEW_MAX_CHARS = 1200
 

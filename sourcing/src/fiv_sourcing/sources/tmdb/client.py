@@ -87,6 +87,19 @@ class TmdbClient:
                     # Les affiches localisées sont rarement complètes ; `null`
                     # récupère les visuels sans texte, utilisables partout.
                     "include_image_language": "fr,en,null",
+                    # Même raison pour les vidéos, et le manque était mesurable.
+                    # `videos` suit `language` exactement comme les images :
+                    # sans cette ligne, on ne récupérait que les bandes-annonces
+                    # françaises, qui sont rares. Relevé le 2026-08-11 sur les
+                    # 500 séries les plus populaires — celles qui en ont
+                    # pratiquement toutes une chez TMDB — seules 155 en
+                    # portaient une en base.
+                    #
+                    # Il n'existe pas d'équivalent pour `reviews` : elles
+                    # restent filtrées par `language`, et les récupérer en
+                    # anglais demanderait un appel séparé. Mesuré sur les mêmes
+                    # 500 séries : 13 en ont. Ça ne vaut pas la requête.
+                    "include_video_language": "fr,en,null",
                 }
             ),
         )
@@ -98,6 +111,7 @@ class TmdbClient:
                 {
                     "language": language,
                     "append_to_response": ",".join(SEASON_APPEND),
+                    "include_video_language": "fr,en,null",
                 }
             ),
         )

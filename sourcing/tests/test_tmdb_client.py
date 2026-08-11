@@ -68,3 +68,32 @@ async def test_la_saison_est_demandee_dans_la_langue_voulue(client: TmdbClient):
     )
     await client.season(1399, 2, language="en-US")
     assert route.calls.last.request.url.params["language"] == "en-US"
+
+
+@respx.mock
+async def test_les_videos_ne_sont_pas_filtrees_par_la_langue(client: TmdbClient):
+    """Le manque était mesurable et silencieux.
+
+    `videos` suit le paramètre `language` exactement comme les images. La
+    collecte demandant la fiche en `fr-FR`, on ne récupérait que les
+    bandes-annonces françaises — relevé le 2026-08-11 sur les 500 séries les
+    plus populaires, celles qui en ont pratiquement toutes une chez TMDB :
+    seules 155 en portaient une en base.
+
+    `include_video_language` est l'exact symétrique de `include_image_language`.
+    """
+    route = respx.get(url__startswith="https://api.themoviedb.org/3/tv/1399").mock(
+        httpx.Response(200, json={"id": 1399})
+    )
+    await client.series(1399)
+    assert route.calls.last.request.url.params["include_video_language"] == "fr,en,null"
+
+
+@respx.mock
+async def test_les_saisons_portent_aussi_leurs_videos(client: TmdbClient):
+    """Une fiche de saison a ses propres bandes-annonces, et le même filtre."""
+    route = respx.get(url__startswith="https://api.themoviedb.org/3/tv/1399/season/1").mock(
+        httpx.Response(200, json={"season_number": 1})
+    )
+    await client.season(1399, 1)
+    assert route.calls.last.request.url.params["include_video_language"] == "fr,en,null"
