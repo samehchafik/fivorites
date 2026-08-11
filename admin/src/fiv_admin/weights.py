@@ -134,28 +134,42 @@ def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> Axi
 
     # La recalibration. Une ridge tire ses prédictions vers la moyenne — c'est
     # le mécanisme même de la régularisation — et la compression se paie aux
-    # extrêmes : mesurée en production, la pente prédite/réel tombait entre
-    # 0,49 et 0,68 selon l'axe, et les « humour 9 » du juge sortaient à 7.
-    # On mesure la pente sur les prédictions hors-pli (donc honnêtes) et on
-    # l'inverse. Ridge et correction étant linéaires toutes deux, la
-    # correction se replie dans les coefficients : rien ne change ni au
-    # schéma ni à la prédiction, qui reste `intercept + coef · x`.
+    # extrêmes : les « 8 » du juge ressortaient à 6, et une œuvre très
+    # contrastée comme Game of Thrones rendait six valeurs tassées autour de 6.
     #
-    # Contrepartie assumée : redilater l'échelle redilate aussi le bruit, le
-    # MAE remonte un peu. C'est l'arbitrage voulu — des extrêmes justes
-    # comptent plus, pour un vecteur de goût, qu'un dixième de MAE.
+    # On égalise l'**écart-type**, pas la pente. La nuance décide de tout : la
+    # pente de régression `cov(y,p)/var(p)` est celle qui minimise l'erreur
+    # quadratique, et elle laisse par construction `sd(prédit) = r · sd(juge)`.
+    # Avec un r de 0,84 à 0,93 selon l'axe, il manque encore 7 à 16 % d'
+    # amplitude après correction — mesuré sur 502 œuvres : l'écart-type prédit
+    # valait 75 à 87 % de celui du juge, et l'amplitude moyenne par œuvre 4,5
+    # contre 5,4.
+    #
+    # Ce qu'on croyait payer ne se paie pas. Redilater redilate le bruit, donc
+    # le MAE devait remonter — mesuré, il ne bouge pas (et descend sur `reve`,
+    # de 0,85 à 0,74). La raison est que l'erreur d'une prédiction trop tassée
+    # est déjà systématique aux extrêmes : la dilatation corrige un biais avant
+    # d'ajouter de la variance.
+    #
+    # Et ce qui se gagne compte, parce que la distance sera un cosine : la
+    # similarité moyenne entre œuvres tombe de 0,902 à 0,860, où le juge est à
+    # 0,853. Sans cette correction, tout se ressemble.
+    #
+    # Ridge et correction étant linéaires toutes deux, la correction se replie
+    # dans les coefficients : rien ne change ni au schéma ni à la prédiction,
+    # qui reste `intercept + coef · x`.
     preds = _predictions_croisees(x, y, best_lam, plis)
     ok = ~np.isnan(preds)
     pente = 1.0
     if ok.sum() >= MIN_CALIBRATION:
         p, cible = preds[ok], y[ok]
-        var = float(p.var())
-        corr = float(np.corrcoef(p, cible)[0, 1]) if var > 1e-9 else 0.0
+        ecart = float(p.std())
+        corr = float(np.corrcoef(p, cible)[0, 1]) if ecart > 1e-6 else 0.0
         if corr > 0.2:
-            # Bornée : une pente démesurée signale des prédictions presque
+            # Bornée : un facteur démesuré signale des prédictions presque
             # plates (le régime « moyenne partout » déjà rencontré), et
             # l'amplifier fabriquerait du délire calibré.
-            pente = float(np.clip(float(np.cov(cible, p)[0, 1]) / var, 1.0, 2.5))
+            pente = float(np.clip(float(cible.std()) / ecart, 1.0, 2.5))
     if pente != 1.0:
         recentrage = float(y.mean()) - pente * float(np.nanmean(preds))
         coef = coef * pente

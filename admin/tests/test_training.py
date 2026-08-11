@@ -8,6 +8,7 @@ que les pages Training mesurent à la main.
 from __future__ import annotations
 
 import random
+import statistics
 from collections.abc import AsyncIterator
 
 import httpx
@@ -778,6 +779,48 @@ def test_la_recalibration_rend_leurs_extremes_aux_predictions() -> None:
     assert etendue_predite > 0.7 * etendue_reelle, (
         f"étendue prédite {etendue_predite:.1f} contre réelle {etendue_reelle:.1f} — "
         "les extrêmes restent écrasés malgré la calibration"
+    )
+
+
+def test_la_calibration_vise_la_variance_pas_la_pente() -> None:
+    """Le cas Game of Thrones : le juge donne 8 sur quatre dimensions, la
+    régression rendait 6 partout, et l'œuvre la plus contrastée du corpus
+    ressortait plate.
+
+    La distinction est fine et elle décide de tout. La pente de régression
+    `cov(y,p)/var(p)` est celle qui minimise l'erreur quadratique, mais elle
+    laisse par construction `sd(prédit) = r · sd(juge)` : avec un r réaliste de
+    0,85, il manque encore 15 % d'amplitude *après* correction. Mesuré sur 502
+    œuvres, l'écart-type prédit valait 75 à 87 % de celui du juge.
+
+    Ce test échoue avec une calibration sur la pente et passe avec une
+    calibration sur l'écart-type. Il compte parce que la distance entre œuvres
+    sera un cosine : des vecteurs tassés se ressemblent tous.
+    """
+    rng = random.Random(21)
+    dims, n = 128, 80
+    vx, vy = [], []
+    for _ in range(n):
+        signal = rng.uniform(-1, 1)
+        v = [0.0] * dims
+        v[0] = 0.1 * signal
+        v[1] = 0.95
+        for j in range(2, dims):
+            v[j] = rng.gauss(0, 0.03)
+        vx.append(v)
+        # Bruit volontairement large : c'est lui qui fait décrocher r de 1, et
+        # donc lui qui sépare les deux calibrations.
+        vy.append(max(1.0, min(10.0, 5.5 + 3.0 * signal + rng.gauss(0, 1.2))))
+
+    poids = train_axis("test", vx, vy)
+    preds = [predict(v, poids.intercept, poids.coef) for v in vx]
+
+    ecart_juge = statistics.pstdev(vy)
+    ecart_predit = statistics.pstdev(preds)
+    assert ecart_predit > 0.9 * ecart_juge, (
+        f"écart-type prédit {ecart_predit:.2f} contre {ecart_juge:.2f} chez le juge "
+        f"({ecart_predit / ecart_juge:.0%}) — une calibration sur la pente s'arrête à r, "
+        "il faut viser la variance"
     )
 
 
