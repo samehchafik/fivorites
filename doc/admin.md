@@ -233,6 +233,8 @@ rafraîchie — et le front doit pouvoir les distinguer.
 | `training poids` | réentraîne la régression sur toutes les notes du barème |
 | `training encodeurs` | compare des encodeurs sur les notes rendues, sans rien écrire |
 | `training visuels` | chiffre l'apport des légendes, et le coût de leur absence |
+| `training modeles` | compare ridge, voisins, noyau RBF et réseau à trois couches |
+| `training diagnostic` | ce que la troncature de l'encodeur emporte du dossier |
 
 `training note` est le remplissage de la phase 1 : la page Training note une
 œuvre à la fois, ce que soixante œuvres rendent intenable. Elle emprunte

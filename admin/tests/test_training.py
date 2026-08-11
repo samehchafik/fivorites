@@ -7,6 +7,7 @@ que les pages Training mesurent à la main.
 
 from __future__ import annotations
 
+import math
 import random
 import statistics
 from collections.abc import AsyncIterator
@@ -25,7 +26,13 @@ from fiv_admin.dossier import build_dossier
 from fiv_admin.embed import MAX_CHARS
 from fiv_admin.security import hash_password
 from fiv_admin.stills import select_images
-from fiv_admin.weights import comparer_modeles, predict, train_axis
+from fiv_admin.weights import (
+    comparer_modeles,
+    predict,
+    predictions_ridge,
+    train_axis,
+    voisins_cosinus,
+)
 
 pytestmark = [pytest.mark.integration, requires_db]
 
@@ -1044,3 +1051,59 @@ def test_les_modeles_non_lineaires_passent_un_controle_que_la_ridge_echoue() -> 
             "la comparaison mesurerait l'implementation, pas la question posee"
         )
         assert modele["correlation"] > 0.9, f"{nom} ne retrouve pas l'ordre"
+
+
+def test_voisins_cosinus_reste_dans_le_groupe() -> None:
+    """Trois familles nettement separees : le voisinage ne doit pas les melanger.
+
+    C'est le controle du diagnostic de Lucifer. Si le voisinage se trompe sur
+    des groupes construits pour etre evidents, alors un voisinage decevant sur
+    les vraies donnees ne dirait rien de l'encodeur — il dirait seulement que
+    la fonction est fausse, et la conclusion « l'information n'est pas dans la
+    representation » ne tiendrait pas.
+    """
+    rng = random.Random(5)
+    familles: dict[int, int] = {}
+    vecteurs: list[list[float]] = []
+    for famille in range(3):
+        base = [rng.gauss(0, 1) for _ in range(32)]
+        for _ in range(20):
+            familles[len(vecteurs)] = famille
+            vecteurs.append([b + rng.gauss(0, 0.12) for b in base])
+
+    for depart in (0, 25, 45):
+        proches = voisins_cosinus(vecteurs, depart, 6)
+        assert len(proches) == 6
+        assert all(i != depart for i, _ in proches), "une oeuvre est sa propre voisine"
+        assert all(familles[i] == familles[depart] for i, _ in proches), (
+            "le voisinage melange des familles clairement separees"
+        )
+        assert proches == sorted(proches, key=lambda p: -p[1]), "voisins non tries"
+
+
+def test_predictions_ridge_reproduit_la_ligne_du_tableau() -> None:
+    """Œuvre par œuvre, la meme chose que la colonne « ridge » resume.
+
+    Le diagnostic croise cette erreur avec la longueur du dossier. Si elle ne
+    venait pas exactement du modele de production — meme λ, meme pente, memes
+    bornes — la correlation porterait sur une autre regression que celle qu'on
+    cherche a expliquer.
+    """
+    rng = random.Random(11)
+    direction = [rng.gauss(0, 1) for _ in range(24)]
+    vecteurs: list[list[float]] = []
+    notes: list[float] = []
+    for _ in range(90):
+        v = [rng.gauss(0, 1) for _ in range(24)]
+        vecteurs.append(v)
+        brut = sum(a * b for a, b in zip(direction, v, strict=True)) / 6.0
+        notes.append(min(10.0, max(1.0, 5.5 + brut + rng.gauss(0, 0.4))))
+
+    poids = train_axis("test", vecteurs, notes)
+    preds = predictions_ridge(vecteurs, notes, poids)
+    vus = [(float(p), y) for p, y in zip(preds, notes, strict=True) if not math.isnan(float(p))]
+    assert vus, "aucune prediction hors-pli"
+    mae = sum(abs(p - y) for p, y in vus) / len(vus)
+
+    tableau = comparer_modeles(axe="test", vectors=vecteurs, values=notes)
+    assert round(mae, 3) == tableau["ridge"]["maeCv"]

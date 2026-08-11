@@ -300,11 +300,7 @@ def comparer_modeles(
     plis = len(y) if len(y) <= 60 else 10
 
     ridge = train_axis(axe, vectors, values)
-    preds_ridge = _predictions_croisees(x, y, ridge.lam, plis) * ridge.pente
-    ok = ~np.isnan(preds_ridge)
-    if ok.any():
-        preds_ridge[ok] += float(y.mean()) - float(np.nanmean(preds_ridge))
-    preds_ridge = np.clip(preds_ridge, SCALE_MIN, SCALE_MAX)
+    preds_ridge = predictions_ridge(vectors, values, ridge)
 
     voisins: dict[str, object] = {}
     for k in VOISINS_GRID:
@@ -317,9 +313,7 @@ def comparer_modeles(
     noyau: dict[str, object] = {}
     for echelle in GAMMA_GRID:
         for lam in (0.03, 0.1, 0.3, 1.0):
-            r = _resume(
-                _predictions_noyau(x, y, echelle, lam, plis), y, echelle=echelle, lam=lam
-            )
+            r = _resume(_predictions_noyau(x, y, echelle, lam, plis), y, echelle=echelle, lam=lam)
             if not noyau or float(r["maeCv"]) < float(noyau["maeCv"]):  # type: ignore[arg-type]
                 noyau = r
 
@@ -333,6 +327,53 @@ def comparer_modeles(
         "noyau": noyau,
         "reseau": reseau,
     }
+
+
+def predictions_ridge(
+    vectors: list[list[float]], values: list[float], poids: AxisWeights
+) -> np.ndarray:
+    """Les prédictions hors-pli de la ridge de production, œuvre par œuvre.
+
+    Même chemin exactement que le tableau des modèles — même λ, même pente,
+    même recentrage, mêmes bornes — mais rendues une par une au lieu d'être
+    résumées en un MAE. C'est ce qui permet de croiser l'erreur avec autre
+    chose que l'axe : la longueur du dossier, par exemple, ou le fait que
+    Wikipédia ait survécu à la troncature.
+
+    `poids` est passé déjà ajusté plutôt que recalculé ici : `train_axis`
+    balaie neuf λ sur autant de plis, et deux appelants sur trois l'ont déjà
+    sous la main.
+    """
+    x = np.asarray(vectors, dtype=np.float64)
+    y = np.asarray(values, dtype=np.float64)
+    plis = len(y) if len(y) <= 60 else 10
+    preds = _predictions_croisees(x, y, poids.lam, plis) * poids.pente
+    ok = ~np.isnan(preds)
+    if ok.any():
+        preds[ok] += float(y.mean()) - float(np.nanmean(preds))
+    return np.clip(preds, SCALE_MIN, SCALE_MAX)
+
+
+def voisins_cosinus(vectors: list[list[float]], index: int, k: int = 8) -> list[tuple[int, float]]:
+    """Les `k` œuvres les plus proches en cosine, elle-même exclue.
+
+    Le cosine et non la distance euclidienne : c'est la mesure dont se sert le
+    front pour rapprocher deux vecteurs de goût, et c'est donc dans cette
+    géométrie-là qu'il faut regarder si l'encodeur range Lucifer près des
+    comédies ou près des policiers surnaturels.
+
+    Aucun modèle ne peut retrouver une information que la représentation ne
+    contient pas. Si les voisins sont mauvais, changer de régression ne sert à
+    rien — et c'est ce que ce voisinage tranche, avant qu'on choisisse.
+    """
+    x = np.asarray(vectors, dtype=np.float64)
+    normes = np.linalg.norm(x, axis=1)
+    normes[normes < 1e-12] = 1.0
+    unite = x / normes[:, None]
+    sims = unite @ unite[index]
+    sims[index] = -np.inf
+    ordre = np.argsort(sims)[::-1][: max(0, k)]
+    return [(int(i), float(sims[i])) for i in ordre]
 
 
 # La largeur du noyau, en multiples de la distance médiane entre œuvres. La

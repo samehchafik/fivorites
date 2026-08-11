@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+import math
 from typing import Any
 
 import httpx
@@ -31,11 +32,17 @@ from pydantic import BaseModel, Field
 
 from fiv_admin.deps import Config, Conn, CurrentUser
 from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
-from fiv_admin.embed import EMBEDDER, embed_texts, liberer_modeles
+from fiv_admin.embed import EMBEDDER, MAX_CHARS, embed_texts, liberer_modeles
 from fiv_admin.llm import LlmError, caption_openai, score_anthropic, score_openai
 from fiv_admin.stills import select_images
 from fiv_admin.weights import comparer_modeles as comparer_modeles_axe
-from fiv_admin.weights import diagnostic_visuels, predict, train_axis
+from fiv_admin.weights import (
+    diagnostic_visuels,
+    predict,
+    predictions_ridge,
+    train_axis,
+    voisins_cosinus,
+)
 
 log = logging.getLogger(__name__)
 
@@ -1417,8 +1424,208 @@ async def comparer_modeles(conn: Any, settings: Any, rubric: dict[str, Any]) -> 
         ]
         if len(paires) < MIN_TRAINING_WORKS:
             continue
-        resultats.append(
-            comparer_modeles_axe(axe, [p[0] for p in paires], [p[1] for p in paires])
-        )
+        resultats.append(comparer_modeles_axe(axe, [p[0] for p in paires], [p[1] for p in paires]))
 
     return {"rubricVersion": rubric["version"], "oeuvres": len(vectors), "axes": resultats}
+
+
+# Le titre exact de la section Wikipédia dans le dossier assemblé. Sert à
+# retrouver sa position pour savoir ce que la troncature de l'encodeur en
+# laisse : `dossier.py` la place tôt depuis le cas Docteur House, mais « tôt »
+# n'est pas « toujours dans les douze mille premiers caractères ».
+MARQUE_WIKIPEDIA = "WIKIPEDIA (en):\n"
+
+
+async def diagnostic_matiere(
+    conn: Any, settings: Any, rubric: dict[str, Any], *, focus: int | None = None
+) -> dict[str, Any]:
+    """Ce que l'encodeur ne lit pas du dossier, et si ça se voit sur l'erreur.
+
+    Le juge et l'encodeur ne reçoivent pas le même texte. GPT lit le dossier
+    entier ; `embed_texts` le tronque à `MAX_CHARS`. Pour toute fiche qui
+    dépasse, la cible `y` est donc fonction d'un texte que le vecteur `x` n'a
+    jamais vu — et aucune régression ne rattrape une asymétrie d'entrée.
+
+    Trois mesures, toutes gratuites :
+
+    * combien de dossiers dépassent la coupe, et de combien ;
+    * si l'erreur hors-pli monte avec la longueur. Une erreur plate innocente
+      la troncature et renvoie chercher ailleurs ; une erreur croissante la
+      condamne, et relever `MAX_CHARS` devient le levier ;
+    * le voisinage cosine d'une œuvre, quand `focus` est donné. C'est la
+      question posée avant toute autre : si l'encodeur range Lucifer près des
+      policiers surnaturels, ni la ridge, ni le noyau, ni un réseau ne la
+      remettront près des comédies. On ne choisit pas un modèle avant d'avoir
+      regardé ce que la représentation contient.
+
+    N'écrit rien et n'appelle aucune API payante : les vecteurs sont en cache.
+    """
+    axes: list[str] = rubric["axes"]
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
+            from notation.score
+            where rubric_version = %s and modele <> %s and modele not like 'claude%%'
+              and valeur is not null
+            order by id_tmdb, axe, scored_at desc
+            """,
+            (rubric["version"], INTERNAL_MODEL),
+        )
+        rows = await cur.fetchall()
+
+    by_work: dict[int, dict[str, float]] = {}
+    for row in rows:
+        by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
+    if len(by_work) < MIN_TRAINING_WORKS:
+        raise PasAssezDOeuvres(len(by_work))
+
+    dossiers: dict[int, dict[str, Any]] = {}
+    vectors: dict[int, list[float]] = {}
+    for id_tmdb in by_work:
+        built = await build_dossier(conn, id_tmdb)
+        if built is not None:
+            dossiers[id_tmdb] = built
+            vectors[id_tmdb] = await _embedding(conn, settings, built)
+
+    # L'erreur hors-pli, moyennée sur les axes que le juge a bien voulu noter.
+    # Une œuvre qu'il a laissée en null sur deux axes compte sur les quatre
+    # autres : l'exclure biaiserait vers les dossiers riches, qui sont
+    # justement ceux qu'on soupçonne d'être coupés.
+    erreurs: dict[int, list[float]] = {}
+    predit_focus: dict[str, float] = {}
+    for axe in axes:
+        ids = [i for i, s in by_work.items() if axe in s and i in vectors]
+        if len(ids) < MIN_TRAINING_WORKS:
+            continue
+        vs = [vectors[i] for i in ids]
+        ys = [by_work[i][axe] for i in ids]
+        preds = predictions_ridge(vs, ys, train_axis(axe, vs, ys))
+        for id_tmdb, brut, juge in zip(ids, preds, ys, strict=True):
+            valeur = float(brut)
+            if math.isnan(valeur):
+                continue
+            erreurs.setdefault(id_tmdb, []).append(abs(valeur - juge))
+            if id_tmdb == focus:
+                predit_focus[axe] = round(valeur, 1)
+
+    fiches: list[dict[str, Any]] = []
+    for id_tmdb, built in dossiers.items():
+        texte: str = built["text"]
+        wiki = int(built["sections"]["wikipediaChars"])
+        debut = texte.find(MARQUE_WIKIPEDIA)
+        # Ce qui reste de l'article une fois la coupe passée : zéro si la
+        # section commence déjà après la borne, entier si elle finit avant.
+        vus = (
+            0
+            if not wiki or debut < 0
+            else max(0, min(MAX_CHARS - (debut + len(MARQUE_WIKIPEDIA)), wiki))
+        )
+        mesures = erreurs.get(id_tmdb, [])
+        fiches.append(
+            {
+                "idTmdb": id_tmdb,
+                "titre": built["title"],
+                "chars": len(texte),
+                "coupe": max(0, len(texte) - MAX_CHARS),
+                "wikipediaChars": wiki,
+                "wikipediaVus": vus,
+                "erreur": round(sum(mesures) / len(mesures), 3) if mesures else None,
+            }
+        )
+    fiches.sort(key=lambda f: int(f["chars"]))
+
+    total = sum(int(f["chars"]) for f in fiches)
+    coupe = sum(int(f["coupe"]) for f in fiches)
+    avec_wiki = [f for f in fiches if int(f["wikipediaChars"]) > 0]
+    tranches = [
+        ("moins de 6 000", 0, 6_000),
+        ("6 000 – 12 000", 6_000, MAX_CHARS),
+        ("12 000 – 20 000", MAX_CHARS, 20_000),
+        ("plus de 20 000", 20_000, 10**9),
+    ]
+
+    notees = [f for f in fiches if f["erreur"] is not None]
+    quartiles: list[dict[str, Any]] = []
+    if len(notees) >= 8:
+        taille = len(notees) // 4
+        for q in range(4):
+            debut_q = q * taille
+            fin_q = len(notees) if q == 3 else (q + 1) * taille
+            lot = notees[debut_q:fin_q]
+            quartiles.append(
+                {
+                    "rang": q + 1,
+                    "oeuvres": len(lot),
+                    "charsMin": int(lot[0]["chars"]),
+                    "charsMax": int(lot[-1]["chars"]),
+                    "mae": round(sum(float(f["erreur"]) for f in lot) / len(lot), 3),
+                }
+            )
+
+    correlation = None
+    if len(notees) >= 3:
+        longueurs = [float(f["chars"]) for f in notees]
+        valeurs = [float(f["erreur"]) for f in notees]
+        ml = sum(longueurs) / len(longueurs)
+        mv = sum(valeurs) / len(valeurs)
+        cov = sum((a - ml) * (b - mv) for a, b in zip(longueurs, valeurs, strict=True))
+        el = math.sqrt(sum((a - ml) ** 2 for a in longueurs))
+        ev = math.sqrt(sum((b - mv) ** 2 for b in valeurs))
+        if el > 1e-9 and ev > 1e-9:
+            correlation = round(cov / (el * ev), 2)
+
+    voisinage: dict[str, Any] | None = None
+    if focus is not None and focus in vectors:
+        ordre = list(vectors)
+        matrice = [vectors[i] for i in ordre]
+        juges = by_work.get(focus, {})
+        pire = max(
+            (a for a in axes if a in juges and a in predit_focus),
+            key=lambda a: abs(juges[a] - predit_focus[a]),
+            default=None,
+        )
+        voisinage = {
+            "idTmdb": focus,
+            "titre": dossiers[focus]["title"] if focus in dossiers else str(focus),
+            "axePireEcart": pire,
+            "juge": {a: juges.get(a) for a in axes},
+            "modele": {a: predit_focus.get(a) for a in axes},
+            "voisins": [
+                {
+                    "idTmdb": ordre[i],
+                    "titre": dossiers[ordre[i]]["title"],
+                    "cosinus": round(sim, 3),
+                    "juge": by_work.get(ordre[i], {}).get(pire) if pire else None,
+                }
+                for i, sim in voisins_cosinus(matrice, ordre.index(focus), 10)
+            ],
+        }
+
+    return {
+        "rubricVersion": rubric["version"],
+        "oeuvres": len(fiches),
+        "coupe": MAX_CHARS,
+        "tranches": [
+            {
+                "libelle": libelle,
+                "oeuvres": sum(1 for f in fiches if bas <= int(f["chars"]) < haut),
+            }
+            for libelle, bas, haut in tranches
+        ],
+        "tronques": sum(1 for f in fiches if int(f["coupe"]) > 0),
+        "partPerdue": round(coupe / total, 3) if total else 0.0,
+        "wikipedia": {
+            "presente": len(avec_wiki),
+            "entiere": sum(
+                1 for f in avec_wiki if int(f["wikipediaVus"]) >= int(f["wikipediaChars"])
+            ),
+            "coupee": sum(
+                1 for f in avec_wiki if 0 < int(f["wikipediaVus"]) < int(f["wikipediaChars"])
+            ),
+            "absente": sum(1 for f in avec_wiki if int(f["wikipediaVus"]) == 0),
+        },
+        "quartiles": quartiles,
+        "correlation": correlation,
+        "voisinage": voisinage,
+    }

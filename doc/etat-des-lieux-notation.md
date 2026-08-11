@@ -238,18 +238,32 @@ Mesuré sur les 20 séries les plus populaires, avant/après re-collecte :
 
 ## 7. Ce qui est établi
 
-Quatre hypothèses sur le plafond de la régression, éliminées par la mesure :
+Six hypothèses sur le plafond de la régression, éliminées par la mesure :
 
 | hypothèse | verdict |
 |---|---|
 | **Le volume** | deux plateaux mesurés (241→298, 346→521) |
 | **L'encodeur** | trois candidats à 0,006 près — jina, nomic, bge |
 | **La calibration** | corrigée : 93–103 % d'amplitude restituée |
-| **La forme du modèle** | les plus proches voisins **perdent** sur les six axes (−0,085) |
+| **Le voisinage** | les plus proches voisins **perdent** sur les six axes (−0,085) |
+| **La forme du modèle** | noyau RBF +0,037, réseau à trois couches −0,003 |
+| **L'absence de Wikipédia** | 427 des 502 œuvres notées l'avaient déjà, avant d'être jugées |
 
 L'échec des voisins est instructif en soi : si le voisinage dans l'espace des
 embeddings correspondait au ton, la moyenne des notes voisines serait bonne.
 Elle ne l'est pas, et leur dispersion s'effondre à 59–91 %.
+
+Le gain du noyau est un faux gain, et c'est la colonne `dispersion` qui le dit :
+70–85 % contre 90–100 % pour la ridge. Il achète son erreur moyenne en rangeant
+tout vers le centre — exactement le tassement qu'on cherche à supprimer. La
+ridge reste le bon modèle.
+
+Le réseau, lui, était condamné par l'arithmétique avant d'être lancé : sur 512
+entrées, la première couche pèse 96 % des poids, `512 × n₁` écrase le reste, et
+aucune largeur de couche ne déplace ce rapport. Mesuré : −0,003.
+
+**Trois familles très différentes — linéaire, à noyau, non linéaire profonde —
+arrivent au même mur à 1,0 de MAE.** Ce n'est plus le modèle.
 
 **Le cas qui résiste à tout** : Lucifer. Le juge la note 6 en joie et 4 en peur
 (confiances 0,79–0,94) ; la ridge rend 3,1 et 6,2. Ce n'est pas une erreur
@@ -265,45 +279,38 @@ indépendantes que le ton n'est pas dans le texte encodé.**
 
 ## 8. Ce qui reste ouvert
 
-**1. La comparaison des modèles n'a pas été lancée en entier.** `training
-modeles` compare désormais quatre candidats — ridge, voisins, noyau RBF, réseau
-à trois couches. Seuls les deux premiers ont un résultat. C'est gratuit :
+**1. L'asymétrie entre ce que lit le juge et ce que lit l'encodeur.** C'est
+l'hypothèse vivante, et elle n'a jamais été mesurée. GPT reçoit le dossier
+entier ; `embed_texts` le tronque à `MAX_CHARS` = 12 000 caractères. Pour toute
+fiche qui dépasse, la note à prédire dépend d'un texte que le vecteur n'a jamais
+vu. Le réordonnancement des sections a déplacé la coupe vers les synopsis
+répétitifs, il ne l'a pas supprimée.
 
 ```bash
-sudo docker compose run --rm admin training modeles
+sudo docker compose run --rm admin training diagnostic --focus 63174
 ```
 
-Un contrôle XOR verrouille le banc : la ridge doit y échouer, les trois autres
-doivent le lire. Il a servi trois fois — il a montré que le réseau plafonnait
-avec une descente à inertie (corrigée par Adam), puis qu'il apprenait son pli
-par cœur parce qu'on réduisait les entrées, ce qui amplifiait trente dimensions
-de bruit au niveau du signal.
+Gratuit. La corrélation longueur × erreur tranche : plate, la troncature est
+hors de cause ; croissante, relever la borne devient le levier.
 
-**2. L'enrichissement Wikipédia n'a jamais été lancé sur le bon corpus.** C'est
-le levier restant le plus prometteur, et il est **gratuit**. `enrich` avance par
-identifiant, `training note` sélectionne par popularité : seules **43 des 521
-œuvres notées** ont un enrichissement.
+**2. Le voisinage de Lucifer**, rendu par la même commande via `--focus`. Si ses
+dix plus proches sont *Supernatural*, *Constantine*, *Grimm*, tous notés bas en
+joie par le juge, alors aucun modèle ne peut deviner qu'elle est drôle : le
+plafond est dans l'encodeur. C'est la question qui passe avant le choix d'un
+modèle — aucune régression ne retrouve ce que la représentation ne contient pas.
 
-```bash
-sudo docker compose run --rm sourcing enrich --order popularity --limit 700
-sudo docker compose run --rm admin training poids
-```
-
-Détail dans
-[`mission-enrichissement-dossier.md`](mission-enrichissement-dossier.md).
-
-**3. Le diagnostic qui trancherait au bon niveau** — jamais construit. Regarder
-les **voisins de Lucifer** dans l'espace des embeddings. Si ses dix plus proches
-sont *Supernatural*, *Constantine*, *Grimm*, alors aucun modèle ne peut deviner
-qu'elle est drôle : le plafond est dans l'encodeur, et ni le volume ni la forme
-du modèle n'y changeront rien. Une vingtaine de lignes, aucun appel payant.
-
-**4. Le rapport exemples/dimensions.** 502 exemples pour 512 dimensions, soit
+**3. Le rapport exemples/dimensions.** 502 exemples pour 512 dimensions, soit
 1:1 — le pire régime pour un modèle non linéaire. Deux façons d'en sortir :
 noter ~5 000 œuvres (≈ 20 $, 3 à 5 heures), ou **réduire les dimensions** par
 ACP, ce qui donne le même rapport gratuitement et profite à tous les modèles.
 
-**5. Le §5 de [`v2-notation-axes.md`](v2-notation-axes.md)** décrit toujours le
+C'est aussi la seule voie qui rendrait un réseau pertinent. À 512 entrées, la
+première couche pèse 16 384 poids pour ~345 exemples ; réduire à 32 composantes
+et partager un tronc entre les six sorties donne 718 poids pour 2 070 cibles,
+soit trois cibles par poids au lieu d'un cinquantième. Tant que ce rapport n'est
+pas corrigé, discuter du nombre de neurones par couche n'a pas de sens.
+
+**4. Le §5 de [`v2-notation-axes.md`](v2-notation-axes.md)** décrit toujours le
 vecteur utilisateur en « position + tolérance ». Sur des composantes, ce
 raisonnement s'inverse et la formule de score devient une similarité cosine. À
 réécrire avant d'implémenter la distance.
@@ -337,6 +344,7 @@ hors-pli dit quelque chose.
 | `training note -n N` | noter N œuvres avec le juge (payant, ~0,004 $/œuvre) |
 | `training poids` | entraîner la régression et régénérer les vecteurs (gratuit) |
 | `training modeles` | comparer ridge / voisins / noyau / réseau (gratuit) |
+| `training diagnostic --focus ID` | ce que la troncature emporte, et le voisinage d'une œuvre (gratuit) |
 | `training encodeurs` | comparer les encodeurs (gratuit) |
 | `training visuels` | ce que les légendes apportent et coûtent (gratuit) |
 | `sourcing enrich --order popularity` | Wikipédia, Wikidata, TVmaze (gratuit) |

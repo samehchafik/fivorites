@@ -521,6 +521,115 @@ def training_modeles(
     _run(run())
 
 
+@training_app.command("diagnostic")
+def training_diagnostic(
+    bareme: Annotated[
+        str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
+    ] = None,
+    focus: Annotated[
+        int | None,
+        typer.Option("--focus", help="Id TMDB dont afficher le voisinage. Ex. 63174 (Lucifer)."),
+    ] = None,
+) -> None:
+    """Ce que l'encodeur ne lit pas du dossier, et si ça se voit sur l'erreur.
+
+    Le juge et l'encodeur ne reçoivent pas le même texte : GPT lit le dossier
+    entier, l'encodeur les 12 000 premiers caractères. Pour toute fiche qui
+    dépasse, la note à prédire dépend d'un texte que le vecteur n'a jamais vu.
+    Six hypothèses sont tombées sur le plafond — volume, encodeur, calibration,
+    voisinage, famille de modèle, absence de Wikipédia — celle-ci n'a jamais
+    été mesurée.
+
+    La corrélation longueur × erreur tranche : plate, la troncature est hors de
+    cause ; croissante, relever la borne devient le levier.
+
+    `--focus` ajoute le voisinage cosine d'une œuvre. C'est la question qui
+    passe avant le choix d'un modèle : aucune régression ne retrouve ce que la
+    représentation ne contient pas, et si Lucifer a pour voisins des policiers
+    surnaturels plutôt que des comédies, sa joie est perdue dès l'encodage.
+
+    N'écrit rien et n'appelle aucune API payante.
+    """
+    from fiv_admin.routes.training import PasAssezDOeuvres, _rubric, diagnostic_matiere
+
+    settings = get_settings()
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            if bareme:
+                rubric = await _rubric(conn, bareme)
+            else:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric"
+                        " order by created_at desc limit 1"
+                    )
+                    rubric = await cur.fetchone()
+                if rubric is None:
+                    typer.echo("aucun barème en base.")
+                    raise typer.Exit(1)
+
+            typer.echo(f"barème {rubric['version']} — assemblage des dossiers…")
+            try:
+                bilan = await diagnostic_matiere(conn, settings, rubric, focus=focus)
+            except PasAssezDOeuvres as exc:
+                typer.echo(f"ERREUR : {exc}")
+                raise typer.Exit(1) from exc
+
+            total = bilan["oeuvres"]
+            typer.echo(f"\n{total} dossier(s). L'encodeur coupe à {bilan['coupe']:,} caractères.\n")
+            typer.echo(f"  {'longueur du dossier':<22}{'œuvres':>8}{'part':>8}")
+            for t in bilan["tranches"]:
+                part = t["oeuvres"] / total if total else 0.0
+                typer.echo(f"  {t['libelle']:<22}{t['oeuvres']:>8}{part:>8.0%}")
+            tronques = bilan["tronques"]
+            typer.echo(
+                f"\n  tronqués        : {tronques}/{total} ({tronques / total if total else 0:.0%})"
+            )
+            typer.echo(f"  texte jugé perdu: {bilan['partPerdue']:.0%} du total assemblé")
+
+            w = bilan["wikipedia"]
+            typer.echo(
+                f"\n  Wikipédia présente : {w['presente']}/{total}"
+                f"  —  entière {w['entiere']}, coupée {w['coupee']}, jamais atteinte {w['absente']}"
+            )
+
+            if bilan["quartiles"]:
+                typer.echo("\n  MAE cv par quartile de longueur")
+                for q in bilan["quartiles"]:
+                    borne = f"{q['charsMin']:,} – {q['charsMax']:,}"
+                    typer.echo(f"    Q{q['rang']}  {borne:<20}{q['mae']:>7.3f}  ({q['oeuvres']})")
+            if bilan["correlation"] is not None:
+                typer.echo(f"\n  corrélation longueur × erreur : {bilan['correlation']:+.2f}")
+            typer.echo(
+                "\n  Une erreur qui monte avec la longueur accuse la troncature."
+                "\n  Une erreur plate l'innocente, et renvoie chercher ailleurs."
+            )
+
+            v = bilan["voisinage"]
+            if focus is not None and v is None:
+                typer.echo(f"\n  {focus} n'est pas dans le corpus noté — pas de voisinage.")
+            elif v is not None:
+                axe = v["axePireEcart"]
+                typer.echo(f"\n  voisins de {v['titre']} ({v['idTmdb']}) — cosine sur le dossier")
+                if axe:
+                    typer.echo(
+                        f"  axe le plus faux : {axe} —"
+                        f" juge {v['juge'][axe]:.1f}, modèle {v['modele'][axe]:.1f}\n"
+                    )
+                typer.echo(f"    {'cos':>6}{'  ' + (axe or 'juge'):<12}œuvre")
+                for n in v["voisins"]:
+                    note = f"{n['juge']:.1f}" if n["juge"] is not None else "—"
+                    typer.echo(f"    {n['cosinus']:>6.3f}  {note:<10}{n['titre']}")
+                typer.echo(
+                    "\n  Des voisins qui portent la même note que le juge disent que"
+                    "\n  l'information est là, et que c'est le modèle qui la rate."
+                    "\n  Des voisins tous à côté disent que l'encodage l'a déjà perdue."
+                )
+
+    _run(run())
+
+
 @catalog_app.command("refresh")
 def catalog_refresh() -> None:
     """Recalcule les vignettes depuis le brut.

@@ -5,6 +5,32 @@ dans un fil neuf, sans autre contexte. À lire en complément de
 [`v2-notation-axes.md`](v2-notation-axes.md) (le socle des axes) et
 [`admin.md`](admin.md) (les commandes).
 
+> **Correction du 2026-08-11 — l'étape 1 est faite, et elle n'a rien donné.**
+>
+> Le chiffre central de cette note, « seules 43 des 521 œuvres notées ont un
+> enrichissement », est **périmé**. Mesuré sur le barème `empreinte-v3` :
+>
+> | | |
+> |---|---|
+> | œuvres notées | 502 |
+> | avec un article Wikipédia anglais | **427** |
+> | enrichies *après* avoir été jugées | **0** |
+>
+> La matière était donc là **avant** que le juge note, pour 85 % du corpus. Il
+> n'y a rien à renoter — `training note --rejouer` repaierait le même jugement
+> sur le même texte — et l'hypothèse « le dossier manque de Wikipédia » est
+> éliminée. La requête qui l'établit croise `notation.score.scored_at` avec
+> `sourcing.riche_source.fetched_at` ; elle est reproduite dans
+> [`etat-des-lieux-notation.md`](etat-des-lieux-notation.md).
+>
+> Ce qui la remplace est plus précis, et c'est le cas Docteur House généralisé :
+> le juge lit le dossier entier, l'encodeur ses 12 000 premiers caractères. La
+> matière est présente, et c'est **l'encodage** qui la perd. `training
+> diagnostic` mesure exactement ce que la troncature emporte.
+>
+> Le §4 ci-dessous reste valable pour ce qu'il propose d'**ajouter** au dossier
+> (TVmaze, les faits Wikidata) ; c'est son diagnostic de départ qui est faux.
+
 ## 1. Le constat qui déclenche la mission
 
 La régression interne plafonne. Trois leviers ont été essayés et mesurés :
