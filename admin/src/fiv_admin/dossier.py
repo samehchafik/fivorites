@@ -240,6 +240,30 @@ async def build_dossier(
         parts.append("KEYWORDS: " + ", ".join(keywords))
     if overview:
         parts.append("OVERVIEW:\n" + overview)
+    # Wikipédia et les légendes AVANT les résumés de saisons et d'épisodes.
+    #
+    # L'ordre n'est pas cosmétique : le juge lit le dossier entier, mais
+    # l'encodeur le tronque à `embed.MAX_CHARS` (12 000 caractères, borne
+    # imposée par la mémoire de l'attention). La troncature coupe la fin, donc
+    # la dernière section — et Wikipédia était la dernière.
+    #
+    # Le cas Docteur House l'a rendu visible : la série est enrichie, GPT a lu
+    # l'article et lui a donné 8 en réflexion, mais l'encodeur n'a jamais vu
+    # une ligne de Wikipédia et prédisait 6,1. Huit saisons de résumés (jusqu'à
+    # 1 500 caractères chacun) suffisent à consommer le budget avant d'y
+    # arriver.
+    #
+    # D'où ce classement : d'abord ce qui parle de l'œuvre — thèmes, accueil
+    # critique, forme — puis ce qui raconte l'intrigue épisode par épisode. Si
+    # quelque chose doit être coupé, mieux vaut la fin d'une liste de synopsis
+    # répétitifs que la seule section qui dise de quoi la série parle.
+    if wikipedia:
+        parts.append("WIKIPEDIA (en):\n" + wikipedia)
+    if captions and medias:
+        parts.append(
+            "MEDIA (what the official images show, auto-described):\n"
+            + "\n".join(f"{row['label']}: {row['caption']}" for row in captions)
+        )
     if season_overviews:
         parts.append(
             "SEASON OVERVIEWS:\n"
@@ -250,13 +274,6 @@ async def build_dossier(
             f"S{ep['season']}E{ep['episode']} {ep['name']}: {ep['overview']}" for ep in episodes
         ]
         parts.append("EPISODE SYNOPSES (sampled across the whole run):\n" + "\n".join(lines))
-    if captions and medias:
-        parts.append(
-            "MEDIA (what the official images show, auto-described):\n"
-            + "\n".join(f"{row['label']}: {row['caption']}" for row in captions)
-        )
-    if wikipedia:
-        parts.append("WIKIPEDIA (en):\n" + wikipedia)
 
     text = "\n\n".join(parts)
     return {

@@ -22,6 +22,7 @@ from fiv_admin import routes
 from fiv_admin.app import create_app
 from fiv_admin.config import Settings
 from fiv_admin.dossier import build_dossier
+from fiv_admin.embed import MAX_CHARS
 from fiv_admin.security import hash_password
 from fiv_admin.stills import select_images
 from fiv_admin.weights import predict, train_axis
@@ -198,6 +199,91 @@ async def test_le_dossier_signale_la_matiere_disponible(conn: psycopg.AsyncConne
     assert "MATERIAL: overview." in built["text"], (
         "rien d'autre que l'overview : le dit sans détour"
     )
+
+
+async def test_wikipedia_survit_a_la_troncature_de_l_encodeur(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Le cas Docteur House.
+
+    Le juge lit le dossier entier ; l'encodeur le tronque à `MAX_CHARS`, en
+    coupant la fin. Tant que Wikipédia fermait le dossier, une série à huit
+    saisons de résumés consommait le budget avant d'y arriver : l'article
+    n'entrait jamais dans le vecteur, alors même que la série était enrichie et
+    que GPT, lui, l'avait lu — 8 en réflexion contre 6,1 prédits.
+
+    On vérifie donc que sur une fiche volumineuse, Wikipédia tient dans ce que
+    l'encodeur voit réellement, et que ce qui se fait couper est la liste des
+    synopsis.
+    """
+    id_tmdb = 2300
+    await conn.execute(
+        "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
+        " values (%s, 'Longue serie', 1, current_date)",
+        (id_tmdb,),
+    )
+    payload = {
+        "original_name": "Longue serie",
+        "number_of_seasons": 8,
+        "translations": {
+            "translations": [
+                {
+                    "iso_639_1": "en",
+                    "iso_3166_1": "US",
+                    "data": {"name": "Long Show", "overview": "A medical procedural."},
+                }
+            ]
+        },
+    }
+    await conn.execute(
+        "insert into raw_source (source, kind, source_id, lang, http_status, payload,"
+        " payload_sha256) values ('tmdb', 'tv', %s, 'fr-FR', 200, %s, sha256(%s::bytea))",
+        (str(id_tmdb), Jsonb(payload), str(id_tmdb)),
+    )
+    # Huit saisons de résumés longs : le gabarit d'un procédural qui dure, et
+    # celui qui saturait le budget de l'encodeur.
+    for n in range(1, 9):
+        saison = {
+            "season_number": n,
+            "overview": f"Season {n}. " + "A patient arrives with unexplained symptoms. " * 40,
+            "episodes": [
+                {
+                    "episode_number": e,
+                    "name": f"Episode {e}",
+                    "overview": "The team runs tests and argues about the diagnosis. " * 6,
+                }
+                for e in range(1, 23)
+            ],
+        }
+        await conn.execute(
+            "insert into raw_source (source, kind, source_id, lang, http_status, payload,"
+            " payload_sha256) values ('tmdb', 'tv_season', %s, 'en-US', 200, %s,"
+            " sha256(%s::bytea))",
+            (f"{id_tmdb}/s{n}", Jsonb(saison), f"{id_tmdb}/s{n}"),
+        )
+    await conn.execute(
+        "insert into oeuvre (univers, id_tmdb, titre, annee)"
+        " values ('series', %s, 'Long Show', 2004)",
+        (id_tmdb,),
+    )
+    oeuvre = await (
+        await conn.execute("select id from oeuvre where id_tmdb = %s", (id_tmdb,))
+    ).fetchone()
+    await conn.execute(
+        "insert into riche_source (oeuvre_id, id_tmdb, source, lang, source_id, content)"
+        " values (%s, %s, 'wikipedia', 'en', 'Long Show', %s)",
+        (oeuvre[0], id_tmdb, "The themes of the series are ethics and truth. " * 100),  # type: ignore[index]
+    )
+
+    built = await build_dossier(conn, id_tmdb)
+
+    assert built is not None
+    assert len(built["text"]) > MAX_CHARS, "fiche volontairement hors gabarit"
+    vu_par_l_encodeur = built["text"][:MAX_CHARS]
+    assert "WIKIPEDIA (en):" in vu_par_l_encodeur, (
+        "l'encodeur ne voit pas Wikipédia — la section est reléguée après ce qui déborde"
+    )
+    assert "ethics and truth" in vu_par_l_encodeur, "l'en-tête ne suffit pas, le texte doit suivre"
 
 
 async def test_le_dossier_d_une_serie_non_collectee_est_none(

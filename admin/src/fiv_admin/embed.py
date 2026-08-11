@@ -69,8 +69,17 @@ def _model(cache_dir: str | None, name: str) -> Any:
 #
 # 12 000 caractères ≈ 3 000 tokens : plus du double du dossier courant
 # (~5 000 caractères), donc la troncature ne touche que les fiches hors
-# gabarit — celles qui cumulent vingt saisons de résumés — et leur coupe la
-# fin de la dernière section, pas une section entière.
+# gabarit — celles qui cumulent vingt saisons de résumés.
+#
+# Ce qu'elle leur coupe dépend entièrement de l'ordre des sections, et c'est ce
+# que ce commentaire sous-estimait : elle ne rogne pas la fin d'une section,
+# elle en fait disparaître des entières. Docteur House l'a montré — huit
+# saisons de résumés consommaient le budget, Wikipédia fermait le dossier et
+# n'entrait donc jamais dans le vecteur, alors même que la série était
+# enrichie et que le juge, lui, avait lu l'article : 8 en réflexion contre 6,1
+# prédits. `dossier.py` place depuis Wikipédia et les légendes AVANT les
+# résumés de saisons et d'épisodes, pour que ce qui se fait couper soit la fin
+# d'une liste de synopsis répétitifs.
 MAX_CHARS = 12_000
 LOT = 4
 
