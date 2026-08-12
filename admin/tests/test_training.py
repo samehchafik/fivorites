@@ -1216,3 +1216,106 @@ def test_le_balayage_groupe_rend_les_memes_predictions_que_lambda_par_lambda() -
     for lam in LAMBDA_GRID:
         seul = _predictions_croisees(x, y, lam, 10, x_eval=x_autre)
         assert np.array_equal(groupe_eval[lam], seul, equal_nan=True)
+
+
+async def seed_film(conn: psycopg.AsyncConnection, id_tmdb: int = 1399) -> int:
+    """Un film collecte, volontairement au MEME id_tmdb qu'une serie.
+
+    C'est le piege que les deux catalogues TMDB tendent : ils numerotent
+    separement, donc le film 1399 et la serie 1399 coexistent sans etre la
+    meme oeuvre. Un seed qui prendrait deux ids differents ne testerait rien.
+    """
+    await conn.execute(
+        "insert into tmdb_catalog (univers, id, original_name, popularity, exported_on)"
+        " values ('movies', %s, 'Fight Club', 300, current_date) on conflict do nothing",
+        (id_tmdb,),
+    )
+    await conn.execute(
+        "insert into oeuvre (univers, id_tmdb) values ('movies', %s) on conflict do nothing",
+        (id_tmdb,),
+    )
+    payload = {
+        "original_title": "Fight Club",
+        "release_date": "1999-10-15",
+        "runtime": 139,
+        "tagline": "Mischief. Mayhem. Soap.",
+        "production_countries": [{"iso_3166_1": "US"}],
+        "production_companies": [{"name": "Fox 2000 Pictures"}],
+        "genres": [{"name": "Drama"}, {"name": "Thriller"}],
+        # Cote film TMDB nomme la liste `keywords`, pas `results`.
+        "keywords": {"keywords": [{"name": "insomnia"}, {"name": "dual identity"}]},
+        "translations": {
+            "translations": [
+                {
+                    "iso_639_1": "en",
+                    "iso_3166_1": "US",
+                    "data": {
+                        "title": "Fight Club",
+                        "tagline": "Mischief. Mayhem. Soap.",
+                        "overview": "An insomniac office worker and a soap maker "
+                        "form an underground fight club that evolves into much more.",
+                    },
+                }
+            ]
+        },
+    }
+    await conn.execute(
+        "insert into raw_source (source, kind, source_id, lang, http_status, payload,"
+        " payload_sha256) values ('tmdb', 'movie', %s, 'fr-FR', 200, %s, sha256(%s::bytea))",
+        (str(id_tmdb), Jsonb(payload), str(id_tmdb) + "movie"),
+    )
+    row = await (
+        await conn.execute(
+            "select id from oeuvre where univers = 'movies' and id_tmdb = %s", (id_tmdb,)
+        )
+    ).fetchone()
+    return int(row[0])
+
+
+async def test_le_dossier_film_ne_prend_pas_la_fiche_de_la_serie_de_meme_id(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Meme id_tmdb, deux univers : chaque dossier doit rester chez lui.
+
+    C'est l'erreur qui ne se verrait pas. Un film servi avec la fiche d'une
+    serie produit un dossier parfaitement plausible — titre, genres, synopsis,
+    tout est la — qui decrit simplement une autre oeuvre. La note serait
+    fausse sans qu'aucune verification ne s'en plaigne.
+    """
+    await seed_series(conn, 1399)
+    oeuvre_film = await seed_film(conn, 1399)
+
+    serie = await build_dossier(conn, 1399)
+    film = await build_dossier(conn, 1399, univers="movies")
+    assert serie is not None and film is not None
+
+    assert "Game of Thrones" in serie["text"]
+    assert "Fight Club" in film["text"]
+    assert "Game of Thrones" not in film["text"]
+    assert serie["sha256"] != film["sha256"], "deux oeuvres, une seule empreinte"
+    assert film["oeuvreId"] == oeuvre_film
+    assert film["univers"] == "movies"
+
+
+async def test_le_dossier_film_lit_les_champs_que_tmdb_nomme_autrement(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """`title`/`original_title` et `keywords.keywords`, pas les noms des series.
+
+    Lire la mauvaise cle ne leve aucune erreur : elle rend un dossier sans
+    titre et sans mots-cles, qui passe tous les controles et note a cote.
+    """
+    await seed_film(conn, 550)
+    film = await build_dossier(conn, 550, univers="movies")
+    assert film is not None
+
+    assert film["title"] == "Fight Club"
+    assert "KEYWORDS: insomnia, dual identity" in film["text"]
+    # Les faits propres au format : duree et sortie, ni saison ni chaine.
+    assert "139 minutes" in film["text"]
+    assert "released 1999-10-15" in film["text"]
+    assert "seasons" not in film["text"]
+    assert "SEASON OVERVIEWS" not in film["text"]
+    assert "EPISODE SYNOPSES" not in film["text"]
+    # La tagline est souvent la phrase la plus explicite sur le ton vise.
+    assert "TAGLINE: Mischief. Mayhem. Soap." in film["text"]

@@ -575,6 +575,9 @@ def training_corpus(
     limit: Annotated[
         int, typer.Option("--limit", "-n", min=1, help="Combien d'œuvres encoder, par popularité.")
     ] = 5000,
+    univers: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
     modele: Annotated[
         str, typer.Option("--modele", help="L'encodeur professeur, préfixé openai/.")
     ] = "openai/text-embedding-3-large@512",
@@ -612,7 +615,7 @@ def training_corpus(
 
     async def run() -> None:
         async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
-            typer.echo(f"{modele} · assemblage des dossiers…")
+            typer.echo(f"{modele} · {univers} · assemblage des dossiers…")
 
             def montrer(faits: int, total: int) -> None:
                 typer.echo(f"  {faits}/{total} encodée(s)")
@@ -623,6 +626,7 @@ def training_corpus(
                     settings,
                     modele,
                     limit=limit,
+                    univers=univers,
                     apercu=apercu,
                     progres=montrer,
                 )

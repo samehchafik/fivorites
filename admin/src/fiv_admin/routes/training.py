@@ -970,19 +970,24 @@ async def _vecteurs_deja_payes(
     même règle que pour le modèle local, et c'est elle qui rend le cache sûr —
     sans quoi enrichir une œuvre laisserait son ancien vecteur en place.
     """
-    if not dossiers:
+    # Apparié sur le pivot et non sur `id_tmdb` : les deux catalogues TMDB
+    # numérotent séparément, et le film 550 comme la série 550 ont chacun leur
+    # ligne dans `oeuvre` avec le même `id_tmdb`.
+    par_oeuvre = {d["oeuvreId"]: i for i, d in dossiers.items() if d.get("oeuvreId") is not None}
+    if not par_oeuvre:
         return {}
+    shas = {d["oeuvreId"]: d["sha256"] for d in dossiers.values() if d.get("oeuvreId") is not None}
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            select o.id_tmdb, e.vector from notation.embedding e
-            join sourcing.oeuvre o on o.id = e.oeuvre_id
+            select e.oeuvre_id, e.vector from notation.embedding e
             where e.embedder = %s
-              and (o.id_tmdb, e.input_sha256) in (select * from unnest(%s::int[], %s::text[]))
+              and (e.oeuvre_id, e.input_sha256)
+                  in (select * from unnest(%s::bigint[], %s::text[]))
             """,
-            (etiquette, list(dossiers), [d["sha256"] for d in dossiers.values()]),
+            (etiquette, list(par_oeuvre), [shas[o] for o in par_oeuvre]),
         )
-        return {row[0]: row[1] for row in await cur.fetchall()}
+        return {par_oeuvre[row[0]]: row[1] for row in await cur.fetchall()}
 
 
 async def apercu_encodeurs(
@@ -1839,12 +1844,16 @@ async def diagnostic_matiere(
     }
 
 
+CARTE_PAR_UNIVERS = {"series": "admin.tv_card", "movies": "admin.movie_card"}
+
+
 async def constituer_corpus(
     conn: Any,
     settings: Any,
     modele: str,
     *,
     limit: int,
+    univers: str = "series",
     apercu: bool = False,
     progres: Any = None,
 ) -> dict[str, Any]:
@@ -1876,22 +1885,30 @@ async def constituer_corpus(
     nom, dims = api
     etiquette = modele.removeprefix("openai/")
 
+    carte = CARTE_PAR_UNIVERS.get(univers)
+    if carte is None:
+        raise LlmError(f"univers inconnu : {univers} — attendus {sorted(CARTE_PAR_UNIVERS)}")
+
     async with conn.cursor(row_factory=dict_row) as cur:
+        # Le nom de la vue est interpolé, pas passé en paramètre : PostgreSQL
+        # n'accepte pas de table paramétrée. Il ne vient jamais de l'extérieur —
+        # `CARTE_PAR_UNIVERS` est une table close, et un univers absent a levé
+        # deux lignes plus haut.
         await cur.execute(
-            """
+            f"""
             select v.id as id_tmdb, coalesce(v.name, v.original_name) as titre
-            from admin.tv_card v
-            join tmdb_catalog c on c.univers = 'series' and c.id = v.id
+            from {carte} v
+            join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
             order by c.popularity desc nulls last, v.vote_average desc nulls last
-            limit %s
-            """,
-            (limit,),
+            limit %(limit)s
+            """,  # noqa: S608
+            {"univers": univers, "limit": limit},
         )
         candidates = list(await cur.fetchall())
 
     dossiers: dict[int, dict[str, Any]] = {}
     for row in candidates:
-        built = await build_dossier(conn, row["id_tmdb"])
+        built = await build_dossier(conn, row["id_tmdb"], univers=univers)
         # Un dossier vide n'apprend rien ; un dossier maigre, si — c'est même
         # exactement ce que l'élève devra savoir traiter sur la traîne.
         if built is not None and built["text"].strip():
@@ -1903,6 +1920,7 @@ async def constituer_corpus(
     if apercu or not manquants:
         return {
             "modele": modele,
+            "univers": univers,
             "candidates": len(candidates),
             "dossiers": len(dossiers),
             "enCache": len(connus),
@@ -1949,6 +1967,7 @@ async def constituer_corpus(
 
     return {
         "modele": modele,
+        "univers": univers,
         "candidates": len(candidates),
         "dossiers": len(dossiers),
         "enCache": len(connus),

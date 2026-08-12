@@ -27,6 +27,17 @@ from psycopg.rows import dict_row
 SOURCE = "tmdb"
 KIND_SERIES = "tv"
 KIND_SEASON = "tv_season"
+KIND_MOVIE = "movie"
+
+# L'univers décide de trois choses, et de rien d'autre : le `kind` du brut à
+# relire, les champs du payload qui portent titre et mots-clés — TMDB les nomme
+# différemment d'un catalogue à l'autre — et les faits d'en-tête.
+#
+# Le reste du dossier est commun, et c'est voulu : le barème note une empreinte
+# émotionnelle, pas un format. Une échelle unique est ce qui permet de mêler
+# films et séries dans une même recommandation ; deux barèmes en donneraient
+# deux, incomparables.
+KIND_PAR_UNIVERS = {"series": KIND_SERIES, "movies": KIND_MOVIE}
 
 # Combien de synopsis d'épisodes entrent dans le dossier. Répartis sur tout
 # l'arc — début, milieu, fin — parce que le ton d'une série change entre sa
@@ -128,10 +139,16 @@ def _truncate_sentence(text: str, limit: int) -> str:
     return text[: cut + 1] if cut > 0 else text[:limit]
 
 
-async def load_fiche(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str, Any] | None:
-    """La fiche TMDB la plus récente d'une série — `{"id", "payload"}` — ou
+async def load_fiche(
+    conn: psycopg.AsyncConnection, id_tmdb: int, *, univers: str = "series"
+) -> dict[str, Any] | None:
+    """La fiche TMDB la plus récente d'une œuvre — `{"id", "payload"}` — ou
     None si rien de collecté. L'`id` est celui de la ligne de brut : c'est la
-    référence de provenance que le journal d'entraînement conserve."""
+    référence de provenance que le journal d'entraînement conserve.
+
+    C'est le `kind` qui sépare les deux catalogues, et il faut qu'il le fasse :
+    TMDB numérote films et séries indépendamment, donc le film 550 et la série
+    550 existent tous les deux et ne sont pas la même œuvre."""
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
@@ -140,7 +157,11 @@ async def load_fiche(conn: psycopg.AsyncConnection, id_tmdb: int) -> dict[str, A
               and http_status between 200 and 299 and payload is not null
             order by fetched_at desc limit 1
             """,
-            {"source": SOURCE, "kind": KIND_SERIES, "id": str(id_tmdb)},
+            {
+                "source": SOURCE,
+                "kind": KIND_PAR_UNIVERS.get(univers, KIND_SERIES),
+                "id": str(id_tmdb),
+            },
         )
         return await cur.fetchone()
 
@@ -175,8 +196,9 @@ async def build_dossier(
     *,
     medias: bool = True,
     oeuvre_id: int | None = None,
+    univers: str = "series",
 ) -> dict[str, Any] | None:
-    """Le dossier anglais d'une série, ou None si elle n'est pas collectée.
+    """Le dossier anglais d'une œuvre, ou None si elle n'est pas collectée.
 
     `medias=False` assemble le même dossier **sans** la section des légendes
     visuelles. Ce n'est pas un réglage de production — c'est ce qui permet de
@@ -187,41 +209,56 @@ async def build_dossier(
     `oeuvre_id` évite une requête quand l'appelant a déjà résolu le pivot —
     seules les légendes en dépendent, le brut se lisant par identifiant TMDB.
     Le passer ou non ne change pas le texte produit, donc pas l'empreinte.
+
+    `univers` change trois choses : le `kind` du brut, les champs de titre et
+    de mots-clés — TMDB les nomme `name`/`results` côté série et
+    `title`/`keywords` côté film — et les faits d'en-tête, un film n'ayant ni
+    saison ni chaîne mais une durée. Les sections communes ne bougent pas : le
+    barème note une empreinte émotionnelle, qui ne dépend pas du format.
     """
-    fiche = await load_fiche(conn, id_tmdb)
+    fiche = await load_fiche(conn, id_tmdb, univers=univers)
     if fiche is None:
         return None
+    film = univers == "movies"
     payload = fiche["payload"]
-    season_payloads = await load_seasons(conn, id_tmdb)
+    season_payloads = [] if film else await load_seasons(conn, id_tmdb)
 
     async with conn.cursor(row_factory=dict_row) as cur:
-        # L'article Wikipédia anglais, si l'enrichissement est passé par là.
-        await cur.execute(
-            """
-            select content from riche_source
-            where id_tmdb = %(id)s and source = 'wikipedia' and lang = 'en'
-              and content is not null
-            """,
-            {"id": id_tmdb},
-        )
-        wiki = await cur.fetchone()
-
-        # Les légendes visuelles, si elles ont été payées (bouton de la page
-        # Training 1). L'index porte exactement cet ordre : il est stable, et
-        # la stabilité de l'ordre est celle de l'empreinte.
+        # Le pivot d'abord : deux sections en dépendent, et il porte l'univers.
         #
-        # Elles se rangent sous le pivot depuis le lot 12. Une œuvre sans pivot
-        # n'a par construction aucune légende : la requête est simplement
-        # sautée, plutôt que de faire échouer un dossier qui se lit très bien
-        # sans sa section MEDIA.
+        # Une œuvre sans pivot n'a par construction ni enrichissement ni
+        # légende : les deux requêtes sont simplement sautées, plutôt que de
+        # faire échouer un dossier qui se lit très bien sans elles.
         if oeuvre_id is None:
             await cur.execute(
-                "select id from sourcing.oeuvre where univers = 'series' and id_tmdb = %(id)s",
-                {"id": id_tmdb},
+                "select id from sourcing.oeuvre where univers = %(univers)s and id_tmdb = %(id)s",
+                {"id": id_tmdb, "univers": univers},
             )
             trouve = await cur.fetchone()
             oeuvre_id = trouve["id"] if trouve else None
 
+        # L'article Wikipédia anglais, si l'enrichissement est passé par là.
+        #
+        # Lu par le pivot et non par `id_tmdb`. La colonne existe bien sur
+        # `riche_source`, mais elle ne porte pas l'univers — et comme TMDB
+        # numérote films et séries séparément, s'y fier donnerait au film 550
+        # l'article de la série 550. Une erreur qui ne se verrait pas : le
+        # dossier resterait plausible, simplement il parlerait d'autre chose.
+        wiki = None
+        if oeuvre_id is not None:
+            await cur.execute(
+                """
+                select content from riche_source
+                where oeuvre_id = %(id)s and source = 'wikipedia' and lang = 'en'
+                  and content is not null
+                """,
+                {"id": oeuvre_id},
+            )
+            wiki = await cur.fetchone()
+
+        # Les légendes visuelles, si elles ont été payées (bouton de la page
+        # Training 1). L'index porte exactement cet ordre : il est stable, et
+        # la stabilité de l'ordre est celle de l'empreinte.
         captions = []
         if oeuvre_id is not None:
             await cur.execute(
@@ -242,13 +279,26 @@ async def build_dossier(
     ]
     english = _english_translation(payload)
 
-    title = (english.get("name") or "").strip() or payload.get("original_name") or ""
+    # TMDB nomme les mêmes choses différemment d'un catalogue à l'autre :
+    # `name`/`original_name` et `keywords.results` côté série,
+    # `title`/`original_title` et `keywords.keywords` côté film. Rien de
+    # profond, mais lire la mauvaise clé rend un dossier sans titre ni
+    # mots-clés, ce qui ne lève aucune erreur et se voit seulement à la note.
+    champ_titre, champ_original = ("title", "original_title") if film else ("name", "original_name")
+    champ_keywords = "keywords" if film else "results"
+
+    title = (english.get(champ_titre) or "").strip() or payload.get(champ_original) or ""
     overview = (english.get("overview") or "").strip()
     genres = [g.get("name") for g in payload.get("genres") or [] if g.get("name")]
     keywords = [
-        k.get("name") for k in (payload.get("keywords") or {}).get("results") or [] if k.get("name")
+        k.get("name")
+        for k in (payload.get("keywords") or {}).get(champ_keywords) or []
+        if k.get("name")
     ]
     networks = [n.get("name") for n in payload.get("networks") or [] if n.get("name")]
+    studios = [s.get("name") for s in payload.get("production_companies") or [] if s.get("name")][
+        :3
+    ]
 
     # Les plus longues d'abord : une critique de trois lignes dit « super
     # série », une de trois paragraphes dit pourquoi. C'est ce « pourquoi » qui
@@ -266,19 +316,41 @@ async def build_dossier(
 
     # L'assemblage. Sections balisées, ordre fixe : le texte EST l'empreinte.
     parts: list[str] = [f"TITLE: {title}"]
-    if payload.get("original_name") and payload.get("original_name") != title:
-        parts.append(f"ORIGINAL TITLE: {payload['original_name']}")
+    if payload.get(champ_original) and payload.get(champ_original) != title:
+        parts.append(f"ORIGINAL TITLE: {payload[champ_original]}")
 
-    facts = [
-        f"first aired {payload['first_air_date']}" if payload.get("first_air_date") else None,
-        f"country {', '.join(payload.get('origin_country') or [])}"
-        if payload.get("origin_country")
-        else None,
-        f"{payload['number_of_seasons']} seasons" if payload.get("number_of_seasons") else None,
-        f"{payload['number_of_episodes']} episodes" if payload.get("number_of_episodes") else None,
-        f"network {', '.join(networks)}" if networks else None,
-    ]
+    # La ligne de faits est le seul endroit où les deux univers divergent
+    # vraiment. Un film n'a ni saison ni chaîne mais une durée, et sa `tagline`
+    # est souvent la phrase la plus explicite du dossier sur le ton visé — les
+    # séries n'en ont pas d'équivalent.
+    if film:
+        pays = [
+            p.get("iso_3166_1")
+            for p in payload.get("production_countries") or []
+            if p.get("iso_3166_1")
+        ]
+        facts = [
+            "film",
+            f"released {payload['release_date']}" if payload.get("release_date") else None,
+            f"country {', '.join(pays)}" if pays else None,
+            f"{payload['runtime']} minutes" if payload.get("runtime") else None,
+            f"studio {', '.join(studios)}" if studios else None,
+        ]
+    else:
+        facts = [
+            f"first aired {payload['first_air_date']}" if payload.get("first_air_date") else None,
+            f"country {', '.join(payload.get('origin_country') or [])}"
+            if payload.get("origin_country")
+            else None,
+            f"{payload['number_of_seasons']} seasons" if payload.get("number_of_seasons") else None,
+            f"{payload['number_of_episodes']} episodes"
+            if payload.get("number_of_episodes")
+            else None,
+            f"network {', '.join(networks)}" if networks else None,
+        ]
     parts.append("FACTS: " + "; ".join(f for f in facts if f))
+    if film and (tagline := (english.get("tagline") or payload.get("tagline") or "").strip()):
+        parts.append(f"TAGLINE: {tagline}")
 
     # Ce que le dossier contient réellement, en clair — factuel, pas une
     # consigne. `MIN_CHARS` ne compte que des caractères : un synopsis seul
@@ -350,6 +422,9 @@ async def build_dossier(
     text = "\n\n".join(parts)
     return {
         "idTmdb": id_tmdb,
+        # L'univers voyage avec le dossier : un identifiant TMDB seul ne
+        # désigne rien tant qu'on ne sait pas de quel catalogue il vient.
+        "univers": univers,
         # Le pivot, pour que l'appelant n'ait pas à le redemander : c'est par
         # lui que le cache d'embeddings et les notes se rangent. `None` quand
         # la fiche n'a jamais été collectée par la version courante de la
