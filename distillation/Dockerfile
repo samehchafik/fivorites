@@ -23,11 +23,20 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/opt/hf \
     HF_HUB_OFFLINE=1
 
+# La borne haute sur transformers n'est pas de la prudence, c'est une
+# contrainte mesurée : le code distant de jina v2 fait
+# `from transformers.onnx import OnnxConfig` dans son `configuration_bert.py`,
+# et ce module a été retiré des versions récentes. Sans la borne, la
+# construction échoue sur un ModuleNotFoundError au chargement du modèle.
+#
+# C'est le prix de `trust_remote_code` : le modèle apporte son implémentation
+# d'attention (ALiBi), donc son code, donc les dépendances que ce code suppose
+# — figées au jour de sa publication.
 RUN pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cpu \
         "torch>=2.4" \
  && pip install --no-cache-dir \
-        "transformers>=4.44" "einops>=0.8" "onnx>=1.16" "numpy>=1.26"
+        "transformers>=4.40,<4.49" "einops>=0.8" "onnx>=1.16" "numpy>=1.26,<3"
 
 # Le poids de départ, figé dans l'image. `trust_remote_code` parce que jina v2
 # apporte sa propre implémentation d'attention (ALiBi), que transformers ne

@@ -11,10 +11,15 @@ requires-python = ">=3.11"
 # seul : quelques dizaines de mégaoctets, servis par le runtime déjà présent.
 dependencies = [
     "torch>=2.4",
-    "transformers>=4.44",
+    # Borne haute mesurée, pas de la prudence : le code distant de jina v2 fait
+    # `from transformers.onnx import OnnxConfig`, et ce module a disparu des
+    # versions récentes. C'est le prix de `trust_remote_code` — le modèle
+    # apporte son implémentation d'attention, donc son code, donc les
+    # dépendances que ce code suppose, figées au jour de sa publication.
+    "transformers>=4.40,<4.49",
     "einops>=0.8",          # exigé par le code distant de jina v2
     "onnx>=1.16",
-    "numpy>=1.26",
+    "numpy>=1.26,<3",
 ]
 
 [tool.ruff]
