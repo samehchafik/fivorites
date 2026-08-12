@@ -26,6 +26,9 @@ from fiv_admin.config import Settings
 from fiv_admin.dossier import build_dossier
 from fiv_admin.embed import MAX_CHARS
 from fiv_admin.llm import LOT_EMBEDDING, embed_openai
+from fiv_admin.routes.training import (
+    PasAssezDOeuvres as PasAssezDOeuvresErreur,
+)
 from fiv_admin.security import hash_password
 from fiv_admin.stills import select_images
 from fiv_admin.weights import (
@@ -1319,3 +1322,46 @@ async def test_le_dossier_film_lit_les_champs_que_tmdb_nomme_autrement(
     assert "EPISODE SYNOPSES" not in film["text"]
     # La tagline est souvent la phrase la plus explicite sur le ton vise.
     assert "TAGLINE: Mischief. Mayhem. Soap." in film["text"]
+
+
+async def test_le_secours_local_est_etiquete_et_ecarte_de_l_entrainement(
+    conn: psycopg.AsyncConnection, settings: Settings
+) -> None:
+    """API demandee, cle absente : le vecteur sort du modele local, et il le dit.
+
+    C'est la panne qu'il ne faut pas rendre silencieuse. Un vecteur de secours
+    vit dans un autre espace que les poids entraines sur l'API ; le servir
+    quand meme rendrait six nombres plausibles et faux. On prefere un dossier
+    lisible, un vecteur correctement etiquete, et un entrainement qui refuse.
+    """
+    from fiv_admin.embed import EMBEDDER, etiquette
+    from fiv_admin.routes.training import EncodeurIndisponible, encoder_dossier, entrainer_poids
+
+    await seed_series(conn, 2400)
+    built = await build_dossier(conn, 2400)
+    assert built is not None
+
+    # Meme reglage que la production, mais sans cle : le secours doit prendre
+    # le relais plutot que de faire echouer la lecture du dossier.
+    degrade = settings.model_copy(
+        update={"embedder": "openai/text-embedding-3-large@512", "openai_api_key": ""}
+    )
+    vecteur, label = await encoder_dossier(conn, degrade, built)
+    assert len(vecteur) == 512
+    assert label == EMBEDDER, "le secours doit se ranger sous SON etiquette"
+    assert label != etiquette(degrade.embedder)
+
+    # Et le vecteur ne doit pas etre range sous l'etiquette de production :
+    # sinon un encodage ulterieur, correct celui-la, le trouverait en cache.
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select count(*) from notation.embedding where embedder = %s",
+            (etiquette(degrade.embedder),),
+        )
+        assert (await cur.fetchone())[0] == 0
+
+    # L'entrainement refuse plutot que de rendre « zero axe entraine », qui
+    # ressemblerait a un succes et laisserait les poids d'hier en place.
+    rubric = {"version": "empreinte-v3", "prompt": "p" * 60, "axes": ["joie"]}
+    with pytest.raises((EncodeurIndisponible, PasAssezDOeuvresErreur)):
+        await entrainer_poids(conn, degrade, rubric)

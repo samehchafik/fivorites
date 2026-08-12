@@ -95,11 +95,27 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_model: str = "gpt-5.4-mini"
     anthropic_model: str = "claude-haiku-4-5"
-    # L'encodeur des dossiers, lui, n'est PAS un réglage : il est figé dans
-    # `embed.py`, parce qu'un vecteur n'a de sens qu'au sein du modèle qui l'a
-    # produit et qu'un réglage se change par inadvertance. Seul l'endroit où
-    # ses poids sont rangés se configure — pour que l'image Docker les
-    # embarque au lieu de les télécharger au démarrage.
+    # L'encodeur des dossiers. Longtemps figé dans `embed.py` au motif qu'un
+    # vecteur n'a de sens qu'au sein du modèle qui l'a produit. L'argument
+    # reste vrai, mais il plaide pour une étiquette rigoureuse, pas pour une
+    # constante : `embedding.embedder` porte le modèle utilisé, la clé de cache
+    # le compare, l'entraînement filtre dessus. Deux espaces vectoriels ne
+    # peuvent donc pas se mélanger, même si le réglage change.
+    #
+    # Ce qui a rendu le réglage nécessaire : mesuré sur 502 œuvres, le modèle
+    # local rend 1,020 de MAE et `text-embedding-3-large@512` 0,853, à
+    # dimension égale. L'écart ne vient pas du nombre de dimensions mais de ce
+    # que le modèle sait — jina lit « Lucifer » sans savoir ce que le mot
+    # désigne, et range la série chez les policiers sombres.
+    #
+    # `openai/` préfixe un encodeur d'API ; sans préfixe, c'est un modèle local
+    # servi par ONNX. Si l'API tombe, le local prend le relais et son vecteur
+    # est rangé sous SON étiquette : il sert l'affichage, il n'entre pas dans
+    # l'entraînement. Un catalogue qui refuse d'avancer parce qu'une API tousse
+    # serait pire qu'un vecteur temporairement moins bon.
+    embedder: str = "openai/text-embedding-3-large@512"
+    # Seul l'endroit où les poids du modèle local sont rangés se configure —
+    # pour que l'image Docker les embarque au lieu de les télécharger.
     embed_cache_dir: str | None = None
 
     # Les compteurs d'en-tête agrègent `raw_source` en entier. À l'échelle du

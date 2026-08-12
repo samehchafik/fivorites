@@ -22,6 +22,7 @@ import pytest_asyncio
 
 from fiv_admin.config import PROJECT_ROOT, Settings
 from fiv_admin.db import migrate
+from fiv_admin.embed import MODEL_NAME
 
 # Une base à l'administration seule, distincte de `fivorites_v2_test` où
 # `sourcing` fait tourner la sienne.
@@ -65,6 +66,11 @@ def settings() -> Settings:
         web_dist=Path("/inexistant"),
         cors_origins="",
         summary_cache_seconds=0,
+        # Encodeur local pour la suite : la production appelle une API, et un
+        # test qui en dependrait mesurerait le reseau. Sans cle le secours
+        # prendrait le relais, mais l'entrainement ecarte les vecteurs de
+        # secours — a raison — et la suite ne testerait plus rien.
+        embedder=MODEL_NAME,
     )
 
 

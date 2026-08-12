@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 
 from fiv_admin.deps import Config, Conn, CurrentUser
 from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
-from fiv_admin.embed import EMBEDDER, MAX_CHARS, embed_texts, liberer_modeles
+from fiv_admin.embed import EMBEDDER, MAX_CHARS, embed_texts, etiquette, liberer_modeles
 from fiv_admin.llm import (
     LOT_EMBEDDING,
     TARIF_EMBEDDING,
@@ -312,6 +312,21 @@ async def works_a_noter(
             },
         )
         return list(await cur.fetchall())
+
+
+class EncodeurIndisponible(RuntimeError):
+    """L'encodeur de production n'a répondu pour aucune œuvre.
+
+    Distincte d'un échec d'entraînement : les notes sont là, les dossiers
+    aussi, seul l'encodage a manqué. La conduite à tenir est d'attendre et de
+    relancer, pas de noter davantage d'œuvres.
+    """
+
+    def __init__(self, etiquette: str, ecartees: int) -> None:
+        super().__init__(
+            f"aucune œuvre encodée par {etiquette} — {ecartees} rendue(s) par le secours"
+            " local, dont les vecteurs vivent dans un autre espace. Entraînement annulé."
+        )
 
 
 class NonCollectee(RuntimeError):
@@ -795,50 +810,103 @@ async def work_scores(
 # ---------------------------------------------------------------- phase 2
 
 
-async def _embedding(conn: Any, settings: Any, built: dict[str, Any]) -> list[float]:
-    """L'embedding du dossier, depuis le cache si le texte n'a pas changé.
+async def _lire_cache(conn: Any, oeuvre_id: int | None, sha: str, label: str) -> list[float] | None:
+    if oeuvre_id is None:
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select vector from notation.embedding"
+            " where oeuvre_id = %s and input_sha256 = %s and embedder = %s",
+            (oeuvre_id, sha, label),
+        )
+        row = await cur.fetchone()
+    return row[0] if row is not None else None
 
-    Le calcul est local (`embed.py`) : plus d'appel réseau, donc plus de
-    `LlmError` ici — un encodeur qui tombe est un défaut d'installation, pas
-    un incident d'exploitation à rattraper œuvre par œuvre.
 
-    Le cache reste utile malgré la vitesse : il garantit qu'un même dossier
-    donne le même vecteur d'un entraînement à l'autre, y compris si le modèle
-    venait à être remplacé — auquel cas `EMBEDDER` change et les anciens
-    vecteurs cessent simplement d'être relus.
+async def _ranger_vecteur(
+    conn: Any, oeuvre_id: int | None, sha: str, label: str, vector: list[float]
+) -> None:
+    # Sans pivot, pas de cache : la table le porte en clé. Le vecteur est rendu
+    # quand même — le cas ne se présente que pour une fiche collectée avant le
+    # lot 12 et jamais revue depuis.
+    if oeuvre_id is None:
+        return
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into notation.embedding (oeuvre_id, input_sha256, embedder, vector)
+            values (%s, %s, %s, %s) on conflict do nothing
+            """,
+            (oeuvre_id, sha, label, Jsonb(vector)),
+        )
+
+
+async def encoder_dossier(
+    conn: Any, settings: Any, built: dict[str, Any]
+) -> tuple[list[float], str]:
+    """Le vecteur du dossier ET l'étiquette de l'encodeur qui l'a produit.
+
+    L'étiquette est rendue parce qu'elle décide de ce qu'on a le droit de
+    faire du vecteur. L'encodeur de production peut être une API ; quand elle
+    ne répond pas, le modèle local prend le relais — mais son vecteur vit dans
+    un tout autre espace. Le servir à des poids entraînés sur l'API rendrait
+    six nombres plausibles et faux, sans qu'aucune erreur ne se lève.
+
+    D'où la règle : le secours **sert l'affichage, jamais l'entraînement ni la
+    prédiction**. Les appelants comparent l'étiquette rendue à celle de
+    production et écartent ce qui ne correspond pas. Un catalogue qui refuserait
+    d'avancer parce qu'une API tousse serait pire qu'un vecteur dégradé et
+    correctement étiqueté.
+
+    Le cache reste la première réponse dans tous les cas : un dossier inchangé
+    ne se réencode pas, et l'API ne se repaie pas.
     """
-    # Sans pivot, pas de cache : la table le porte en clé. Le vecteur se
-    # calcule quand même — c'est du CPU local, pas un appel payant — et le cas
-    # ne se présente que pour une fiche collectée avant le lot 12 et jamais
-    # revue depuis.
-    oeuvre_id = built.get("oeuvreId")
-    if oeuvre_id is not None:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "select vector from notation.embedding"
-                " where oeuvre_id = %s and input_sha256 = %s and embedder = %s",
-                (oeuvre_id, built["sha256"], EMBEDDER),
-            )
-            row = await cur.fetchone()
-        if row is not None:
-            return row[0]
+    oeuvre_id, sha = built.get("oeuvreId"), built["sha256"]
+    label = etiquette(settings.embedder)
+
+    en_cache = await _lire_cache(conn, oeuvre_id, sha, label)
+    if en_cache is not None:
+        return en_cache, label
+
+    api = _encodeur_api(settings.embedder)
+    if api is not None and settings.openai_api_key:
+        nom, dims = api
+        try:
+            async with httpx.AsyncClient() as http:
+                vecteurs = await embed_openai(
+                    http,
+                    api_key=settings.openai_api_key,
+                    model=nom,
+                    textes=[built["text"][:MAX_CHARS]],
+                    dimensions=dims,
+                )
+            await _ranger_vecteur(conn, oeuvre_id, sha, label, vecteurs[0])
+            return vecteurs[0], label
+        except LlmError:
+            # Journalisé, pas propagé : la suite bascule sur le secours, et
+            # c'est l'étiquette rendue qui dira aux appelants de s'en méfier.
+            log.warning("encodeur %s indisponible — secours local", settings.embedder)
+    elif api is not None:
+        log.warning("encodeur %s demandé sans OPENAI_API_KEY — secours local", settings.embedder)
+
+    secours = EMBEDDER if api is not None else label
+    en_cache = await _lire_cache(conn, oeuvre_id, sha, secours)
+    if en_cache is not None:
+        return en_cache, secours
 
     # `to_thread` : l'inférence ONNX est du calcul bloquant, et la tenir dans
     # la boucle d'événements figerait l'API pendant tout un entraînement.
     vectors = await asyncio.to_thread(
         embed_texts, [built["text"]], cache_dir=settings.embed_cache_dir
     )
-    vector = vectors[0]
-    if oeuvre_id is not None:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                insert into notation.embedding (oeuvre_id, input_sha256, embedder, vector)
-                values (%s, %s, %s, %s) on conflict do nothing
-                """,
-                (oeuvre_id, built["sha256"], EMBEDDER, Jsonb(vector)),
-            )
-    return vector
+    await _ranger_vecteur(conn, oeuvre_id, sha, secours, vectors[0])
+    return vectors[0], secours
+
+
+async def _embedding(conn: Any, settings: Any, built: dict[str, Any]) -> list[float]:
+    """Le vecteur seul, pour les appelants qui n'ont pas à trancher l'espace."""
+    vecteur, _ = await encoder_dossier(conn, settings, built)
+    return vecteur
 
 
 def _predict_all(vector: list[float], weights: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -1307,12 +1375,33 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
     vectors: dict[int, list[float]] = {}
     dossiers: dict[int, dict[str, Any]] = {}
     ecartees: list[int] = []
+    # L'étiquette de production, et rien d'autre. Une œuvre dont l'encodeur a
+    # dû passer par le secours local rend un vecteur d'un autre espace : le
+    # mêler aux autres ne lèverait aucune erreur, il rendrait des poids qui ne
+    # veulent rien dire. On l'écarte, elle reviendra au prochain entraînement.
+    label_production = etiquette(settings.embedder)
+    degradees: list[int] = []
     for id_tmdb in by_work:
         built = await build_dossier(conn, id_tmdb)
         if built is None:
             continue
+        vecteur, label = await encoder_dossier(conn, settings, built)
+        if label != label_production:
+            degradees.append(id_tmdb)
+            continue
         dossiers[id_tmdb] = built
-        vectors[id_tmdb] = await _embedding(conn, settings, built)
+        vectors[id_tmdb] = vecteur
+    if degradees:
+        log.warning(
+            "%d œuvre(s) écartée(s) de l'entraînement : encodées par le secours, pas par %s",
+            len(degradees),
+            label_production,
+        )
+    # Tout écarter et rendre « zéro axe entraîné » serait un succès apparent.
+    # L'entraînement dirait qu'il a fini, les poids d'hier resteraient en
+    # place, et rien n'indiquerait que l'encodeur n'a jamais répondu.
+    if not vectors and degradees:
+        raise EncodeurIndisponible(label_production, len(degradees))
 
     trained: list[dict[str, Any]] = []
     weights_json: dict[str, Any] = {}
@@ -1345,7 +1434,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
                     axe,
                     result.intercept,
                     Jsonb(result.coef),
-                    EMBEDDER,
+                    label_production,
                     result.trained_on,
                     result.mae_fit,
                 ),
@@ -1393,7 +1482,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
                     rubric_version,
                     rubric["prompt"],
                     _prompt_sha(rubric["prompt"]),
-                    EMBEDDER,
+                    label_production,
                     Jsonb(weights_json),
                     len(by_work),
                 ),
@@ -1462,6 +1551,8 @@ async def train_weights(
         return await entrainer_poids(conn, settings, rubric)
     except PasAssezDOeuvres as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except EncodeurIndisponible as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     except LlmError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
@@ -1503,7 +1594,7 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
             where rubric_version = %s and embedder = %s
             order by trained_at desc limit 1
             """,
-            (body.rubricVersion, EMBEDDER),
+            (body.rubricVersion, etiquette(settings.embedder)),
         )
         weights_row = await cur.fetchone()
     if weights_row is None:
@@ -1522,7 +1613,16 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
 
     async with httpx.AsyncClient() as http:
         try:
-            vector = await _embedding(conn, settings, built)
+            vector, label = await encoder_dossier(conn, settings, built)
+            # Le secours local vit dans un autre espace que les poids. Prédire
+            # quand même rendrait six nombres plausibles et faux, ce qui est
+            # pire qu'une erreur : on ne saurait pas qu'il faut la refaire.
+            if label != etiquette(settings.embedder):
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"encodeur {settings.embedder} indisponible — vecteur produit par"
+                    f" {label}, incompatible avec les poids. Réessayer plus tard.",
+                )
             llm_result: dict[str, Any] | None = None
             if body.runLlm:
                 llm_result = await score_openai(

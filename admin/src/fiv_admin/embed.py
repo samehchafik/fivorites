@@ -45,6 +45,28 @@ DIMENSIONS = 512
 # autre modèle n'est jamais réutilisé par erreur — il est recalculé.
 EMBEDDER = "jina-v2-small-en@512"
 
+# L'encodeur de secours quand celui de production est une API qui ne répond
+# pas. C'est le modèle local, et c'est le seul qui puisse tenir ce rôle : il ne
+# dépend de rien.
+SECOURS = MODEL_NAME
+
+
+def etiquette(spec: str) -> str:
+    """L'étiquette de rangement d'un encodeur — ce que porte `embedding.embedder`.
+
+    Deux formes cohabitent depuis que la production peut appeler une API :
+    `openai/text-embedding-3-large@512` se range sous
+    `text-embedding-3-large@512`, un modèle local sous son nom court.
+
+    C'est cette étiquette qui empêche le mélange, et le mélange serait
+    silencieux : deux espaces vectoriels dans une même régression ne lèvent
+    aucune erreur, ils rendent des poids qui ne veulent rien dire. Elle fait
+    partie de la clé du cache, et l'entraînement filtre dessus.
+    """
+    if spec.startswith("openai/"):
+        return spec.removeprefix("openai/")
+    return EMBEDDER if spec == MODEL_NAME else spec
+
 
 @lru_cache(maxsize=1)
 def _model(cache_dir: str | None, name: str) -> Any:
