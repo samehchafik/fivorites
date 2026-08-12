@@ -99,6 +99,23 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
+      # Le nombre de fils de calcul de l'algèbre linéaire, brimé exprès.
+      #
+      # OpenBLAS compte les cœurs de l'HÔTE, pas le quota du conteneur : sur une
+      # machine à seize cœurs limitée à deux, il lance seize fils qui se
+      # disputent deux processeurs, et une décomposition qui prend une seconde
+      # en prend trente. Le symptôme est trompeur — le calcul n'échoue pas, il
+      # rampe — et il ne se voit qu'en comparant à la même opération hors
+      # conteneur. Mesuré ici sur l'entraînement d'un encodeur à 3 072
+      # dimensions : plus de quatre heures là où le calcul vaut quelques
+      # minutes.
+      #
+      # Quatre par défaut plutôt que le nombre exact de cœurs alloués : une
+      # sur-réservation d'un facteur deux ne se sent pas, contrairement à un
+      # facteur huit. À relever via BLAS_THREADS sur une machine dédiée.
+      OMP_NUM_THREADS: ${BLAS_THREADS:-4}
+      OPENBLAS_NUM_THREADS: ${BLAS_THREADS:-4}
+      MKL_NUM_THREADS: ${BLAS_THREADS:-4}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8182/api/health').read()"]
       interval: 30s

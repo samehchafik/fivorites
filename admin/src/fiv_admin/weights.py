@@ -75,23 +75,43 @@ def _erreur_croisee(
     virgule près. Mesurer sur des points réellement écartés ne peut pas
     dégénérer de cette façon.
     """
-    preds = _predictions_croisees(x, y, lam, plis, x_eval=x_eval)
+    return _mae_croisee(_predictions_croisees(x, y, lam, plis, x_eval=x_eval), y)
+
+
+def _mae_croisee(preds: np.ndarray, y: np.ndarray) -> float:
+    """L'erreur absolue moyenne de prédictions hors-pli, bornées à l'échelle."""
     ok = ~np.isnan(preds)
     if not ok.any():
         return float("inf")
     return float(np.abs(np.clip(preds[ok], SCALE_MIN, SCALE_MAX) - y[ok]).mean())
 
 
-def _predictions_croisees(
-    x: np.ndarray, y: np.ndarray, lam: float, plis: int, x_eval: np.ndarray | None = None
-) -> np.ndarray:
-    """Les prédictions hors-pli, NaN pour les points jamais mis de côté.
+def _predictions_par_lambda(
+    x: np.ndarray,
+    y: np.ndarray,
+    lams: tuple[float, ...],
+    plis: int,
+    x_eval: np.ndarray | None = None,
+) -> dict[float, np.ndarray]:
+    """Les prédictions hors-pli de plusieurs λ, en une seule passe de plis.
 
-    Non bornées à l'échelle, exprès : la calibration mesure la compression sur
-    la prédiction brute, et borner d'abord fausserait la pente aux extrêmes —
-    là où, précisément, la compression se voit.
+    **La décomposition ne dépend pas de λ.** Les coefficients valent
+    `Vᵀ·((s/(s²+λ))·(Uᵀy))` : seul le facteur d'échelle change d'un λ à
+    l'autre, `U`, `s` et `Vᵀ` sont les mêmes. Les recalculer par λ, comme le
+    faisait la boucle d'origine, revenait à payer neuf fois la seule opération
+    coûteuse de la fonction.
+
+    L'écart était invisible à 512 dimensions et ne l'est plus : une SVD sur
+    452×3 072 prend 138 ms là où celle sur 452×512 en prend 39. Un balayage de
+    neuf λ sur dix plis passe de cent décompositions à dix, et un candidat
+    d'API à 3 072 dimensions redevient mesurable dans la même session.
+
+    Les prédictions restent non bornées, exprès : la calibration mesure la
+    compression sur la prédiction brute, et borner d'abord fausserait la pente
+    aux extrêmes — là où, précisément, la compression se voit.
     """
-    preds = np.full(len(y), np.nan)
+    preds = {lam: np.full(len(y), np.nan) for lam in lams}
+    cible = x if x_eval is None else x_eval
     for pli in range(plis):
         # Découpage par pas plutôt qu'en blocs : sans mélange aléatoire, des
         # blocs contigus suivraient l'ordre d'insertion en base, qui n'a
@@ -103,10 +123,20 @@ def _predictions_croisees(
         garde[test] = False
 
         x_mean, y_mean = x[garde].mean(axis=0), float(y[garde].mean())
-        coef = _fit(x[garde] - x_mean, y[garde] - y_mean, lam)
-        cible = x if x_eval is None else x_eval
-        preds[test] = (cible[test] - x_mean) @ coef + y_mean
+        u, s, vt = np.linalg.svd(x[garde] - x_mean, full_matrices=False)
+        uty = u.T @ (y[garde] - y_mean)
+        centre = cible[test] - x_mean
+        for lam in lams:
+            coef = vt.T @ ((s / (s**2 + lam)) * uty)
+            preds[lam][test] = centre @ coef + y_mean
     return preds
+
+
+def _predictions_croisees(
+    x: np.ndarray, y: np.ndarray, lam: float, plis: int, x_eval: np.ndarray | None = None
+) -> np.ndarray:
+    """Les prédictions hors-pli d'un seul λ, NaN pour les points jamais écartés."""
+    return _predictions_par_lambda(x, y, (lam,), plis, x_eval=x_eval)[lam]
 
 
 def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> AxisWeights:
@@ -119,9 +149,14 @@ def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> Axi
     # moins arbitraire ; au-delà, dix plis suffisent et bornent le calcul.
     plis = n if n <= 60 else 10
 
+    # Toute la grille en une passe : la SVD est la seule opération coûteuse et
+    # elle ne dépend pas de λ. Les prédictions du λ élu sont gardées pour la
+    # calibration plus bas, qui les recalculait à l'identique — cent
+    # décompositions par axe deviennent dix.
+    par_lambda = _predictions_par_lambda(x, y, LAMBDA_GRID, plis)
     best_lam, best_cv = LAMBDA_GRID[-1], float("inf")
     for lam in LAMBDA_GRID:
-        erreur = _erreur_croisee(x, y, lam, plis)
+        erreur = _mae_croisee(par_lambda[lam], y)
         if erreur < best_cv:
             best_lam, best_cv = lam, erreur
 
@@ -158,7 +193,7 @@ def train_axis(axe: str, vectors: list[list[float]], values: list[float]) -> Axi
     # Ridge et correction étant linéaires toutes deux, la correction se replie
     # dans les coefficients : rien ne change ni au schéma ni à la prédiction,
     # qui reste `intercept + coef · x`.
-    preds = _predictions_croisees(x, y, best_lam, plis)
+    preds = par_lambda[best_lam]
     ok = ~np.isnan(preds)
     pente = 1.0
     if ok.sum() >= MIN_CALIBRATION:

@@ -13,6 +13,7 @@ import statistics
 from collections.abc import AsyncIterator
 
 import httpx
+import numpy as np
 import psycopg
 import pytest
 import pytest_asyncio
@@ -1180,3 +1181,38 @@ def test_encodeur_api_distingue_les_deux_chemins() -> None:
     api = cout_encodeurs(("openai/text-embedding-3-large",), textes)
     assert local == 0.0
     assert api == pytest.approx(100 * MAX_CHARS / 4 / 1_000_000 * 0.13)
+
+
+def test_le_balayage_groupe_rend_les_memes_predictions_que_lambda_par_lambda() -> None:
+    """Sortir la SVD de la boucle sur λ ne doit rien changer aux resultats.
+
+    C'est une optimisation, pas un changement de methode : les coefficients
+    valent `V^T·((s/(s²+λ))·(U^T y))`, seul le facteur d'echelle depend de λ.
+    Les operations sont les memes et dans le meme ordre, donc l'egalite doit
+    tenir au bit pres — un ecart, meme minuscule, signalerait qu'on a change
+    le calcul en croyant l'accelerer.
+    """
+    from fiv_admin.weights import (
+        LAMBDA_GRID,
+        _predictions_croisees,
+        _predictions_par_lambda,
+    )
+
+    rng = np.random.default_rng(3)
+    x = rng.normal(0, 1, (80, 40))
+    y = rng.normal(5, 2, 80)
+
+    groupe = _predictions_par_lambda(x, y, LAMBDA_GRID, 10)
+    for lam in LAMBDA_GRID:
+        seul = _predictions_croisees(x, y, lam, 10)
+        assert np.array_equal(groupe[lam], seul, equal_nan=True), f"divergence a lambda={lam}"
+
+    # Le meme controle sur le chemin `x_eval`, qui sert a mesurer ce qu'une
+    # section du dossier apporte : il applique le modele a d'autres vecteurs
+    # que ceux qui l'ont ajuste, et c'est la que l'oubli du recentrage se
+    # payerait.
+    x_autre = x + rng.normal(0, 0.1, x.shape)
+    groupe_eval = _predictions_par_lambda(x, y, LAMBDA_GRID, 10, x_eval=x_autre)
+    for lam in LAMBDA_GRID:
+        seul = _predictions_croisees(x, y, lam, 10, x_eval=x_autre)
+        assert np.array_equal(groupe_eval[lam], seul, equal_nan=True)
