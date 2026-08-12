@@ -243,7 +243,7 @@ Six hypothèses sur le plafond de la régression, éliminées par la mesure :
 | hypothèse | verdict |
 |---|---|
 | **Le volume** | deux plateaux mesurés (241→298, 346→521) |
-| **L'encodeur** | trois candidats à 0,006 près — jina, nomic, bge |
+| ~~**L'encodeur**~~ | **fausse élimination — voir ci-dessous** |
 | **La calibration** | corrigée : 93–103 % d'amplitude restituée |
 | **Le voisinage** | les plus proches voisins **perdent** sur les six axes (−0,085) |
 | **La forme du modèle** | noyau RBF +0,037, réseau à trois couches −0,003 |
@@ -263,7 +263,42 @@ entrées, la première couche pèse 96 % des poids, `512 × n₁` écrase le res
 aucune largeur de couche ne déplace ce rapport. Mesuré : −0,003.
 
 **Trois familles très différentes — linéaire, à noyau, non linéaire profonde —
-arrivent au même mur à 1,0 de MAE.** Ce n'est plus le modèle.
+arrivent au même mur à 1,0 de MAE.** Ce n'est pas le modèle.
+
+### L'encodeur : une élimination qui n'en était pas une
+
+La ligne barrée du tableau est la plus instructive de ce document. « Trois
+candidats à 0,006 près » ne disait pas ce qu'on lui a fait dire. Les quatre
+candidats — jina small, jina base, nomic, bge — sont **de la même famille** :
+tous petits, tous entraînés pour la similarité sémantique. Leur égalité établit
+qu'ils sont interchangeables **entre eux**. Elle n'établit rien sur un encodeur
+d'une autre nature.
+
+Le voisinage de Lucifer a rendu la question concrète : ses dix plus proches
+sont des policiers sombres, moyenne de joie 3,0 quand le juge la met à 6,0. Or
+le titre de la série **est dans le dossier**. L'encodeur lisait le mot sans
+savoir ce qu'il désigne.
+
+Mesuré le 2026-08-12, sur les mêmes 502 œuvres et la même régression :
+
+| encodeur | dims | MAE cv | joie |
+|---|---|---|---|
+| `jina-v2-small` | 512 | 1,020 | 1,14 |
+| `text-embedding-3-large@512` | 512 | **0,853** | 0,94 |
+| `text-embedding-3-large` | 3072 | **0,813** | 0,89 |
+
+La variante `@512` est le contrôle qui rend la mesure concluante : **à
+dimension égale**, le gain est de −0,167, et les 2 560 dimensions
+supplémentaires n'ajoutent que 0,040. Ce n'est pas la taille du vecteur, c'est
+la connaissance du modèle.
+
+Les six axes progressent de 0,15 à 0,27. L'écart au bruit propre du juge (0,37)
+passe de 0,65 à 0,44 : **un tiers du plafond, après quatre leviers stériles.**
+
+La leçon de méthode : une hypothèse ne se déclare éliminée qu'au regard de ce
+que le test faisait **varier**. Ici il faisait varier la marque de l'encodeur,
+pas sa nature — et on a lu « l'encodeur n'y est pour rien » dans un résultat
+qui disait « ces quatre-là se valent ».
 
 **Le cas qui résiste à tout** : Lucifer. Le juge la note 6 en joie et 4 en peur
 (confiances 0,79–0,94) ; la ridge rend 3,1 et 6,2. Ce n'est pas une erreur
