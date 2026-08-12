@@ -877,9 +877,14 @@ def _duree(seconds: float) -> str:
 
 
 @tmdb_app.command("catalog")
-def tmdb_catalog() -> None:
-    """Volumétrie du catalogue et répartition par popularité."""
+def tmdb_catalog(
+    univers: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
+) -> None:
+    """Volumétrie de l'inventaire et répartition par popularité."""
     settings = get_settings()
+    monde = _univers(univers)
 
     async def run() -> tuple[tuple, list[tuple]]:
         async with (
@@ -891,9 +896,10 @@ def tmdb_catalog() -> None:
                 select count(*), count(*) filter (where adult),
                        max(exported_on), count(*) filter (where exported_on < (
                            select max(exported_on) from tmdb_catalog
-                           where univers = 'series'))
-                from tmdb_catalog where univers = 'series'
-                """
+                           where univers = %(univers)s))
+                from tmdb_catalog where univers = %(univers)s
+                """,
+                {"univers": monde.cle},
             )
             resume = await cur.fetchone()
 
@@ -906,34 +912,48 @@ def tmdb_catalog() -> None:
                 from (
                     select popularity,
                            ntile(10) over (order by popularity desc) as decile
-                    from tmdb_catalog where univers = 'series'
+                    from tmdb_catalog where univers = %(univers)s
                 ) t
                 group by decile order by decile
-                """
+                """,
+                {"univers": monde.cle},
             )
             return resume, await cur.fetchall()
 
     (total, adultes, dernier_export, disparues), deciles = _run_db(run)
 
     if not total:
-        typer.echo("Catalogue vide. Lancer `tmdb export` d'abord.")
+        typer.echo(f"Inventaire vide. Lancer `tmdb export --univers {monde.cle}` d'abord.")
         raise typer.Exit(1)
 
     espace = lambda n: f"{n:,}".replace(",", " ")  # noqa: E731
-    typer.echo(f"séries          : {espace(total)}")
+    typer.echo(f"univers         : {monde.cle}")
+    typer.echo(f"œuvres          : {espace(total)}")
     typer.echo(f"dont adulte     : {espace(adultes)}")
     typer.echo(f"dernier export  : {dernier_export}")
     typer.echo(f"absentes depuis : {espace(disparues)}  (supprimées de TMDB)")
     typer.echo("")
-    typer.echo(f"{'décile':<8}{'séries':>10}{'popularité max':>16}{'min':>12}")
+    typer.echo(f"{'décile':<8}{'œuvres':>10}{'popularité max':>16}{'min':>12}")
     for decile, nombre, maxi, mini in deciles:
         typer.echo(f"{decile:<8}{espace(nombre):>10}{maxi:>16.2f}{mini:>12.2f}")
 
 
 @tmdb_app.command("stats")
-def tmdb_stats() -> None:
-    """Ce qu'il y a en base, par type d'objet."""
+def tmdb_stats(
+    univers: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
+) -> None:
+    """Ce qu'il y a en base, par type d'objet.
+
+    Le tableau du haut couvre **tous** les univers — c'est la question « qu'y
+    a-t-il en base », et un `kind` par ligne y répond directement. La
+    projection de volume, elle, porte sur l'univers demandé : extrapoler la
+    taille d'un film depuis des séries donnerait un chiffre faux d'un ordre de
+    grandeur.
+    """
     settings = get_settings()
+    monde = _univers(univers)
 
     async def run() -> tuple[list[tuple], tuple]:
         async with (
@@ -957,14 +977,15 @@ def tmdb_stats() -> None:
             await cur.execute(
                 """
                 select (select count(distinct source_id) from raw_source
-                        where source = 'tmdb' and kind = 'tv'),
+                        where source = 'tmdb' and kind = %(kind)s),
                        pg_total_relation_size('raw_source'),
-                       (select count(*) from tmdb_catalog where univers = 'series')
-                """
+                       (select count(*) from tmdb_catalog where univers = %(univers)s)
+                """,
+                {"kind": monde.kind, "univers": monde.cle},
             )
             return rows, await cur.fetchone()
 
-    rows, (series_faites, octets, catalogue) = _run_db(run)
+    rows, (faites, octets, catalogue) = _run_db(run)
     if not rows:
         typer.echo("raw_source est vide.")
         return
@@ -973,19 +994,31 @@ def tmdb_stats() -> None:
     for kind, lignes, objets, poids, dernier in rows:
         typer.echo(f"{kind:<12}{lignes:>9}{objets:>9}{poids or '-':>12}  {dernier}")
 
-    # Sous ~100 séries l'extrapolation ne vaut rien : la taille varie d'un
+    # Sous ~100 œuvres l'extrapolation ne vaut rien : la taille varie d'un
     # facteur dix entre un pilote sans suite et une série de quinze saisons.
-    if series_faites >= 100 and catalogue:
-        par_serie = octets / series_faites
-        projection = par_serie * catalogue
+    #
+    # ⚠️ `pg_total_relation_size` mesure la table ENTIÈRE, tous univers
+    # confondus. La projection n'est donc juste que tant qu'un seul univers est
+    # collecté ; dès que les deux cohabitent, elle surestime le plus léger des
+    # deux. Le dire plutôt que de fabriquer une mesure par univers, qui
+    # demanderait de sommer les `pg_column_size` de plusieurs millions de
+    # payloads à chaque appel.
+    if faites >= 100 and catalogue:
+        par_oeuvre = octets / faites
+        projection = par_oeuvre * catalogue
         typer.echo("")
-        typer.echo(f"mesuré sur    : {series_faites} série(s)")
-        typer.echo(f"par série     : {_octets(par_serie)}")
-        typer.echo(f"projection    : {_octets(projection)} pour {catalogue} séries")
+        typer.echo(f"univers       : {monde.cle}")
+        typer.echo(f"mesuré sur    : {faites} {monde.libelle}(s) collecté(s)")
+        typer.echo(f"par {monde.libelle:<10}: {_octets(par_oeuvre)}")
+        typer.echo(f"projection    : {_octets(projection)} pour {catalogue} {monde.libelle}(s)")
         typer.echo("                (index compris ; vérifier `df -h` avant la passe complète)")
+        if len(rows) > 1:
+            typer.echo("                ⚠️ plusieurs univers en base — la projection les mélange")
     elif catalogue:
         typer.echo("")
-        typer.echo(f"Projection de volume à partir de 100 séries ({series_faites} pour l'instant).")
+        typer.echo(
+            f"Projection de volume à partir de 100 {monde.libelle}s ({faites} pour l'instant)."
+        )
 
 
 def _octets(taille: float) -> str:
