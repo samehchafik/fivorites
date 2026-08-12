@@ -688,7 +688,22 @@ def training_corpus_export(
             def montrer(faits: int, total: int) -> None:
                 typer.echo(f"  {faits}/{total}")
 
-            with sortie.open("w", encoding="utf-8") as fichier:
+            try:
+                fichier = sortie.open("w", encoding="utf-8")
+            except (PermissionError, OSError) as exc:
+                # L'image tourne sous l'uid 10002, pas sous celui qui lance
+                # `docker compose run`. Monter son répertoire personnel donne
+                # donc un volume que le conteneur ne peut pas écrire — et la
+                # trace Python parle de pathlib, ce qui n'aide personne.
+                typer.echo(f"ERREUR : impossible d'écrire {sortie} — {exc}")
+                typer.echo("→ le conteneur tourne sous l'uid 10002, pas sous le tien.")
+                typer.echo("  mkdir -p export && sudo chown 10002:10002 export")
+                typer.echo(
+                    '  docker compose run --rm -v "$PWD/export:/sortie" admin \\'
+                    "\n      training corpus-export --sortie /sortie/corpus.jsonl"
+                )
+                raise typer.Exit(1) from exc
+            with fichier:
                 bilan = await exporter_corpus(conn, professeur, fichier, progres=montrer)
 
             typer.echo(
