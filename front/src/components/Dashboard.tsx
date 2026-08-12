@@ -82,7 +82,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   const [depuisUrl] = useState(readUrl)
 
   const [view, setView] = useState<'cards' | 'table'>('cards')
-  const [media, setMedia] = useState('tv')
+  const [media, setMedia] = useState(depuisUrl.univers ?? 'tv')
   const [lang, setLang] = useState(depuisUrl.lang ?? 'fr-FR')
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
@@ -113,6 +113,23 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   // `?id=1399&onglet=training1` rouvre l'atelier, pas seulement la série.
   const [modalTab, setModalTab] = useState<ModalTab>(depuisUrl.onglet)
 
+  /**
+   * Changer d'univers referme la fiche ouverte, et rien d'autre.
+   *
+   * Ce n'est pas du confort : les identifiants TMDB des deux univers se
+   * chevauchent. Garder `?id=550` en passant des films aux séries n'ouvrirait
+   * pas « la même œuvre en série », ça ouvrirait une œuvre sans rapport — ou,
+   * pire, une fiche qui existe des deux côtés et qu'on croirait la bonne.
+   *
+   * La page se remet à 1 par l'effet plus bas, `media` étant dans ses
+   * dépendances : les deux catalogues n'ont ni la même taille ni le même
+   * ordre, et la page 4 de l'un ne veut rien dire dans l'autre.
+   */
+  const changerUnivers = (choisi: string) => {
+    setMedia(choisi)
+    setModalId(null)
+  }
+
   // Une frappe ne doit pas lancer une requête par caractère sur 228 000 lignes.
   const [tableSearch] = useDebouncedValue(filters.search, 350)
   const [gridSearch] = useDebouncedValue(grid.search, 350)
@@ -121,6 +138,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   // copiable-collable telle quelle.
   useEffect(() => {
     writeUrl({
+      univers: media,
       id: modalId,
       onglet: modalTab,
       lang,
@@ -131,6 +149,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       withOverview: grid.withOverview,
     })
   }, [
+    media,
     modalId,
     modalTab,
     lang,
@@ -299,6 +318,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     }
     setGridPage(1)
   }, [
+    media,
     lang,
     gridSearch,
     grid.sort,
@@ -365,7 +385,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
               <SegmentedControl
                 size="xs"
                 value={media}
-                onChange={setMedia}
+                onChange={changerUnivers}
                 data={meta.data.media.map((entry) => ({ value: entry.key, label: entry.label }))}
               />
             )}

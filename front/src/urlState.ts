@@ -1,10 +1,12 @@
 /**
  * L'état partageable, porté par l'URL.
  *
- * Trois choses y figurent, parce que ce sont celles qu'on a besoin d'envoyer à
- * quelqu'un : la fiche ouverte, les filtres actifs, et la langue.
+ * Quatre choses y figurent, parce que ce sont celles qu'on a besoin d'envoyer
+ * à quelqu'un : l'univers affiché, la fiche ouverte, les filtres actifs, et la
+ * langue.
  *
  *     ?id=1399
+ *     ?univers=films
  *     ?filtre=image,description
  *     ?lang=ar-SA
  *     ?tri=note:desc&puis=popularite:desc
@@ -83,6 +85,25 @@ function ecrireTri(tri: Tri): string {
   return `${CLE_VERS_NOM[tri.cle] ?? tri.cle}:${tri.sens}`
 }
 
+/** Les univers, tels qu'ils s'écrivent dans l'URL et tels que l'API les
+ *  nomme. Même parti pris que les filtres et les tris : `?univers=films` se
+ *  lit et se retape, `?media=movie` se décode.
+ *
+ *  Ce n'est pas un détail d'affichage. Les identifiants TMDB des deux univers
+ *  se chevauchent — `?id=550` désigne *Fight Club* en films et une tout autre
+ *  série en séries — donc une URL qui porte une fiche sans porter son univers
+ *  ouvre potentiellement la mauvaise œuvre chez le destinataire. */
+const UNIVERS = {
+  series: 'tv',
+  films: 'movie',
+} as const
+
+type NomUnivers = keyof typeof UNIVERS
+
+const MEDIA_VERS_NOM = Object.fromEntries(
+  Object.entries(UNIVERS).map(([nom, cle]) => [cle, nom]),
+) as Record<string, NomUnivers>
+
 /** Les onglets de la fiche, tels qu'ils s'écrivent dans l'URL. `presentation`
  *  est le défaut et ne s'écrit pas : `?id=1399` ouvre la fiche, et seul
  *  `?id=1399&onglet=training1` a quelque chose à préciser. */
@@ -90,6 +111,8 @@ const ONGLETS = ['presentation', 'training1', 'training2'] as const
 type Onglet = (typeof ONGLETS)[number]
 
 export interface UrlState {
+  /** L'univers affiché — la clé d'API (`tv`, `movie`), ou null pour le défaut. */
+  univers: string | null
   /** La fiche à ouvrir, ou null. */
   id: number | null
   /** L'onglet de la fiche — n'a de sens qu'avec `id`. */
@@ -134,7 +157,12 @@ export function readUrl(search = window.location.search): UrlState {
   // le défaut : une URL abîmée ouvre quelque chose plutôt que rien.
   const onglet = params.get('onglet')
 
+  // Un univers inconnu retombe sur le défaut, comme un tri inconnu : une URL
+  // abîmée montre quelque chose plutôt que rien.
+  const univers = params.get('univers')
+
   return {
+    univers: univers !== null && univers in UNIVERS ? UNIVERS[univers as NomUnivers] : null,
     id: Number.isInteger(id) && id > 0 ? id : null,
     onglet: ONGLETS.includes(onglet as Onglet) ? (onglet as Onglet) : 'presentation',
     lang: lang !== null && CODE_LANGUE.test(lang) ? lang : null,
@@ -151,6 +179,12 @@ export function writeUrl(state: UrlState, replace = true): void {
   // `?utm_source`, un futur `?vue` — n'ont pas à disparaître parce qu'on a
   // coché une case.
   const params = new URLSearchParams(window.location.search)
+
+  // L'univers est toujours écrit, pour la raison de la langue et une de plus :
+  // il qualifie l'`id` qui l'accompagne. Une fiche partagée sans son univers
+  // s'ouvrirait sur l'œuvre qui porte le même numéro dans l'autre.
+  if (state.univers !== null) params.set('univers', MEDIA_VERS_NOM[state.univers] ?? state.univers)
+  else params.delete('univers')
 
   if (state.id !== null) params.set('id', String(state.id))
   else params.delete('id')
