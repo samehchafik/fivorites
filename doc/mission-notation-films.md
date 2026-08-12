@@ -427,17 +427,25 @@ indistinguable des anciens axes. **Ne pas juger un barème film sur 50 films.**
 
 Toutes gratuites, toutes en moins d'une demi-journée.
 
-**11.1 — La volumétrie.** ~~Une commande, aucun quota~~ — **premier relevé le
-2026-08-12** : l'export des films pèse **27,5 Mo** compressés contre **5,0 Mo**
-pour celui des séries, soit un catalogue de l'ordre de **cinq à six fois plus
-gros**. Le compte exact tombe au premier `tmdb export --univers movies`, qui
-l'affiche. Point de comparaison : 228 953 séries.
+**11.1 — La volumétrie.** ~~Une commande, aucun quota~~ — **mesurée le
+2026-08-12** :
 
-Conséquence à ne pas perdre de vue : la collecte film est **quarante fois moins
-chère par œuvre** (un appel contre ~40), mais le catalogue est **cinq fois plus
-grand**. Le fond de catalogue reste donc un chantier de plusieurs jours ; c'est
-la tête — les quelques milliers d'œuvres notables — qui devient presque
-gratuite.
+| | séries | films |
+|---|---|---|
+| Œuvres à l'inventaire | 228 953 | **1 231 681** |
+| Export compressé | 5,0 Mo | 27,5 Mo |
+| Appels de collecte par œuvre | ~40 | **1** |
+| Ordre de grandeur du catalogue entier | — | **5,4 ×** les séries |
+
+Les deux écarts jouent en sens contraire, et c'est le rapport qui compte :
+**40 fois moins cher par œuvre, 5,4 fois plus d'œuvres**, donc environ **sept
+fois moins de requêtes** pour le catalogue entier. Mesuré sur les 500 premiers
+films : 500 requêtes, 500 réussites, aucun 429 à 20 req/s, **6,3 films/s**. Au
+même débit, le catalogue entier demande de l'ordre de **55 heures** — contre
+des semaines côté séries.
+
+Et pour la notation, ce qui compte n'est pas le fond de catalogue mais la tête :
+les 5 000 films les plus populaires se collectent en **treize minutes**.
 
 **11.2 — Les critiques.** Collecter 500 films populaires (500 requêtes, ~30
 secondes) et poser la question qui n'a pas été posée pour les séries :

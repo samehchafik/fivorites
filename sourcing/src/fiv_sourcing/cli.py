@@ -762,7 +762,7 @@ def tmdb_backfill(
         typer.echo(
             f"{report.done:>7}/{report.selected}  "
             f"{report.ok} ok  {report.failed} échec(s)  "
-            f"{rate:5.2f} série/s  reste {_duree(eta)}"
+            f"{rate:5.2f} {monde.libelle}/s  reste {_duree(eta)}"
         )
 
     async def run() -> BackfillReport:
