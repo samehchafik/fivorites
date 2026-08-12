@@ -129,6 +129,16 @@ export function SeriesModal({
   const poster = tmdbImage(data?.posterPath, 'w342')
   const langLabel = languages.find((entry) => entry.code === lang)?.label ?? lang
 
+  /**
+   * Un film n'a pas de saisons — ni l'onglet, ni son contenu.
+   *
+   * Le masquer plutôt que de le laisser afficher « Saisons (0) » : ce zéro se
+   * lirait comme une collecte incomplète, alors qu'il dit seulement qu'un film
+   * n'a pas de saison. Le back ne pose d'ailleurs plus la requête pour un
+   * univers sans parties.
+   */
+  const aDesSaisons = media === 'tv'
+
   return (
     <Modal
       opened={id !== null}
@@ -380,7 +390,9 @@ export function SeriesModal({
                 {data.watch.offers.length > 0 &&
                   ` (${data.watch.offers.reduce((n, o) => n + o.providers.length, 0)})`}
               </Tabs.Tab>
-              <Tabs.Tab value="seasons">Saisons ({data.seasons.length})</Tabs.Tab>
+              {aDesSaisons && (
+                <Tabs.Tab value="seasons">Saisons ({data.seasons.length})</Tabs.Tab>
+              )}
               <Tabs.Tab value="cast" leftSection={<IconUsers size={16} />}>
                 Distribution ({data.cast.length})
               </Tabs.Tab>
@@ -402,13 +414,14 @@ export function SeriesModal({
                 cent kilooctets : les charger avec la fiche ferait payer à tout
                 le monde ce que peu de gens regardent. */}
             <Tabs.Panel value="rich" p="lg">
-              <RichPanel id={data.id} />
+              <RichPanel id={data.id} media={media} />
             </Tabs.Panel>
 
             <Tabs.Panel value="watch" p="lg">
               <WatchPanel watch={data.watch} languages={languages} />
             </Tabs.Panel>
 
+            {aDesSaisons && (
             <Tabs.Panel value="seasons" p="lg">
               <Text size="xs" c="dimmed" mb="sm">
                 Les épisodes s'affichent en {langLabel} — la langue du sélecteur. Une saison non
@@ -484,6 +497,7 @@ export function SeriesModal({
                 })}
               </Accordion>
             </Tabs.Panel>
+            )}
 
             <Tabs.Panel value="cast" p="lg">
               {data.cast.length === 0 ? (

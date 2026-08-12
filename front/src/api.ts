@@ -103,7 +103,10 @@ export const api = {
       `/api/catalog/works/${id}/seasons/${seasonNumber}?${query({ lang })}`,
     ),
 
-  rich: (id: number) => request<RichSources>(`/api/catalog/works/${id}/sources`),
+  /** ⚠️ `media` n'est pas facultatif au sens du résultat : sans lui, le film
+   *  557 rendait les sources de la série 557, *Camp Lazlo*. */
+  rich: (id: number, media: string) =>
+    request<RichSources>(`/api/catalog/works/${id}/sources?${query({ media })}`),
 
   refreshCatalog: () => request<Projection>('/api/catalog/refresh', { method: 'POST' }),
 

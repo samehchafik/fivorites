@@ -53,10 +53,10 @@ const STATUTS: Record<string, string> = {
   annulee: 'annulée',
 }
 
-export function RichPanel({ id }: { id: number }) {
+export function RichPanel({ id, media }: { id: number; media: string }) {
   const rich = useQuery<RichSources>({
-    queryKey: ['rich', id],
-    queryFn: () => api.rich(id),
+    queryKey: ['rich', id, media],
+    queryFn: () => api.rich(id, media),
   })
 
   if (rich.isLoading) {

@@ -128,15 +128,23 @@ async def season(
 
 
 @router.get("/catalog/works/{work_id}/sources")
-async def work_sources(user: CurrentUser, conn: Conn, work_id: int) -> dict[str, Any]:
+async def work_sources(
+    user: CurrentUser,
+    conn: Conn,
+    work_id: int,
+    media: str = Query(default=DEFAULT_MEDIA, max_length=16),
+) -> dict[str, Any]:
     """Ce que les sources tierces apportent sur cette œuvre, par source.
 
-    Pas de 404 quand il n'y a rien : une série non enrichie est un état normal
+    Pas de 404 quand il n'y a rien : une œuvre non enrichie est un état normal
     — l'enrichissement passe après la collecte TMDB et ne couvre pas encore le
     catalogue. La réponse le dit avec une liste vide, que le front sait
     afficher ; une erreur ferait croire à une panne.
+
+    ⚠️ `media` n'est pas facultatif au sens du résultat : sans lui, le film 557
+    rendait les sources de la série 557, *Camp Lazlo*.
     """
-    return await fetch_rich(conn, work_id)
+    return await fetch_rich(conn, work_id, _media(media))
 
 
 @router.post("/catalog/refresh")

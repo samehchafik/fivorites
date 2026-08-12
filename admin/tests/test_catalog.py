@@ -796,6 +796,35 @@ async def test_rich_sources_are_grouped_by_source(conn: psycopg.AsyncConnection)
     assert tvmaze["entries"][0]["media"][0]["type"] == "poster"
 
 
+async def test_les_sources_ne_traversent_pas_les_univers(conn: psycopg.AsyncConnection) -> None:
+    """Le film 557 affichait les sources de la série 557, *Camp Lazlo*.
+
+    `fetch_rich` cherchait le pivot avec `univers = 'series'` en dur : tout
+    identifiant demandé côté films remontait donc l'œuvre qui porte le même
+    numéro côté séries — enrichissement, identifiants externes et liens
+    compris. C'est exactement la collision que le pivot existe pour empêcher,
+    laissée par un appel resté série-seul.
+    """
+    await seed(conn)
+    await conn.execute(
+        """
+        update oeuvre set wikidata_qid = 'Q_SERIE', imdb_id = 'tt_serie'
+        where univers = 'series' and id_tmdb = 1399
+        """
+    )
+
+    # Le film qui porte le même numéro, collecté mais jamais enrichi.
+    await conn.execute("insert into oeuvre (univers, id_tmdb) values ('movies', 1399)")
+
+    serie = await fetch_rich(conn, 1399, "tv")
+    film = await fetch_rich(conn, 1399, "movie")
+
+    assert serie["oeuvre"] is not None
+    assert serie["oeuvre"]["wikidataQid"] == "Q_SERIE"
+    assert film["oeuvre"] is None, "le film n'a aucun identifiant externe à lui"
+    assert film["sources"] == [], "et surtout aucune source empruntée à la série"
+
+
 async def test_rich_sources_of_a_work_never_enriched(conn: psycopg.AsyncConnection) -> None:
     """Le cas le plus fréquent aujourd'hui : rien. Ce n'est pas une erreur —
     l'enrichissement passe après la collecte et ne couvre pas le catalogue.

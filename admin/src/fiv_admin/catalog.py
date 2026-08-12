@@ -1063,7 +1063,9 @@ async def cards_state(conn: psycopg.AsyncConnection, media: str = DEFAULT_MEDIA)
 EXTRAIT_CHARS = 1500
 
 
-async def fetch_rich(conn: psycopg.AsyncConnection, work_id: int) -> dict[str, Any]:
+async def fetch_rich(
+    conn: psycopg.AsyncConnection, work_id: int, media: str = DEFAULT_MEDIA
+) -> dict[str, Any]:
     """L'enrichissement d'une œuvre, groupé par source.
 
     `riche_source` porte une ligne par (œuvre, source, langue) : Wikipédia en
@@ -1092,9 +1094,9 @@ async def fetch_rich(conn: psycopg.AsyncConnection, work_id: int) -> dict[str, A
         await cur.execute(
             """
             select id, univers, wikidata_qid, imdb_id, tvmaze_id, titre, annee
-            from oeuvre where univers = 'series' and id_tmdb = %(id)s order by id limit 1
+            from oeuvre where univers = %(univers)s and id_tmdb = %(id)s order by id limit 1
             """,
-            {"id": work_id},
+            {"id": work_id, "univers": MEDIA[media].univers},
         )
         pivot = await cur.fetchone()
         oeuvre = (
@@ -1106,8 +1108,15 @@ async def fetch_rich(conn: psycopg.AsyncConnection, work_id: int) -> dict[str, A
         # Par le pivot quand il existe — c'est le lien qui fait foi, et il
         # couvre les lignes dont l'`id_tmdb` est nul. Le pivot ici, pas
         # `oeuvre` : celui-ci est filtré pour l'affichage (identifiants
-        # externes), la jointure ne l'est pas. Sinon par `id_tmdb`, qui reste
-        # renseigné sur ce que l'enrichissement a écrit avant le lot 7.
+        # externes), la jointure ne l'est pas.
+        #
+        # ⚠️ Le repli par `id_tmdb` seul ne vaut que pour les séries. C'est un
+        # reste d'avant le lot 7, quand `riche_source` n'avait pas de pivot, et
+        # cette colonne ne porte pas d'univers : l'employer sur un film
+        # rendrait l'enrichissement de la série qui porte le même numéro. Le
+        # cas s'est produit — le film 557 affichait les sources de *Camp
+        # Lazlo*. Un film sans pivot n'a donc pas de repli, et c'est correct :
+        # aucun enrichissement film n'a jamais été écrit sans lui.
         await cur.execute(
             sql.SQL(
                 """
@@ -1119,7 +1128,13 @@ async def fetch_rich(conn: psycopg.AsyncConnection, work_id: int) -> dict[str, A
                 order by source, lang, source_id
                 """
             ).format(
-                lien=sql.SQL("oeuvre_id = %(oeuvre)s") if pivot else sql.SQL("id_tmdb = %(id)s")
+                lien=(
+                    sql.SQL("oeuvre_id = %(oeuvre)s")
+                    if pivot
+                    else sql.SQL("id_tmdb = %(id)s")
+                    if media == DEFAULT_MEDIA
+                    else sql.SQL("false")
+                )
             ),
             {"id": work_id, "oeuvre": pivot["id"] if pivot else None, "extrait": EXTRAIT_CHARS},
         )
