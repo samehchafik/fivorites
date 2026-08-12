@@ -25,7 +25,8 @@ from dataclasses import dataclass
 import psycopg
 
 from fiv_sourcing.sources.tmdb.client import TmdbClient
-from fiv_sourcing.sources.tmdb.collect import collect_series
+from fiv_sourcing.sources.tmdb.collect import collect
+from fiv_sourcing.univers import DEFAUT, Univers
 
 log = logging.getLogger(__name__)
 
@@ -66,8 +67,9 @@ async def pending_ids(
     refresh_after: int | None = None,
     limit: int | None = None,
     order: str = "id",
+    univers: Univers = DEFAUT,
 ) -> list[int]:
-    """Séries à collecter, pour trois raisons distinctes.
+    """Œuvres à collecter, pour trois raisons distinctes.
 
     1. **jamais collectées** — nouveautés apportées par l'export quotidien ;
     2. **signalées modifiées** par `/tv/changes` depuis notre dernière réussite ;
@@ -85,8 +87,8 @@ async def pending_ids(
             select c.id
             from tmdb_catalog c
             left join fetch_state f
-                   on f.source = 'tmdb' and f.kind = 'tv' and f.source_id = c.id::text
-            where c.univers = 'series'
+                   on f.source = 'tmdb' and f.kind = %(kind)s and f.source_id = c.id::text
+            where c.univers = %(univers)s
               and (f.last_success_at is null
                    or (c.changed_at is not null and c.changed_at > f.last_success_at)
                    or (%(refresh_after)s::int is not null
@@ -95,7 +97,12 @@ async def pending_ids(
             order by {ORDERS[order]}
             limit %(limit)s
             """,  # noqa: S608 — `order` est validé contre ORDERS juste au-dessus
-            {"refresh_after": refresh_after, "limit": limit},
+            {
+                "refresh_after": refresh_after,
+                "limit": limit,
+                "kind": univers.kind,
+                "univers": univers.cle,
+            },
         )
         return [row[0] for row in await cur.fetchall()]
 
@@ -108,8 +115,9 @@ async def backfill(
     concurrency: int = 4,
     stop: asyncio.Event | None = None,
     on_progress: Callable[[BackfillReport], None] | None = None,
+    univers: Univers = DEFAUT,
 ) -> BackfillReport:
-    """Collecte les séries données, `concurrency` en parallèle.
+    """Collecte les œuvres données, `concurrency` en parallèle.
 
     S'arrête proprement si `stop` est armé : les collectes en cours vont à leur
     terme, les suivantes ne démarrent pas. Sur une passe de plusieurs dizaines
@@ -128,9 +136,9 @@ async def backfill(
             except asyncio.QueueEmpty:
                 return
             try:
-                result = await collect_series(conn, client, tv_id)
-            except Exception as exc:  # noqa: BLE001 — une série ne doit jamais tuer la passe
-                log.warning("série %s : %s", tv_id, exc)
+                result = await collect(conn, client, tv_id, univers)
+            except Exception as exc:  # noqa: BLE001 — une œuvre ne doit jamais tuer la passe
+                log.warning("%s %s : %s", univers.libelle, tv_id, exc)
                 report.failed += 1
             else:
                 report.ok += int(result.ok)

@@ -18,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 import psycopg
 
 from fiv_sourcing.sources.tmdb.client import TmdbClient
+from fiv_sourcing.univers import DEFAUT, Univers
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class ChangesReport:
 
 
 async def fetch_changed_ids(
-    client: TmdbClient, start: date, end: date
+    client: TmdbClient, start: date, end: date, univers: Univers = DEFAUT
 ) -> tuple[set[int], int, bool]:
     """Ids modifiés entre deux dates. Renvoie (ids, pages lues, tronqué)."""
     ids: set[int] = set()
@@ -50,9 +51,13 @@ async def fetch_changed_ids(
     total_pages = 1
 
     while page <= total_pages and page <= MAX_PAGES:
-        result = await client.changes(start.isoformat(), page=page, end_date=end.isoformat())
+        result = await client.changes(
+            start.isoformat(), page=page, end_date=end.isoformat(), kind=univers.kind
+        )
         if not result.ok or result.payload is None:
-            log.warning("page %s de /tv/changes : %s", page, result.error or result.status)
+            log.warning(
+                "page %s de /%s/changes : %s", page, univers.kind, result.error or result.status
+            )
             break
 
         for entry in result.payload.get("results") or []:
@@ -66,14 +71,21 @@ async def fetch_changed_ids(
 
 
 async def mark_changed(
-    conn: psycopg.AsyncConnection, ids: set[int], at: datetime | None = None
+    conn: psycopg.AsyncConnection,
+    ids: set[int],
+    at: datetime | None = None,
+    univers: Univers = DEFAUT,
 ) -> int:
-    """Note la modification sur les séries connues. Renvoie le nombre marqué.
+    """Note la modification sur les œuvres connues. Renvoie le nombre marqué.
 
-    Les ids inconnus sont ignorés volontairement : une série créée aujourd'hui
+    Les ids inconnus sont ignorés volontairement : une œuvre créée aujourd'hui
     apparaît dans `changes` avant d'entrer dans l'export quotidien. L'insérer
     ici avec des colonnes vides mélangerait deux sources ; l'export la
     rattrapera demain, et `backfill` la prendra comme n'importe quelle nouveauté.
+
+    L'univers est ce qui empêche un id de film de marquer la série qui porte le
+    même numéro — `/movie/changes` et `/tv/changes` renvoient des entiers pris
+    dans deux espaces différents.
     """
     if not ids:
         return 0
@@ -81,8 +93,8 @@ async def mark_changed(
     moment = at or datetime.now(UTC)
     async with conn.cursor() as cur:
         await cur.execute(
-            "update tmdb_catalog set changed_at = %s where univers = 'series' and id = any(%s)",
-            (moment, list(ids)),
+            "update tmdb_catalog set changed_at = %s where univers = %s and id = any(%s)",
+            (moment, univers.cle, list(ids)),
         )
         return cur.rowcount
 
@@ -93,13 +105,14 @@ async def refresh_changes(
     *,
     days: int = 1,
     today: date | None = None,
+    univers: Univers = DEFAUT,
 ) -> ChangesReport:
     end = today or date.today()
     start = end - timedelta(days=min(days, MAX_WINDOW_DAYS))
 
     report = ChangesReport(start=start, end=end)
-    ids, report.pages, report.truncated = await fetch_changed_ids(client, start, end)
+    ids, report.pages, report.truncated = await fetch_changed_ids(client, start, end, univers)
     report.ids_seen = len(ids)
-    report.marked = await mark_changed(conn, ids)
+    report.marked = await mark_changed(conn, ids, univers=univers)
     report.unknown = report.ids_seen - report.marked
     return report

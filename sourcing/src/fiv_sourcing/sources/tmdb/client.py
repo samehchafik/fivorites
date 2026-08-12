@@ -45,6 +45,42 @@ SERIES_APPEND = (
 
 SEASON_APPEND = ("credits", "external_ids", "images", "videos")
 
+# Le pendant film, et la même mise en garde : on la prend une fois, largement,
+# avant le grand run. 12 sous-requêtes sur les 20 autorisées.
+#
+# Écarts avec `SERIES_APPEND`, tous imposés par TMDB :
+#   − aggregate_credits — n'existe pas côté film : `credits` est déjà complet,
+#                         il n'y a pas de saison 1 dont il ne montrerait que
+#                         le casting
+#   − episode_groups    — sans objet
+#   − content_ratings   — remplacé par `release_dates`, qui porte les
+#                         classifications par âge ET les dates de sortie par
+#                         pays (salle, numérique, physique)
+#   + release_dates     — donc la facette « à voir en famille », comme les
+#                         `content_ratings` la donnent aux séries
+#
+# `lists` reste dehors : la V1 le demandait sans jamais le lire.
+#
+# Ce qu'un film apporte et qu'une série n'a pas, dans le payload de base et
+# sans sous-requête : `runtime`, `tagline`, `budget`, `revenue`,
+# `belongs_to_collection` — la saga, que le graphe de recommandation voudra un
+# jour — et `imdb_id` au premier niveau, là où une série l'enterre dans
+# `external_ids`.
+MOVIE_APPEND = (
+    "alternative_titles",
+    "credits",
+    "external_ids",
+    "images",
+    "keywords",
+    "recommendations",
+    "release_dates",
+    "reviews",
+    "similar",
+    "translations",
+    "videos",
+    "watch/providers",
+)
+
 
 class TmdbClient:
     def __init__(self, fetcher: HttpFetcher, settings: Settings) -> None:
@@ -104,6 +140,32 @@ class TmdbClient:
             ),
         )
 
+    async def movie(self, movie_id: int, language: str = "fr-FR") -> FetchResult:
+        """La fiche d'un film — un appel, et c'est toute la collecte.
+
+        L'écart de coût avec une série est l'ordre de grandeur du projet : une
+        série demande sa fiche plus chaque saison dans chaque langue, soit une
+        quarantaine de requêtes pour un feuilleton ordinaire. Un film n'a pas
+        de saison, et son synopsis anglais arrive dans `translations`, déjà
+        appendu ici. Les 5 000 films les plus populaires se collectent donc en
+        5 000 requêtes — quelques minutes au débit courant.
+        """
+        return await self._fetcher.get_json(
+            f"{self._settings.tmdb_base_url}/movie/{movie_id}",
+            self._params(
+                {
+                    "language": language,
+                    "append_to_response": ",".join(MOVIE_APPEND),
+                    # Mêmes raisons que pour les séries : les visuels et les
+                    # vidéos suivent `language`, et les versions localisées sont
+                    # rares. Sans ces deux lignes, on ne récupère que les
+                    # affiches et les bandes-annonces françaises.
+                    "include_image_language": "fr,en,null",
+                    "include_video_language": "fr,en,null",
+                }
+            ),
+        )
+
     async def season(self, tv_id: int, season_number: int, language: str = "fr-FR") -> FetchResult:
         return await self._fetcher.get_json(
             f"{self._settings.tmdb_base_url}/tv/{tv_id}/season/{season_number}",
@@ -117,9 +179,16 @@ class TmdbClient:
         )
 
     async def changes(
-        self, start_date: str, page: int = 1, end_date: str | None = None
+        self,
+        start_date: str,
+        page: int = 1,
+        end_date: str | None = None,
+        kind: str = "tv",
     ) -> FetchResult:
-        """Ids de séries modifiées sur une fenêtre (dates en AAAA-MM-JJ).
+        """Ids modifiés sur une fenêtre (dates en AAAA-MM-JJ).
+
+        `/tv/changes` ou `/movie/changes` selon le `kind` — deux endpoints de
+        forme identique, et c'est le seul point où l'univers entre ici.
 
         TMDB plafonne la fenêtre à 14 jours ; au-delà, la réponse est
         silencieusement tronquée.
@@ -128,7 +197,7 @@ class TmdbClient:
         if end_date:
             params["end_date"] = end_date
         return await self._fetcher.get_json(
-            f"{self._settings.tmdb_base_url}/tv/changes", self._params(params)
+            f"{self._settings.tmdb_base_url}/{kind}/changes", self._params(params)
         )
 
     async def configuration(self) -> FetchResult:

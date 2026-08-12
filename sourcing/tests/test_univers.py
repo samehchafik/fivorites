@@ -18,7 +18,8 @@ from datetime import date
 
 import psycopg
 
-from fiv_sourcing.sources.tmdb.export import load_catalog
+from fiv_sourcing.sources.tmdb.export import export_url, load_catalog
+from fiv_sourcing.univers import FILMS, SERIES, resoudre
 
 
 async def test_le_meme_identifiant_vit_dans_deux_univers(conn: psycopg.AsyncConnection) -> None:
@@ -51,11 +52,13 @@ async def test_charger_un_export_n_ecrase_pas_l_autre_univers(
         iter([{"id": 1399, "original_name": "Game of Thrones", "popularity": 400.0}]),
         date(2026, 8, 12),
     )
+    # `original_title` et non `original_name` : c'est le champ que porte
+    # l'export des films, TMDB n'ayant jamais unifié les deux vocabulaires.
     await load_catalog(
         conn,
-        iter([{"id": 1399, "original_name": "Fight Club", "popularity": 60.0}]),
+        iter([{"id": 1399, "original_title": "Fight Club", "popularity": 60.0}]),
         date(2026, 8, 12),
-        univers="movies",
+        univers=FILMS,
     )
 
     async with conn.cursor() as cur:
@@ -133,3 +136,25 @@ async def test_le_pivot_ne_depend_pas_de_l_inventaire(conn: psycopg.AsyncConnect
     async with conn.cursor() as cur:
         await cur.execute("select count(*) from tmdb_catalog where id = 7777")
         assert await cur.fetchone() == (0,), "aucune ligne d'inventaire, et pourtant l'œuvre existe"
+
+
+def test_le_titre_de_l_export_change_de_nom_selon_l_univers() -> None:
+    """Le piège silencieux : lire `original_name` sur un export de films
+    donnerait 1,1 million de lignes sans titre, et aucune erreur."""
+    assert SERIES.titre_export == "original_name"
+    assert FILMS.titre_export == "original_title"
+
+
+def test_les_deux_exports_ont_deux_noms_de_fichier() -> None:
+    assert export_url(date(2026, 8, 12), SERIES).endswith("tv_series_ids_08_12_2026.json.gz")
+    assert export_url(date(2026, 8, 12), FILMS).endswith("movie_ids_08_12_2026.json.gz")
+
+
+def test_un_univers_inconnu_s_arrete_tout_de_suite() -> None:
+    """Sans cette liste fermée, une faute de frappe créerait un troisième
+    univers dans `tmdb_catalog` qui ne se verrait qu'à l'écran vide."""
+    import pytest
+
+    assert resoudre(None) is SERIES
+    with pytest.raises(ValueError, match="univers inconnu"):
+        resoudre("films")

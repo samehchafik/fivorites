@@ -1,4 +1,4 @@
-"""Collecte d'une série TMDB : la fiche, puis chaque saison dans chaque langue.
+"""Collecte d'une œuvre TMDB : la fiche, puis ses parties s'il y en a.
 
 Une réponse HTTP = une ligne de `raw_source`. C'est l'invariant de la couche de
 collecte, et c'est ce qui permet à chaque saison d'avoir sa propre fraîcheur,
@@ -7,6 +7,12 @@ série est le travail de la dérivation, pas celui-ci.
 
 Aucune interprétation ici non plus. Le seul champ du payload que ce module lit
 est la liste des saisons — parce qu'il faut bien savoir quoi télécharger.
+
+**Un film n'a pas de parties**, et c'est tout ce qui le distingue ici : une
+requête, une ligne de brut, terminé. Le synopsis anglais qu'attend la notation
+arrive dans `translations`, appendu à cet appel unique. D'où un rapport de coût
+d'environ 1 à 40 avec une série, et un catalogue de films à portée là où celui
+des séries se compte en jours de collecte.
 """
 
 from __future__ import annotations
@@ -20,12 +26,14 @@ import psycopg
 from fiv_sourcing import store
 from fiv_sourcing.http import FetchResult
 from fiv_sourcing.sources.tmdb.client import TmdbClient
+from fiv_sourcing.univers import FILMS, SERIES, Univers
 
 log = logging.getLogger(__name__)
 
 SOURCE = "tmdb"
 KIND_SERIES = "tv"
 KIND_SEASON = "tv_season"
+KIND_MOVIE = "movie"
 
 
 @dataclass(slots=True)
@@ -104,6 +112,46 @@ async def collect_series(
             report.errors.append(error)
 
     return report
+
+
+async def collect_movie(
+    conn: psycopg.AsyncConnection, client: TmdbClient, movie_id: int
+) -> CollectReport:
+    """Collecte un film : une requête, une ligne de brut.
+
+    Volontairement écrite à part plutôt qu'en branche de `collect_series`. Les
+    deux ne partagent que six lignes — l'appel, la persistance, le pivot — et
+    les fusionner donnerait une fonction dont la moitié du corps serait sous un
+    `if univers.parties`, pour une économie nulle. La collecte d'une série est
+    une orchestration (saisons × langues, sémaphore, agrégation d'erreurs) ;
+    celle d'un film est un appel.
+    """
+    report = CollectReport(tv_id=movie_id)
+
+    result = await client.movie(movie_id)
+    report.requests += 1
+    report.status = result.status
+    written = await _persist(conn, KIND_MOVIE, str(movie_id), "fr-FR", result)
+    report.rows_written += int(written)
+
+    if not result.ok or result.payload is None:
+        report.errors.append(result.error or f"HTTP {result.status}")
+        return report
+
+    # Le pivot, à la même condition que pour une série : la fiche a été servie.
+    await store.ensure_oeuvres(conn, [movie_id], univers=FILMS.cle)
+    return report
+
+
+COLLECTEURS = {SERIES.cle: collect_series, FILMS.cle: collect_movie}
+
+
+async def collect(
+    conn: psycopg.AsyncConnection, client: TmdbClient, oeuvre_id: int, univers: Univers = SERIES
+) -> CollectReport:
+    """Collecte une œuvre dans l'univers demandé — le point d'entrée commun de
+    la ligne de commande et du rattrapage."""
+    return await COLLECTEURS[univers.cle](conn, client, oeuvre_id)
 
 
 # Un 401/403 ne dit rien sur l'œuvre, seulement sur notre configuration. Le

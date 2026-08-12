@@ -23,6 +23,7 @@ from fiv_sourcing.config import VENDOR_DIR, Settings, get_settings
 from fiv_sourcing.db import MigrationsNotFound, connect, migrate, pending_migrations, ping
 from fiv_sourcing.http import FetcherStats
 from fiv_sourcing.redact import SecretFilter, fingerprint, redact_dsn
+from fiv_sourcing.univers import Univers, resoudre
 
 app = typer.Typer(help="Acquisition de données Fivorites V2 — séries", no_args_is_help=True)
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
@@ -127,13 +128,22 @@ def db_migrate() -> None:
 
 @tmdb_app.command("fetch")
 def tmdb_fetch(
-    ids: Annotated[list[int], typer.Option("--id", help="Id TMDB de la série (répétable)")],
+    ids: Annotated[list[int], typer.Option("--id", help="Id TMDB de l'œuvre (répétable)")],
+    univers: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
 ) -> None:
-    """Collecte une ou plusieurs séries dans `raw_source`."""
+    """Collecte une ou plusieurs œuvres dans `raw_source`.
+
+    ⚠️ L'univers n'est pas cosmétique : `--id 1399` désigne *Game of Thrones*
+    en séries et un tout autre film en films. Se tromper d'univers collecte une
+    œuvre parfaitement réelle, mais pas celle qu'on voulait.
+    """
     from fiv_sourcing.sources.tmdb.client import TmdbClient, build_fetcher
-    from fiv_sourcing.sources.tmdb.collect import collect_series
+    from fiv_sourcing.sources.tmdb.collect import collect
 
     settings = get_settings()
+    monde = _univers(univers)
     if not settings.has_tmdb_credentials:
         typer.echo("Aucun identifiant TMDB. Renseigner TMDB_BEARER ou TMDB_API_KEY dans .env")
         raise typer.Exit(2)
@@ -145,11 +155,12 @@ def tmdb_fetch(
             async with fetcher:
                 client = TmdbClient(fetcher, settings)
                 for tv_id in ids:
-                    report = await collect_series(conn, client, tv_id)
+                    report = await collect(conn, client, tv_id, monde)
                     marker = "ok " if report.ok else "ÉCHEC"
+                    parties = f"{report.seasons_seen:>2} saisons  " if monde.parties else ""
                     typer.echo(
                         f"{marker} {tv_id:>8}  {report.requests:>3} requêtes  "
-                        f"{report.seasons_seen:>2} saisons  "
+                        f"{parties}"
                         f"{report.rows_written:>3} ligne(s) écrite(s)"
                     )
                     for error in report.errors[:3]:
@@ -576,22 +587,27 @@ def tmdb_export(
             "--date", help="Export d'un jour donné (AAAA-MM-JJ). Défaut : le plus récent."
         ),
     ] = None,
+    univers: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
 ) -> None:
-    """Récupère la liste de toutes les séries depuis l'export quotidien TMDB.
+    """Récupère la liste de toutes les œuvres depuis l'export quotidien TMDB.
 
-    Fichier public, aucune clé d'API requise, aucun quota consommé.
+    Fichier public, aucune clé d'API requise, aucun quota consommé. Deux
+    fichiers distincts, un par univers : `tv_series_ids` et `movie_ids`.
     """
     from fiv_sourcing.sources.tmdb.client import build_public_fetcher
     from fiv_sourcing.sources.tmdb.export import ExportUnavailable, refresh_catalog
 
     settings = get_settings()
     wanted = date.fromisoformat(day) if day else None
+    monde = _univers(univers)
 
     async def run() -> ExportReport:
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
             fetcher = build_public_fetcher(settings)
             async with fetcher:
-                return await refresh_catalog(conn, fetcher, wanted)
+                return await refresh_catalog(conn, fetcher, wanted, monde)
 
     try:
         report = _run_db(run)
@@ -601,13 +617,17 @@ def tmdb_export(
 
     typer.echo(f"export       : {report.url}")
     typer.echo(f"date         : {report.exported_on}")
-    typer.echo(f"séries lues  : {report.series_read:>9,}".replace(",", " "))
+    typer.echo(f"lues         : {report.series_read:>9,}".replace(",", " "))
     typer.echo(f"nouvelles    : {report.inserted:>9,}".replace(",", " "))
     typer.echo(f"mises à jour : {report.updated:>9,}".replace(",", " "))
 
 
 @tmdb_app.command("dates")
-def tmdb_dates() -> None:
+def tmdb_dates(
+    univers: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
+) -> None:
     """Recopie les dates de diffusion du brut vers l'inventaire.
 
     Sans réseau. C'est ce qui alimente `--order recent` : la date vit dans le
@@ -621,11 +641,12 @@ def tmdb_dates() -> None:
 
     async def run() -> tuple[int, int, int]:
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
-            majs = await refresh_air_dates(conn)
+            majs = await refresh_air_dates(conn, _univers(univers))
             async with conn.cursor() as cur:
                 await cur.execute(
                     "select count(*) filter (where first_air_date is not null), count(*) "
-                    "from tmdb_catalog where univers = 'series'"
+                    "from tmdb_catalog where univers = %s",
+                    (_univers(univers).cle,),
                 )
                 datees, total = await cur.fetchone()
             return majs, datees, total
@@ -641,8 +662,11 @@ def tmdb_dates() -> None:
 @tmdb_app.command("changes")
 def tmdb_changes(
     days: Annotated[int, typer.Option("--days", help="Fenêtre en jours. TMDB plafonne à 14.")] = 1,
+    univers: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
 ) -> None:
-    """Marque les séries que TMDB signale comme modifiées.
+    """Marque les œuvres que TMDB signale comme modifiées.
 
     Ne collecte rien : pose une marque que `backfill` transformera en
     recollecte. Si cette commande échoue à mi-parcours, ce qu'elle a déjà
@@ -660,7 +684,9 @@ def tmdb_changes(
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
             fetcher = build_fetcher(settings)
             async with fetcher:
-                return await refresh_changes(conn, TmdbClient(fetcher, settings), days=days)
+                return await refresh_changes(
+                    conn, TmdbClient(fetcher, settings), days=days, univers=_univers(univers)
+                )
 
     report = _run_db(run)
 
@@ -674,7 +700,7 @@ def tmdb_changes(
         typer.echo("")
         typer.echo("Réponse tronquée : trop de pages. Réduire --days.")
     typer.echo("")
-    typer.echo("`tmdb backfill` recollectera les séries marquées.")
+    typer.echo("`tmdb backfill` recollectera les œuvres marquées.")
 
 
 @tmdb_app.command("backfill")
@@ -701,6 +727,9 @@ def tmdb_backfill(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Compter le reste à faire, sans rien collecter.")
     ] = False,
+    univers: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
 ) -> None:
     """Collecte tout le catalogue. Reprend là où la passe précédente s'est arrêtée.
 
@@ -711,6 +740,7 @@ def tmdb_backfill(
     from fiv_sourcing.sources.tmdb.client import TmdbClient, build_fetcher
 
     settings = get_settings()
+    monde = _univers(univers)
     if not settings.has_tmdb_credentials and not dry_run:
         typer.echo("Aucun identifiant TMDB. Renseigner TMDB_BEARER ou TMDB_API_KEY dans .env")
         raise typer.Exit(2)
@@ -738,7 +768,9 @@ def tmdb_backfill(
     async def run() -> BackfillReport:
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
             await _exiger_le_schema_a_jour(conn, settings)
-            ids = await pending_ids(conn, refresh_after=refresh_after, limit=limit, order=order)
+            ids = await pending_ids(
+                conn, refresh_after=refresh_after, limit=limit, order=order, univers=monde
+            )
             if dry_run or not ids:
                 return BackfillReport(selected=len(ids))
 
@@ -756,17 +788,24 @@ def tmdb_backfill(
                     concurrency=concurrency,
                     stop=stop,
                     on_progress=show,
+                    univers=monde,
                 )
                 stats.append(fetcher.stats)
                 return report
 
-    typer.echo(f"langues : {', '.join(settings.season_languages)}")
+    if monde.parties:
+        typer.echo(f"langues : {', '.join(settings.season_languages)}")
+    else:
+        # Le rappel qui évite de croire à une passe incomplète : un film ne
+        # coûte qu'un appel, la collecte va donc quarante fois plus vite qu'à
+        # nombre d'œuvres égal côté séries.
+        typer.echo("langues : sans objet — un film tient en un appel")
     typer.echo(f"débit   : {settings.tmdb_rate_limit} requête/s (TMDB_RATE_LIMIT)")
     stats: list[FetcherStats] = []
     report = _run_db(run)
 
     if dry_run:
-        typer.echo(f"à collecter : {report.selected} série(s)")
+        typer.echo(f"à collecter : {report.selected} {monde.libelle}(s)")
         return
     if not report.selected:
         typer.echo("Rien à collecter. Lancer `tmdb export` si le catalogue est vide.")
@@ -784,7 +823,7 @@ def tmdb_backfill(
 
     if report.interrupted:
         typer.echo("")
-        typer.echo(f"Interrompu — {report.remaining} série(s) restantes.")
+        typer.echo(f"Interrompu — {report.remaining} {monde.libelle}(s) restant(s).")
         typer.echo("Relancer la même commande reprend où on s'est arrêté.")
         raise typer.Exit(130)
 
@@ -1012,6 +1051,20 @@ def _http_label(status: int) -> str:
     if status == 0:
         return "aucune réponse"
     return f"HTTP {status}" + (" (valide)" if status == 200 else " (refusé)")
+
+
+def _univers(cle: str) -> Univers:
+    """Résout `--univers`, et s'arrête sur une valeur inconnue.
+
+    Liste fermée : une faute de frappe doit échouer ici plutôt que de créer un
+    troisième univers silencieux dans `tmdb_catalog` — qui ne se verrait qu'au
+    moment où la grille de l'admin n'afficherait rien.
+    """
+    try:
+        return resoudre(cle)
+    except ValueError as exc:
+        typer.echo(f"ERREUR : {exc}")
+        raise typer.Exit(2) from exc
 
 
 def _run_db[T](factory: Callable[[], Coroutine[object, object, T]]) -> T:

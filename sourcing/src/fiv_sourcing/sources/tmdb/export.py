@@ -21,18 +21,14 @@ from datetime import date, timedelta
 import psycopg
 
 from fiv_sourcing.http import HttpFetcher
+from fiv_sourcing.univers import DEFAUT, Univers
 
 log = logging.getLogger(__name__)
 
 EXPORT_BASE = "http://files.tmdb.org/p/exports"
 
-# L'univers de ce module. Une constante et non une valeur en dur dans les
-# requêtes : le jour où l'export des films arrive, c'est le seul endroit qui
-# doit apprendre à en changer, et `grep UNIVERS` donne la liste exacte des
-# points à plomber.
-UNIVERS = "series"
-
-# Recopie la date de première diffusion du brut vers l'inventaire.
+# Recopie la date de la fiche vers l'inventaire — `first_air_date` pour une
+# série, `release_date` pour un film, la même colonne pour les deux.
 #
 # Le garde-fou par expression régulière n'est pas de la superstition : TMDB
 # renvoie parfois une chaîne vide, et un cast qui échoue sur **une** ligne
@@ -44,27 +40,30 @@ set first_air_date = d.date_diffusion
 from (
     select distinct on (source_id)
            source_id::int as id,
-           case when payload ->> 'first_air_date' ~ '^\\d{4}-\\d{2}-\\d{2}$'
-                then (payload ->> 'first_air_date')::date
+           case when payload ->> %(champ)s ~ '^\\d{4}-\\d{2}-\\d{2}$'
+                then (payload ->> %(champ)s)::date
            end as date_diffusion
     from raw_source
-    where source = 'tmdb' and kind = 'tv'
+    where source = 'tmdb' and kind = %(kind)s
       and http_status between 200 and 299
     order by source_id, fetched_at desc
 ) d
-where c.univers = 'series' and c.id = d.id
+where c.univers = %(univers)s and c.id = d.id
   and c.first_air_date is distinct from d.date_diffusion
 """
 
 
-async def refresh_air_dates(conn) -> int:
+async def refresh_air_dates(conn, univers: Univers = DEFAUT) -> int:
     """Remplit `tmdb_catalog.first_air_date` depuis `raw_source`.
 
     Idempotent, sans réseau, et à relancer après chaque passe de collecte : une
-    série fraîchement collectée n'a sa date ici qu'après ce passage.
+    œuvre fraîchement collectée n'a sa date ici qu'après ce passage.
     """
     async with conn.cursor() as cur:
-        await cur.execute(MAJ_DATES)
+        await cur.execute(
+            MAJ_DATES,
+            {"champ": univers.date_fiche, "kind": univers.kind, "univers": univers.cle},
+        )
         return cur.rowcount
 
 
@@ -91,9 +90,9 @@ class ExportReport:
         return self.inserted + self.updated
 
 
-def export_url(day: date) -> str:
+def export_url(day: date, univers: Univers = DEFAUT) -> str:
     """TMDB nomme ses exports en MM_DD_YYYY — pas en ISO."""
-    return f"{EXPORT_BASE}/tv_series_ids_{day:%m_%d_%Y}.json.gz"
+    return f"{EXPORT_BASE}/{univers.export}_{day:%m_%d_%Y}.json.gz"
 
 
 def parse_export(blob: bytes) -> Iterator[dict]:
@@ -115,6 +114,7 @@ def parse_export(blob: bytes) -> Iterator[dict]:
 async def download_export(
     fetcher: HttpFetcher,
     *,
+    univers: Univers = DEFAUT,
     start: date | None = None,
     strict: bool = False,
     fallback_days: int = FALLBACK_DAYS,
@@ -132,7 +132,7 @@ async def download_export(
 
     for offset in range(attempts):
         current = origin - timedelta(days=offset)
-        url = export_url(current)
+        url = export_url(current, univers)
         status, blob = await fetcher.get_bytes(url, timeout=300.0)
         if status == 200 and blob:
             if offset:
@@ -148,12 +148,16 @@ async def load_catalog(
     records: Iterator[dict],
     exported_on: date,
     *,
-    univers: str = UNIVERS,
+    univers: Univers = DEFAUT,
 ) -> tuple[int, int, int]:
     """Charge l'export dans `tmdb_catalog`. Renvoie (lues, insérées, mises à jour).
 
     Passe par une table temporaire et un COPY : un `INSERT` ligne à ligne sur
-    250 000 séries prendrait des minutes là où celui-ci prend des secondes.
+    250 000 œuvres prendrait des minutes là où celui-ci prend des secondes.
+
+    Le titre change de nom d'un univers à l'autre — `original_name` pour une
+    série, `original_title` pour un film — et atterrit dans la même colonne.
+    TMDB n'a jamais unifié les deux vocabulaires ; nous, si.
     """
     read = 0
     async with conn.transaction(), conn.cursor() as cur:
@@ -173,7 +177,7 @@ async def load_catalog(
                 await copy.write_row(
                     (
                         identifier,
-                        record.get("original_name"),
+                        record.get(univers.titre_export),
                         float(record.get("popularity") or 0.0),
                         bool(record.get("adult")),
                     )
@@ -202,7 +206,7 @@ async def load_catalog(
                 last_seen_at  = now()
             returning (xmax = 0) as est_nouvelle
             """,
-            (univers, exported_on),
+            (univers.cle, exported_on),
         )
         flags = [row[0] for row in await cur.fetchall()]
 
@@ -211,8 +215,15 @@ async def load_catalog(
 
 
 async def refresh_catalog(
-    conn: psycopg.AsyncConnection, fetcher: HttpFetcher, day: date | None = None
+    conn: psycopg.AsyncConnection,
+    fetcher: HttpFetcher,
+    day: date | None = None,
+    univers: Univers = DEFAUT,
 ) -> ExportReport:
-    exported_on, url, blob = await download_export(fetcher, start=day, strict=day is not None)
-    read, inserted, updated = await load_catalog(conn, parse_export(blob), exported_on)
+    exported_on, url, blob = await download_export(
+        fetcher, univers=univers, start=day, strict=day is not None
+    )
+    read, inserted, updated = await load_catalog(
+        conn, parse_export(blob), exported_on, univers=univers
+    )
     return ExportReport(exported_on, url, read, inserted, updated)

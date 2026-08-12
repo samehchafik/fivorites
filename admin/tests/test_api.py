@@ -144,13 +144,20 @@ async def test_meta_merges_configured_and_observed_languages(client: httpx.Async
 
 
 async def test_movies_say_why_they_are_empty(client: httpx.AsyncClient) -> None:
-    """Un univers non collecté répond une explication, pas un tableau vide
-    qu'on prendrait pour une collecte à zéro."""
+    """Un univers que l'administration ne sait pas afficher répond une
+    explication, pas un tableau vide qu'on prendrait pour une collecte à zéro.
+
+    Le motif a changé au lot 13, et c'est ce que vérifie l'assertion négative :
+    la collecte des films existe désormais, ce qui manque est en aval. Un
+    message resté sur « la collecte n'a pas commencé » enverrait relancer une
+    passe déjà faite."""
     await login(client)
     response = await client.get("/api/acquisition/items", params={"media": "movie"})
 
     assert response.status_code == 409
-    assert "n'a pas commencé" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "movie_card" in detail
+    assert "n'a pas commencé" not in detail
 
 
 async def test_unknown_sort_is_refused_rather_than_ignored(client: httpx.AsyncClient) -> None:

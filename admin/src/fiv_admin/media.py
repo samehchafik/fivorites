@@ -1,13 +1,16 @@
 """Les univers observables et ce qu'on sait d'eux aujourd'hui.
 
 Le front propose « séries » et « films » parce que c'est le périmètre annoncé
-du projet. Seules les séries sont collectées à ce stade : il n'existe ni table
-d'inventaire ni ligne de brut pour les films. Plutôt que de masquer le second
-choix ou d'afficher un tableau vide sans explication, l'API répond
-explicitement « cet univers n'est pas encore collecté », et le front le dit.
+du projet. Plutôt que de masquer un univers que l'administration ne sait pas
+encore afficher, ou de montrer un tableau vide sans explication, l'API répond
+explicitement pourquoi, et le front le dit.
 
-Le jour où le catalogue des films arrive, il suffit de renseigner
-`catalog_table` : le reste du chemin est déjà écrit.
+⚠️ Depuis le lot 13, `catalog_table=None` sur les films ne veut plus dire « pas
+collecté » : la collecte existe, et `sourcing` peut très bien contenir des
+centaines de milliers de fiches de films. Ce qui manque est en aval — la
+projection de vignettes `admin.movie_card`, pendant de `admin.tv_card`, sans
+laquelle la grille n'a rien à lire. Renseigner `catalog_table` avant de l'avoir
+créée donnerait une page en erreur, pas une page vide.
 """
 
 from __future__ import annotations
@@ -47,9 +50,11 @@ MEDIA: dict[str, Media] = {
         part_kind=None,
         part_label="",
         unavailable_reason=(
-            "La collecte des films n'a pas commencé : ni inventaire "
-            "(`sourcing.tmdb_catalog` ne contient que des séries), ni ligne de brut. "
-            "Le lot en cours porte sur les séries."
+            "La collecte des films existe depuis le lot 13 "
+            "(`tmdb export --univers movies`, puis `tmdb backfill --univers movies`) : "
+            "les films collectés sont en base, dans sourcing. "
+            "C'est l'administration qui ne sait pas encore les montrer — il lui manque "
+            "sa projection de vignettes, `admin.movie_card`, pendant de `admin.tv_card`."
         ),
     ),
 }

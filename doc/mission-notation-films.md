@@ -408,12 +408,12 @@ migrations), C avant F (sinon les 43/521 recommencent), et §11 avant A.
 |---|---|---|---|---|
 | **0** | Les mesures | §11 — quatre sondes, aucune ligne de code | ½ j | tout le dimensionnement |
 | ~~**A**~~ | ~~L'identité~~ | **fait le 2026-08-12** — `tmdb_catalog (univers, id)` ; `oeuvre_id` dans `score`, `training_run`, `media_caption`, `embedding`, `video`, `video_scan` | — | **tout**, et validé sur les séries seules |
-| **B** | La collecte | export films, `MOVIE_APPEND`, `collect_movie`, `movie_card`, `--univers` | 2 j | le front montre les films |
+| ~~**B**~~ | ~~La collecte~~ | **fait le 2026-08-12** — export films, `MOVIE_APPEND`, `collect_movie`, `--univers` sur `export`/`fetch`/`dates`/`changes`/`backfill`. Aucune migration : `tmdb_catalog` portait déjà l'univers, `raw_source.kind` est du texte libre | — | la collecte tourne ; l'affichage attend `movie_card` |
 | **C** | L'enrichissement | Wikidata `P4947`/`Q11424`, Wikipédia, TVmaze retiré | 1 j | le dossier film |
 | **D** | Le dossier | `build_dossier` variante film, `TAGLINE`, `MIN_CHARS` recalibré | 1 j | la notation |
 | **E** | Le barème | `empreinte-v4` mixte, 48 ancres, re-notation des 502 séries (~2 $) | 1 j | l'espace commun |
 | **F** | La notation | `training note --univers movies -n 2000`, puis `training poids` | 0,5 j + ~8 $ | les premières mesures |
-| **G** | Le front | grille films, saisons masquées, vidéos | 1 j | l'exploitation |
+| **G** | Le front | `admin.movie_card`, grille films, saisons masquées, vidéos | 1 j | l'exploitation — **c'est ce qui reste du lot B** |
 
 Après F, la première chose à produire est **le tableau du §3 de la note
 série** — ACP, dimensions effectives, `|r|` moyen, paire la plus liée — et à
@@ -427,10 +427,17 @@ indistinguable des anciens axes. **Ne pas juger un barème film sur 50 films.**
 
 Toutes gratuites, toutes en moins d'une demi-journée.
 
-**11.1 — La volumétrie.** Une commande, aucun quota : télécharger
-`movie_ids_MM_DD_YYYY.json.gz` et compter. Le chiffre décide de tout le
-dimensionnement (la table de sondage, les seuils de popularité, le nombre de
-lots de collecte). Point de comparaison : 228 429 séries.
+**11.1 — La volumétrie.** ~~Une commande, aucun quota~~ — **premier relevé le
+2026-08-12** : l'export des films pèse **27,5 Mo** compressés contre **5,0 Mo**
+pour celui des séries, soit un catalogue de l'ordre de **cinq à six fois plus
+gros**. Le compte exact tombe au premier `tmdb export --univers movies`, qui
+l'affiche. Point de comparaison : 228 953 séries.
+
+Conséquence à ne pas perdre de vue : la collecte film est **quarante fois moins
+chère par œuvre** (un appel contre ~40), mais le catalogue est **cinq fois plus
+grand**. Le fond de catalogue reste donc un chantier de plusieurs jours ; c'est
+la tête — les quelques milliers d'œuvres notables — qui devient presque
+gratuite.
 
 **11.2 — Les critiques.** Collecter 500 films populaires (500 requêtes, ~30
 secondes) et poser la question qui n'a pas été posée pour les séries :
