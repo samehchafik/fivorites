@@ -1928,14 +1928,18 @@ async def constituer_corpus(
                 textes=[dossiers[i]["text"][:MAX_CHARS] for i in lot],
                 dimensions=dims,
             )
+            # Par le pivot et non par `id_tmdb` : la table est passée à
+            # `oeuvre_id` avec l'arrivée des films, et les deux catalogues TMDB
+            # ont des numérotations séparées — le film 550 et la série 550 sont
+            # deux œuvres. Écrire l'identifiant TMDB nu les confondrait.
             async with conn.cursor() as cur:
                 await cur.executemany(
                     """
-                    insert into notation.embedding (id_tmdb, input_sha256, embedder, vector)
+                    insert into notation.embedding (oeuvre_id, input_sha256, embedder, vector)
                     values (%s, %s, %s, %s) on conflict do nothing
                     """,
                     [
-                        (i, dossiers[i]["sha256"], etiquette, Jsonb(v))
+                        (dossiers[i]["oeuvreId"], dossiers[i]["sha256"], etiquette, Jsonb(v))
                         for i, v in zip(lot, vecteurs, strict=True)
                     ],
                 )
