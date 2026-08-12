@@ -53,6 +53,9 @@ class Univers:
     parties: bool
     """La collecte descend-elle dans des sous-objets (les saisons) ?"""
 
+    part_kind: str | None
+    """Le `kind` de ces sous-objets dans `raw_source`, s'il y en a."""
+
     libelle: str
     """Pour les messages de la ligne de commande, au singulier."""
 
@@ -64,6 +67,7 @@ SERIES = Univers(
     titre_export="original_name",
     date_fiche="first_air_date",
     parties=True,
+    part_kind="tv_season",
     libelle="série",
 )
 
@@ -74,6 +78,7 @@ FILMS = Univers(
     titre_export="original_title",
     date_fiche="release_date",
     parties=False,
+    part_kind=None,
     libelle="film",
 )
 
@@ -92,3 +97,12 @@ def resoudre(cle: str | None) -> Univers:
         attendus = ", ".join(UNIVERS)
         raise ValueError(f"univers inconnu : {cle} (attendus : {attendus})")
     return UNIVERS[cle]
+
+
+def kinds_de(univers: Univers) -> tuple[str, ...]:
+    """Tous les `kind` de `raw_source` que cet univers alimente.
+
+    Une série en occupe deux — sa fiche et ses saisons — et les deux comptent
+    quand on mesure ce qu'elle pèse sur le disque.
+    """
+    return (univers.kind,) if univers.part_kind is None else (univers.kind, univers.part_kind)

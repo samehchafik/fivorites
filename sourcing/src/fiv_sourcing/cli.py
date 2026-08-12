@@ -23,7 +23,7 @@ from fiv_sourcing.config import VENDOR_DIR, Settings, get_settings
 from fiv_sourcing.db import MigrationsNotFound, connect, migrate, pending_migrations, ping
 from fiv_sourcing.http import FetcherStats
 from fiv_sourcing.redact import SecretFilter, fingerprint, redact_dsn
-from fiv_sourcing.univers import Univers, resoudre
+from fiv_sourcing.univers import Univers, kinds_de, resoudre
 
 app = typer.Typer(help="Acquisition de données Fivorites V2 — séries", no_args_is_help=True)
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
@@ -963,7 +963,7 @@ def tmdb_stats(
             await cur.execute(
                 """
                 select kind, count(*) as lignes, count(distinct source_id) as objets,
-                       pg_size_pretty(sum(pg_column_size(payload))::bigint) as poids,
+                       sum(pg_column_size(payload))::bigint as octets,
                        max(fetched_at)::timestamp(0) as dernier
                 from raw_source where source = 'tmdb'
                 group by kind order by kind
@@ -971,9 +971,12 @@ def tmdb_stats(
             )
             rows = await cur.fetchall()
 
-            # Projection sur le catalogue entier. `pg_total_relation_size` plutôt
-            # que la taille des payloads : il inclut les index et la compression
-            # TOAST, donc il mesure ce que le disque va réellement encaisser.
+            # Ce que la table occupe réellement sur le disque, index et
+            # compression TOAST compris. C'est la mesure que `df -h` verra —
+            # mais elle porte sur la table ENTIÈRE, tous univers confondus.
+            # C'est le rapport entre elle et le poids des payloads qui sert :
+            # il donne le surcoût de structure, et celui-là s'applique à
+            # n'importe quel univers.
             await cur.execute(
                 """
                 select (select count(distinct source_id) from raw_source
@@ -990,30 +993,48 @@ def tmdb_stats(
         typer.echo("raw_source est vide.")
         return
 
+    espace = lambda n: f"{n:,}".replace(",", " ")  # noqa: E731
+
     typer.echo(f"{'type':<12}{'lignes':>9}{'objets':>9}{'poids':>12}  dernier")
-    for kind, lignes, objets, poids, dernier in rows:
-        typer.echo(f"{kind:<12}{lignes:>9}{objets:>9}{poids or '-':>12}  {dernier}")
+    for kind, lignes, objets, octets, dernier in rows:
+        typer.echo(f"{kind:<12}{lignes:>9}{objets:>9}{_octets(octets or 0):>12}  {dernier}")
+
+    # La projection, et le piège qu'elle a tendu une fois.
+    #
+    # Diviser `pg_total_relation_size` par le nombre d'œuvres de l'univers
+    # demandé donne un résultat absurde dès que deux univers cohabitent : le
+    # 2026-08-12, 9,3 Go de séries divisés par 500 films annonçaient 28,6 Mo
+    # par film et **33,6 To** pour le catalogue — faux d'un facteur 430, et
+    # assez effrayant pour dissuader de lancer la passe.
+    #
+    # On mesure donc le poids des payloads de CET univers — les deux `kind`
+    # d'une série, le seul d'un film — et on lui applique le surcoût de
+    # structure observé sur la table entière (index, TOAST). Les deux nombres
+    # viennent de requêtes qu'on faisait déjà.
+    mien = {kind for kind in kinds_de(monde)}
+    octets_univers = sum(ligne[3] or 0 for ligne in rows if ligne[0] in mien)
+    octets_payloads = sum(ligne[3] or 0 for ligne in rows)
+    surcout = (octets / octets_payloads) if octets_payloads else 1.0
 
     # Sous ~100 œuvres l'extrapolation ne vaut rien : la taille varie d'un
     # facteur dix entre un pilote sans suite et une série de quinze saisons.
-    #
-    # ⚠️ `pg_total_relation_size` mesure la table ENTIÈRE, tous univers
-    # confondus. La projection n'est donc juste que tant qu'un seul univers est
-    # collecté ; dès que les deux cohabitent, elle surestime le plus léger des
-    # deux. Le dire plutôt que de fabriquer une mesure par univers, qui
-    # demanderait de sommer les `pg_column_size` de plusieurs millions de
-    # payloads à chaque appel.
-    if faites >= 100 and catalogue:
-        par_oeuvre = octets / faites
+    if faites >= 100 and catalogue and octets_univers:
+        par_oeuvre = octets_univers / faites * surcout
         projection = par_oeuvre * catalogue
         typer.echo("")
         typer.echo(f"univers       : {monde.cle}")
         typer.echo(f"mesuré sur    : {faites} {monde.libelle}(s) collecté(s)")
-        typer.echo(f"par {monde.libelle:<10}: {_octets(par_oeuvre)}")
-        typer.echo(f"projection    : {_octets(projection)} pour {catalogue} {monde.libelle}(s)")
+        typer.echo(
+            f"par {monde.libelle:<10}: {_octets(par_oeuvre)}  (dont ×{surcout:.2f} de structure)"
+        )
+        typer.echo(
+            f"projection    : {_octets(projection)} pour {espace(catalogue)} {monde.libelle}(s)"
+        )
         typer.echo("                (index compris ; vérifier `df -h` avant la passe complète)")
-        if len(rows) > 1:
-            typer.echo("                ⚠️ plusieurs univers en base — la projection les mélange")
+        typer.echo(
+            "                ⚠️ un échantillon pris par popularité est le plus lourd du catalogue :"
+        )
+        typer.echo("                   la projection est un plafond, pas une moyenne.")
     elif catalogue:
         typer.echo("")
         typer.echo(

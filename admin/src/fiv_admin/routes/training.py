@@ -34,6 +34,7 @@ from fiv_admin.deps import Config, Conn, CurrentUser
 from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
 from fiv_admin.embed import EMBEDDER, MAX_CHARS, embed_texts, liberer_modeles
 from fiv_admin.llm import (
+    LOT_EMBEDDING,
     TARIF_EMBEDDING,
     LlmError,
     caption_openai,
@@ -1835,4 +1836,119 @@ async def diagnostic_matiere(
         "quartiles": quartiles,
         "correlation": correlation,
         "voisinage": voisinage,
+    }
+
+
+async def constituer_corpus(
+    conn: Any,
+    settings: Any,
+    modele: str,
+    *,
+    limit: int,
+    apercu: bool = False,
+    progres: Any = None,
+) -> dict[str, Any]:
+    """Encode les N œuvres les plus populaires avec un encodeur d'API, et range.
+
+    C'est la constitution du corpus de distillation : des paires
+    `dossier → vecteur du professeur`, sur lesquelles on apprendra plus tard au
+    petit modèle local à reproduire la représentation du gros. La cible est un
+    vecteur de 512 nombres et non six notes, donc chaque œuvre apporte 512
+    signaux — c'est ce qui rend l'exercice possible sur quelques milliers
+    d'œuvres là où il faudrait des millions d'étiquettes.
+
+    **Le corpus n'a pas besoin d'être noté.** N'importe quel dossier fait
+    l'affaire, y compris ceux de la traîne obscure — et c'est justement la
+    traîne que l'élève devra savoir traiter. La limite des 502 œuvres jugées,
+    qui borne tout le reste du projet, ne s'applique pas ici.
+
+    L'écriture se fait lot par lot, pas à la fin. Cinq mille œuvres font une
+    dizaine de minutes d'appels ; une interruption au huitième lot doit laisser
+    les sept premiers en base, sinon on repaie tout. La connexion étant en
+    `autocommit`, chaque lot est durable dès son insertion.
+
+    Les œuvres déjà encodées sous cette étiquette, pour ce dossier exact, sont
+    sautées : relancer la commande continue le corpus au lieu de le refaire.
+    """
+    api = _encodeur_api(modele)
+    if api is None:
+        raise LlmError(f"{modele} n'est pas un encodeur d'API — le corpus n'aurait rien à ranger")
+    nom, dims = api
+    etiquette = modele.removeprefix("openai/")
+
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select v.id as id_tmdb, coalesce(v.name, v.original_name) as titre
+            from admin.tv_card v
+            join tmdb_catalog c on c.univers = 'series' and c.id = v.id
+            order by c.popularity desc nulls last, v.vote_average desc nulls last
+            limit %s
+            """,
+            (limit,),
+        )
+        candidates = list(await cur.fetchall())
+
+    dossiers: dict[int, dict[str, Any]] = {}
+    for row in candidates:
+        built = await build_dossier(conn, row["id_tmdb"])
+        # Un dossier vide n'apprend rien ; un dossier maigre, si — c'est même
+        # exactement ce que l'élève devra savoir traiter sur la traîne.
+        if built is not None and built["text"].strip():
+            dossiers[row["id_tmdb"]] = built
+
+    connus = await _vecteurs_deja_payes(conn, dossiers, etiquette)
+    manquants = [i for i in dossiers if i not in connus]
+    devis = round(cout_encodeurs((modele,), [dossiers[i]["text"] for i in manquants]), 2)
+    if apercu or not manquants:
+        return {
+            "modele": modele,
+            "candidates": len(candidates),
+            "dossiers": len(dossiers),
+            "enCache": len(connus),
+            "aEncoder": len(manquants),
+            "cout": devis,
+            "encodes": 0,
+        }
+
+    if not settings.openai_api_key:
+        raise LlmError(f"{modele} demande OPENAI_API_KEY, absente du .env")
+
+    faits = 0
+    async with httpx.AsyncClient() as http:
+        for depart in range(0, len(manquants), LOT_EMBEDDING):
+            lot = manquants[depart : depart + LOT_EMBEDDING]
+            vecteurs = await embed_openai(
+                http,
+                api_key=settings.openai_api_key,
+                model=nom,
+                # La même troncature que le chemin local : l'élève apprendra à
+                # reproduire ce que le professeur voit, et il ne verra jamais
+                # plus que ces douze mille caractères.
+                textes=[dossiers[i]["text"][:MAX_CHARS] for i in lot],
+                dimensions=dims,
+            )
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    """
+                    insert into notation.embedding (id_tmdb, input_sha256, embedder, vector)
+                    values (%s, %s, %s, %s) on conflict do nothing
+                    """,
+                    [
+                        (i, dossiers[i]["sha256"], etiquette, Jsonb(v))
+                        for i, v in zip(lot, vecteurs, strict=True)
+                    ],
+                )
+            faits += len(lot)
+            if progres is not None:
+                progres(faits, len(manquants))
+
+    return {
+        "modele": modele,
+        "candidates": len(candidates),
+        "dossiers": len(dossiers),
+        "enCache": len(connus),
+        "aEncoder": len(manquants),
+        "cout": devis,
+        "encodes": faits,
     }

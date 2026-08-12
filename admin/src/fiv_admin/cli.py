@@ -570,6 +570,80 @@ def training_modeles(
     _run(run())
 
 
+@training_app.command("corpus")
+def training_corpus(
+    limit: Annotated[
+        int, typer.Option("--limit", "-n", min=1, help="Combien d'œuvres encoder, par popularité.")
+    ] = 5000,
+    modele: Annotated[
+        str, typer.Option("--modele", help="L'encodeur professeur, préfixé openai/.")
+    ] = "openai/text-embedding-3-large@512",
+    apercu: Annotated[
+        bool, typer.Option("--apercu", help="Compter et chiffrer, sans rien appeler.")
+    ] = False,
+) -> None:
+    """Constitue le corpus de distillation : des paires dossier → vecteur professeur.
+
+    Encode les N œuvres les plus populaires avec un encodeur d'API et range les
+    vecteurs. On apprendra ensuite au petit modèle local à les reproduire.
+
+    Pourquoi ça marche sur quelques milliers d'œuvres quand la notation en
+    demanderait des millions : la cible est un vecteur de 512 nombres, pas six
+    notes. Chaque œuvre apporte 512 signaux au lieu de six. Et le corpus n'a
+    besoin d'aucune note du juge — la limite des 502 œuvres jugées, qui borne
+    tout le reste du projet, ne s'applique pas ici.
+
+    `@512` et non les 3 072 natives : l'élève sort 512 dimensions, et une cible
+    de même forme évite d'avoir à apprendre en plus une couche de projection.
+
+    L'écriture se fait lot par lot. Une interruption laisse en base tout ce qui
+    a été encodé jusque-là, et relancer la commande reprend où elle s'était
+    arrêtée au lieu de repayer. `--apercu` chiffre avant d'engager.
+
+    Palier conseillé : 5 000 pour un premier signal, 20 000 pour un résultat
+    exploitable. On ne devine pas — on distille à chaque palier et on regarde
+    le MAE cv sur les œuvres notées, seul juge. Quand la courbe s'aplatit,
+    c'est assez.
+    """
+    from fiv_admin.llm import LlmError
+    from fiv_admin.routes.training import constituer_corpus
+
+    settings = get_settings()
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            typer.echo(f"{modele} · assemblage des dossiers…")
+
+            def montrer(faits: int, total: int) -> None:
+                typer.echo(f"  {faits}/{total} encodée(s)")
+
+            try:
+                bilan = await constituer_corpus(
+                    conn,
+                    settings,
+                    modele,
+                    limit=limit,
+                    apercu=apercu,
+                    progres=montrer,
+                )
+            except LlmError as exc:
+                typer.echo(f"ERREUR : {exc}")
+                raise typer.Exit(1) from exc
+
+            typer.echo(
+                f"\ncandidates  : {bilan['candidates']}"
+                f"\ndossiers    : {bilan['dossiers']}"
+                f"\ndéjà en base: {bilan['enCache']}"
+                f"\nà encoder   : {bilan['aEncoder']}  (~{bilan['cout']:.2f} $)"
+            )
+            if apercu:
+                typer.echo("\naperçu seul, rien n'a été appelé.")
+            else:
+                typer.echo(f"encodées    : {bilan['encodes']}")
+
+    _run(run())
+
+
 @training_app.command("diagnostic")
 def training_diagnostic(
     bareme: Annotated[
