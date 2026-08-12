@@ -1,16 +1,17 @@
 """Les univers observables et ce qu'on sait d'eux aujourd'hui.
 
-Le front propose « séries » et « films » parce que c'est le périmètre annoncé
-du projet. Plutôt que de masquer un univers que l'administration ne sait pas
-encore afficher, ou de montrer un tableau vide sans explication, l'API répond
-explicitement pourquoi, et le front le dit.
+Le front propose « séries » et « films », et les deux sont désormais servis.
+`catalog_table=None` reste le moyen de déclarer un univers annoncé mais pas
+encore collecté — `books`, `bd`, `musics` le jour venu : l'API répond alors
+explicitement pourquoi plutôt que de rendre un tableau vide qu'on prendrait
+pour une collecte à zéro.
 
-⚠️ Depuis le lot 13, `catalog_table=None` sur les films ne veut plus dire « pas
-collecté » : la collecte existe, et `sourcing` peut très bien contenir des
-centaines de milliers de fiches de films. Ce qui manque est en aval — la
-projection de vignettes `admin.movie_card`, pendant de `admin.tv_card`, sans
-laquelle la grille n'a rien à lire. Renseigner `catalog_table` avant de l'avoir
-créée donnerait une page en erreur, pas une page vide.
+Ce qu'un univers doit fournir pour être affichable : une table d'inventaire
+(`catalog_table`), la valeur d'univers qui la filtre, et une projection de
+vignettes aux colonnes de `admin.tv_card`. Cette dernière contrainte est ce qui
+garde une seule requête de grille pour tous les univers — voir
+`013_movie_card.sql`, qui traduit `title` en `name` et `release_date` en
+`first_air_date` une fois pour toutes.
 """
 
 from __future__ import annotations
@@ -25,6 +26,13 @@ class Media:
     # Table d'inventaire dans le schéma `sourcing`. None = univers pas encore
     # collecté.
     catalog_table: str | None
+    # La valeur de `tmdb_catalog.univers` et de `oeuvre.univers`. Le même
+    # entier y désigne deux œuvres différentes selon l'univers : toute lecture
+    # de l'inventaire doit le porter.
+    univers: str
+    # La projection de vignettes, dans le schéma `admin`. Mêmes colonnes d'une
+    # vue à l'autre : c'est ce qui permet à la grille de n'avoir qu'une requête.
+    card_view: str
     # `kind` de `raw_source` pour la fiche, et pour ses parties traduites.
     kind: str
     part_kind: str | None
@@ -38,6 +46,8 @@ MEDIA: dict[str, Media] = {
         key="tv",
         label="Séries",
         catalog_table="tmdb_catalog",
+        univers="series",
+        card_view="tv_card",
         kind="tv",
         part_kind="tv_season",
         part_label="saisons",
@@ -45,17 +55,14 @@ MEDIA: dict[str, Media] = {
     "movie": Media(
         key="movie",
         label="Films",
-        catalog_table=None,
+        catalog_table="tmdb_catalog",
+        univers="movies",
+        card_view="movie_card",
         kind="movie",
+        # Un film n'a pas de parties : ni saisons, ni épisodes, donc ni
+        # accordéon ni couverture par langue à afficher.
         part_kind=None,
         part_label="",
-        unavailable_reason=(
-            "La collecte des films existe depuis le lot 13 "
-            "(`tmdb export --univers movies`, puis `tmdb backfill --univers movies`) : "
-            "les films collectés sont en base, dans sourcing. "
-            "C'est l'administration qui ne sait pas encore les montrer — il lui manque "
-            "sa projection de vignettes, `admin.movie_card`, pendant de `admin.tv_card`."
-        ),
     ),
 }
 

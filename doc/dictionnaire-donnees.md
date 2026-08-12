@@ -43,7 +43,8 @@ Deux flux alimentent le tout :
 
 ## 2. `tmdb_catalog` — l'inventaire
 
-Une ligne par œuvre **connue de TMDB**, alimentée par l'export public quotidien
+Une ligne par œuvre **connue de TMDB** — 228 953 séries et 1 231 681 films au
+2026-08-12, alimentée par l'export public quotidien
 (`tv_series_ids_MM_DD_YYYY.json.gz` — aucune clé, aucun quota). Ce n'est pas du
 brut : c'est la liste de ce qui existe, la base de sondage, et le point de
 départ de toute collecte. ~229 000 lignes de séries au 2026-08-12.

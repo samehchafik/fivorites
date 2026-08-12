@@ -23,8 +23,22 @@ from fiv_admin.catalog import (
     refresh_cards,
 )
 from fiv_admin.deps import Conn, CurrentUser
+from fiv_admin.media import DEFAULT_MEDIA, MEDIA
 
 router = APIRouter()
+
+
+def _media(cle: str) -> str:
+    """Valide l'univers demandé. Liste fermée : la clé vient de la requête HTTP
+    et sert à choisir un nom de vue — une valeur libre y serait une injection."""
+    if cle not in MEDIA:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"univers inconnu : {cle} (attendus : {', '.join(MEDIA)})",
+        )
+    if MEDIA[cle].catalog_table is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, MEDIA[cle].unavailable_reason)
+    return cle
 
 
 @router.get("/catalog/cards")
@@ -32,6 +46,7 @@ async def cards(
     user: CurrentUser,
     conn: Conn,
     lang: str = Query(default="fr-FR", max_length=16),
+    media: str = Query(default=DEFAULT_MEDIA, max_length=16),
     search: str | None = Query(default=None, max_length=120),
     minPopularity: float | None = Query(default=None, ge=0),
     sort: str = Query(default="air_date"),
@@ -51,6 +66,7 @@ async def cards(
         conn,
         CardQuery(
             lang=lang,
+            media=_media(media),
             search=(search or "").strip() or None,
             min_popularity=minPopularity,
             sort=sort,
@@ -72,7 +88,7 @@ async def cards(
         # L'état de la projection accompagne chaque page : une grille vide a
         # deux causes très différentes — rien de collecté, ou une projection
         # jamais rafraîchie — et le front doit pouvoir les distinguer.
-        "projection": await cards_state(conn),
+        "projection": await cards_state(conn, media),
     }
 
 
@@ -82,12 +98,13 @@ async def work(
     conn: Conn,
     work_id: int,
     lang: str = Query(default="fr-FR", max_length=16),
+    media: str = Query(default=DEFAULT_MEDIA, max_length=16),
 ) -> dict[str, Any]:
-    detail = await fetch_work(conn, work_id, lang)
+    detail = await fetch_work(conn, work_id, lang, _media(media))
     if detail is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
-            f"aucune fiche collectée pour {work_id} — la série est peut-être au "
+            f"aucune fiche collectée pour {work_id} — l'œuvre est peut-être au "
             "catalogue sans avoir encore été téléchargée.",
         )
     return detail
@@ -126,4 +143,4 @@ async def work_sources(user: CurrentUser, conn: Conn, work_id: int) -> dict[str,
 async def refresh(user: CurrentUser, conn: Conn) -> dict[str, Any]:
     """Recalcule la projection des vignettes depuis le brut."""
     total = await refresh_cards(conn)
-    return {"projected": total, **await cards_state(conn)}
+    return {"projected": total, **await cards_state(conn, DEFAULT_MEDIA)}

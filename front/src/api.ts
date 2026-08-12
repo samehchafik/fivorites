@@ -95,7 +95,8 @@ export const api = {
 
   cards: (params: CardsParams) => request<CardsResponse>(`/api/catalog/cards?${query(params)}`),
 
-  work: (id: number, lang: string) => request<Work>(`/api/catalog/works/${id}?${query({ lang })}`),
+  work: (id: number, lang: string, media: string) =>
+    request<Work>(`/api/catalog/works/${id}?${query({ lang, media })}`),
 
   season: (id: number, seasonNumber: number, lang: string) =>
     request<SeasonDetail>(
@@ -165,6 +166,8 @@ export const api = {
 
 export interface CardsParams extends Record<string, QueryValue> {
   lang: string
+  /** L'univers affiché — `tv` ou `movie`. Décide de la projection lue. */
+  media: string
   search?: string
   minPopularity?: number | null
   sort: string

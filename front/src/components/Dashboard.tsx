@@ -156,6 +156,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   const cards = useQuery<CardsResponse>({
     queryKey: [
       'cards',
+      media,
       lang,
       gridSearch,
       grid.sort,
@@ -170,6 +171,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     queryFn: () =>
       api.cards({
         lang,
+        media,
         search: gridSearch,
         sort: grid.sort,
         order: grid.order,
@@ -180,7 +182,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
         page: gridPage,
         pageSize: grid.pageSize,
       }),
-    enabled: enabled && view === 'cards' && media === 'tv',
+    enabled: enabled && view === 'cards',
     placeholderData: keepPreviousData,
   })
 
@@ -514,6 +516,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
 
       <SeriesModal
         id={modalId}
+        media={media}
         tab={modalTab}
         onPrev={voisines.onPrev}
         onNext={voisines.onNext}

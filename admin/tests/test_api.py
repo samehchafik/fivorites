@@ -8,6 +8,7 @@ import httpx
 import psycopg
 import pytest
 import pytest_asyncio
+from psycopg.types.json import Jsonb
 
 from conftest import requires_db
 from fiv_admin.app import create_app
@@ -140,24 +141,43 @@ async def test_meta_merges_configured_and_observed_languages(client: httpx.Async
         "ar-SA"
     ] == "Arabe"
     assert [media["key"] for media in body["media"]] == ["tv", "movie"]
-    assert [media["available"] for media in body["media"]] == [True, False]
+    assert [media["available"] for media in body["media"]] == [True, True], (
+        "les deux univers sont servis depuis le lot 13"
+    )
 
 
-async def test_movies_say_why_they_are_empty(client: httpx.AsyncClient) -> None:
-    """Un univers que l'administration ne sait pas afficher répond une
-    explication, pas un tableau vide qu'on prendrait pour une collecte à zéro.
+async def test_les_deux_univers_sont_servis_et_ne_se_melangent_pas(
+    client: httpx.AsyncClient, conn: psycopg.AsyncConnection
+) -> None:
+    """Un film collecté apparaît côté films, et **jamais** côté séries.
 
-    Le motif a changé au lot 13, et c'est ce que vérifie l'assertion négative :
-    la collecte des films existe désormais, ce qui manque est en aval. Un
-    message resté sur « la collecte n'a pas commencé » enverrait relancer une
-    passe déjà faite."""
+    Le second point n'est pas de la coquetterie : les identifiants TMDB des
+    deux univers se chevauchent, et une grille qui mélangerait les deux
+    afficherait *Fight Club* dans la liste des séries.
+    """
     await login(client)
-    response = await client.get("/api/acquisition/items", params={"media": "movie"})
+    await conn.execute(
+        "insert into raw_source (source, kind, source_id, lang, http_status, payload,"
+        " payload_sha256) values ('tmdb', 'movie', '550', 'fr-FR', 200, %s, %s)",
+        (Jsonb({"title": "Fight Club", "release_date": "1999-10-15"}), b"\x99"),
+    )
+    await conn.execute("refresh materialized view admin.movie_card")
 
-    assert response.status_code == 409
-    detail = response.json()["detail"]
-    assert "movie_card" in detail
-    assert "n'a pas commencé" not in detail
+    films = (await client.get("/api/catalog/cards", params={"media": "movie"})).json()
+    assert [item["id"] for item in films["items"]] == [550]
+    assert films["items"][0]["name"] == "Fight Club", "`title` se lit sous le nom `name`"
+
+    series = (await client.get("/api/catalog/cards", params={"media": "tv"})).json()
+    assert 550 not in [item["id"] for item in series["items"]]
+
+
+async def test_un_univers_inconnu_est_refuse(client: httpx.AsyncClient) -> None:
+    """La clé sert à choisir un nom de vue : une valeur libre y serait une
+    injection, et la liste fermée est ce qui l'empêche."""
+    await login(client)
+    reponse = await client.get("/api/catalog/cards", params={"media": "livres"})
+    assert reponse.status_code == 422
+    assert "univers inconnu" in reponse.json()["detail"]
 
 
 async def test_unknown_sort_is_refused_rather_than_ignored(client: httpx.AsyncClient) -> None:

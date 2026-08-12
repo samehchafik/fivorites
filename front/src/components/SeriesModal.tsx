@@ -70,6 +70,7 @@ export function SeriesModal({
   id,
   tab,
   lang,
+  media,
   languages,
   onLang,
   onTab,
@@ -84,6 +85,10 @@ export function SeriesModal({
    *  rouvre la fiche directement sur l'atelier. */
   tab: ModalTab
   lang: string
+  /** L'univers de l'œuvre ouverte : la fiche d'un film ne se lit pas au même
+   *  `kind` de brut que celle d'une série, et les deux partagent leurs
+   *  identifiants TMDB. */
+  media: string
   languages: Language[]
   /** Changer de langue depuis la fiche change la langue de toute
    *  l'application : c'est la même donnée, et deux langues courantes
@@ -109,8 +114,8 @@ export function SeriesModal({
   const [zoom, setZoom] = useState<string | null>(null)
 
   const work = useQuery<Work>({
-    queryKey: ['work', id, lang],
-    queryFn: () => api.work(id!, lang),
+    queryKey: ['work', id, lang, media],
+    queryFn: () => api.work(id!, lang, media),
     enabled: id !== null,
   })
 

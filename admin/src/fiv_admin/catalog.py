@@ -22,10 +22,13 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from fiv_admin.media import country_of
+from fiv_admin.media import DEFAULT_MEDIA, MEDIA, country_of
 
 SOURCE = "tmdb"
-KIND_SERIES = "tv"
+# Le `kind` des saisons. Il n'a pas d'équivalent par univers parce que seules
+# les séries en ont : `fetch_season` est, par nature, une lecture de série. Le
+# `kind` des fiches, lui, vient de `media.py` — il change d'un univers à
+# l'autre.
 KIND_SEASON = "tv_season"
 
 # Le barème courant : le plus récent, la même règle que l'atelier et la ligne
@@ -119,6 +122,10 @@ PAGE_SORTS: dict[str, sql.Composable] = {
 @dataclass(frozen=True, slots=True)
 class CardQuery:
     lang: str
+    # L'univers affiché — `tv` ou `movie`. Il décide de la projection lue et du
+    # filtre sur l'inventaire ; le reste de la requête est identique, les deux
+    # vues ayant les mêmes colonnes.
+    media: str = DEFAULT_MEDIA
     search: str | None = None
     min_popularity: float | None = None
     sort: str = "air_date"
@@ -242,6 +249,7 @@ async def fetch_cards(
     conn: psycopg.AsyncConnection, q: CardQuery
 ) -> tuple[list[dict[str, Any]], int]:
     """Une page de vignettes, et le total du filtre."""
+    univers = MEDIA[q.media]
     # Le français est déjà dans la projection : inutile de rouvrir vingt-quatre
     # payloads pour retrouver ce qu'on a sous la main. C'est aussi la langue par
     # défaut, donc le cas le plus fréquent — la page d'accueil reste aussi
@@ -251,8 +259,9 @@ async def fetch_cards(
 
     params: dict[str, Any] = {
         "source": SOURCE,
-        "kind": KIND_SERIES,
-        "part_kind": KIND_SEASON,
+        "kind": univers.kind,
+        "part_kind": univers.part_kind or "",
+        "univers": univers.univers,
         "lang2": langue,
         "region": q.lang.rpartition("-")[2],
         "limit": q.page_size,
@@ -293,11 +302,11 @@ async def fetch_cards(
             sql.SQL(
                 """
                 select count(*) as total
-                from admin.tv_card v
-                left join tmdb_catalog c on c.univers = 'series' and c.id = v.id
+                from admin.{vue} v
+                left join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
                 where {where}
                 """
-            ).format(where=where),
+            ).format(where=where, vue=sql.Identifier(univers.card_view)),
             params,
         )
         row = await cur.fetchone()
@@ -313,8 +322,8 @@ async def fetch_cards(
                            v.number_of_episodes, v.vote_average, v.vote_count,
                            v.genres, v.origin_country, v.fetched_at,
                            c.popularity, c.adult
-                    from admin.tv_card v
-                    left join tmdb_catalog c on c.univers = 'series' and c.id = v.id
+                    from admin.{vue} v
+                    left join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
                     where {where}
                     order by {order}
                     limit %(limit)s offset %(offset)s
@@ -358,7 +367,7 @@ async def fetch_cards(
                     select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
                     from notation.score s
                     join sourcing.oeuvre o on o.id = s.oeuvre_id
-                    where o.univers = 'series'
+                    where o.univers = %(univers)s
                       and o.id_tmdb = any (array(select id from page))
                       and s.valeur is not null
                       and s.rubric_version = {bareme}
@@ -376,7 +385,7 @@ async def fetch_cards(
                     select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
                     from notation.score s
                     join sourcing.oeuvre o on o.id = s.oeuvre_id
-                    where o.univers = 'series'
+                    where o.univers = %(univers)s
                       and o.id_tmdb = any (array(select id from page))
                       and s.valeur is not null and s.modele = 'interne-ridge'
                       and s.rubric_version = {bareme}
@@ -403,6 +412,7 @@ async def fetch_cards(
                 """
             ).format(
                 where=where,
+                vue=sql.Identifier(univers.card_view),
                 order=order,
                 order_page=order_page,
                 bareme=sql.SQL(BAREME_COURANT),
@@ -498,7 +508,7 @@ def _shape_card(row: dict[str, Any], lang: str) -> dict[str, Any]:
 
 
 async def fetch_work(
-    conn: psycopg.AsyncConnection, work_id: int, lang: str
+    conn: psycopg.AsyncConnection, work_id: int, lang: str, media: str = DEFAULT_MEDIA
 ) -> dict[str, Any] | None:
     """La fiche complète, lue dans le brut.
 
@@ -506,12 +516,18 @@ async def fetch_work(
     par `jsonb_path_query_array` : on ne transporte pas six cents affiches pour
     en afficher dix-huit.
     """
+    univers = MEDIA[media]
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
             select r.fetched_at, r.http_status,
-                   r.payload ->> 'name'                  as name,
-                   r.payload ->> 'original_name'         as original_name,
+                   -- Un film nomme son titre `title` et sa date `release_date`.
+                   -- `coalesce` plutôt qu'une seconde requête : les deux champs
+                   -- ne coexistent jamais, et la fiche garde une seule forme
+                   -- pour le front.
+                   coalesce(r.payload ->> 'name', r.payload ->> 'title')   as name,
+                   coalesce(r.payload ->> 'original_name',
+                            r.payload ->> 'original_title')                as original_name,
                    r.payload ->> 'overview'              as overview,
                    r.payload ->> 'tagline'               as tagline,
                    r.payload ->> 'poster_path'           as poster_path,
@@ -598,7 +614,7 @@ async def fetch_work(
             """,
             {
                 "source": SOURCE,
-                "kind": KIND_SERIES,
+                "kind": univers.kind,
                 "id": str(work_id),
                 "country": country_of(lang) or "",
                 "lang2": lang.split("-")[0],
@@ -615,26 +631,32 @@ async def fetch_work(
 
         # L'état de collecte de chaque saison, langue par langue : c'est ce qui
         # dit à l'accordéon quelles langues il peut proposer.
-        await cur.execute(
-            """
-            select split_part(source_id, '/', 2) as season,
-                   lang,
-                   max(http_status) as http_status,
-                   max(fetched_at) as fetched_at
-            from raw_source
-            where source = %(source)s and kind = %(part_kind)s
-              and split_part(source_id, '/', 1) = %(id)s
-              and lang is not null
-            group by 1, 2
-            """,
-            {"source": SOURCE, "part_kind": KIND_SEASON, "id": str(work_id)},
-        )
-        collected = await cur.fetchall()
+        #
+        # Sautée pour un univers sans parties : un film n'a pas de saison, et
+        # la requête rendrait de toute façon zéro ligne — autant ne pas la
+        # poser, et dire pourquoi.
+        collected: list[dict[str, Any]] = []
+        if univers.part_kind is not None:
+            await cur.execute(
+                """
+                select split_part(source_id, '/', 2) as season,
+                       lang,
+                       max(http_status) as http_status,
+                       max(fetched_at) as fetched_at
+                from raw_source
+                where source = %(source)s and kind = %(part_kind)s
+                  and split_part(source_id, '/', 1) = %(id)s
+                  and lang is not null
+                group by 1, 2
+                """,
+                {"source": SOURCE, "part_kind": univers.part_kind, "id": str(work_id)},
+            )
+            collected = await cur.fetchall()
 
         await cur.execute(
             "select popularity, adult, exported_on from tmdb_catalog"
-            " where univers = 'series' and id = %s",
-            (work_id,),
+            " where univers = %s and id = %s",
+            (univers.univers, work_id),
         )
         catalog = await cur.fetchone()
 
@@ -646,12 +668,12 @@ async def fetch_work(
             select distinct on (s.axe) s.axe, s.valeur
             from notation.score s
             join sourcing.oeuvre o on o.id = s.oeuvre_id
-            where o.univers = 'series' and o.id_tmdb = %s and s.valeur is not null
+            where o.univers = %s and o.id_tmdb = %s and s.valeur is not null
               and s.rubric_version = {BAREME_COURANT}
               and s.modele <> 'interne-ridge' and s.modele not like 'claude%%'
             order by s.axe, s.scored_at desc
             """,
-            (work_id,),
+            (univers.univers, work_id),
         )
         axis_scores = {row["axe"]: float(row["valeur"]) for row in await cur.fetchall()}
 
@@ -661,12 +683,12 @@ async def fetch_work(
             select distinct on (s.axe) s.axe, s.valeur
             from notation.score s
             join sourcing.oeuvre o on o.id = s.oeuvre_id
-            where o.univers = 'series' and o.id_tmdb = %s and s.valeur is not null
+            where o.univers = %s and o.id_tmdb = %s and s.valeur is not null
               and s.modele = 'interne-ridge'
               and s.rubric_version = {BAREME_COURANT}
             order by s.axe, s.scored_at desc
             """,
-            (work_id,),
+            (univers.univers, work_id),
         )
         internal_scores = {row["axe"]: float(row["valeur"]) for row in await cur.fetchall()}
 
@@ -687,12 +709,12 @@ async def fetch_work(
                    v.definition, v.saison
             from sourcing.video v
             join sourcing.oeuvre o on o.id = v.oeuvre_id
-            where o.univers = 'series' and o.id_tmdb = %s and v.vivante is not false
+            where o.univers = %s and o.id_tmdb = %s and v.vivante is not false
             order by v.priorite,
                      case v.lang when 'fr' then 0 when 'en' then 1 else 2 end,
                      v.publie_le desc nulls last
             """,
-            (work_id,),
+            (univers.univers, work_id),
         )
         videos = [
             {
@@ -937,25 +959,35 @@ async def fetch_season(
 
 
 async def refresh_cards(conn: psycopg.AsyncConnection) -> int:
-    """Recalcule la projection et renvoie le nombre de vignettes.
+    """Recalcule **toutes** les projections et renvoie le nombre de vignettes.
+
+    Toutes, et non celle de l'univers courant : le bouton de l'admin n'a pas
+    d'univers, et un rafraîchissement qui n'en couvrirait qu'un laisserait
+    l'autre en retard sans que rien ne le dise.
 
     `concurrently` : le rafraîchissement ne prend pas de verrou exclusif, donc
     la grille reste consultable pendant qu'il tourne. Il exige l'index unique
     posé par la migration, et refuse de s'exécuter sur une vue jamais peuplée —
     d'où le repli sur un rafraîchissement bloquant au tout premier appel.
     """
-    try:
-        await conn.execute("refresh materialized view concurrently admin.tv_card")
-    except psycopg.errors.ObjectNotInPrerequisiteState:
-        await conn.execute("refresh materialized view admin.tv_card")
+    total = 0
+    for media in MEDIA.values():
+        if media.catalog_table is None:
+            continue
+        vue = sql.Identifier("admin", media.card_view)
+        try:
+            await conn.execute(sql.SQL("refresh materialized view concurrently {}").format(vue))
+        except psycopg.errors.ObjectNotInPrerequisiteState:
+            await conn.execute(sql.SQL("refresh materialized view {}").format(vue))
 
-    async with conn.cursor() as cur:
-        await cur.execute("select count(*) from admin.tv_card")
-        row = await cur.fetchone()
-    return int(row[0]) if row else 0
+        async with conn.cursor() as cur:
+            await cur.execute(sql.SQL("select count(*) from {}").format(vue))
+            row = await cur.fetchone()
+        total += int(row[0]) if row else 0
+    return total
 
 
-async def cards_state(conn: psycopg.AsyncConnection) -> dict[str, Any]:
+async def cards_state(conn: psycopg.AsyncConnection, media: str = DEFAULT_MEDIA) -> dict[str, Any]:
     """De quoi dire au front si la projection est vide, en retard, ou à jour.
 
     Le point délicat est le sens de « en retard ». Il se mesurait contre
@@ -971,8 +1003,13 @@ async def cards_state(conn: psycopg.AsyncConnection) -> dict[str, Any]:
     recalculait maintenant. Par construction, l'égalité signifie « à jour », et
     aucune incohérence en amont ne peut plus allumer le bandeau à tort.
     """
+    univers = MEDIA[media]
     async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute("select count(*) as total, max(fetched_at) as last_at from admin.tv_card")
+        await cur.execute(
+            sql.SQL("select count(*) as total, max(fetched_at) as last_at from {}").format(
+                sql.Identifier("admin", univers.card_view)
+            )
+        )
         projection = await cur.fetchone() or {}
 
         # Exactement le filtre de `002_admin_cards.sql`. Parcours d'index seul
@@ -986,7 +1023,7 @@ async def cards_state(conn: psycopg.AsyncConnection) -> dict[str, Any]:
             where source = %(source)s and kind = %(kind)s
               and http_status between 200 and 299 and payload is not null
             """,
-            {"source": SOURCE, "kind": KIND_SERIES},
+            {"source": SOURCE, "kind": univers.kind},
         )
         projetables = await cur.fetchone() or {}
 
@@ -998,7 +1035,7 @@ async def cards_state(conn: psycopg.AsyncConnection) -> dict[str, Any]:
             from fetch_state
             where source = %(source)s and kind = %(kind)s and last_success_at is not null
             """,
-            {"source": SOURCE, "kind": KIND_SERIES},
+            {"source": SOURCE, "kind": univers.kind},
         )
         collected = await cur.fetchone() or {}
 

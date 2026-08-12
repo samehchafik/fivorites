@@ -413,7 +413,7 @@ migrations), C avant F (sinon les 43/521 recommencent), et §11 avant A.
 | **D** | Le dossier | `build_dossier` variante film, `TAGLINE`, `MIN_CHARS` recalibré | 1 j | la notation |
 | **E** | Le barème | `empreinte-v4` mixte, 48 ancres, re-notation des 502 séries (~2 $) | 1 j | l'espace commun |
 | **F** | La notation | `training note --univers movies -n 2000`, puis `training poids` | 0,5 j + ~8 $ | les premières mesures |
-| **G** | Le front | `admin.movie_card`, grille films, saisons masquées, vidéos | 1 j | l'exploitation — **c'est ce qui reste du lot B** |
+| ~~**G**~~ | ~~Le front~~ | **fait le 2026-08-12** — `admin.movie_card` aux colonnes de `tv_card`, `media` sur la grille, la fiche et l'état de projection ; l'accordéon des saisons se saute sur un univers sans parties | — | l'exploitation |
 
 Après F, la première chose à produire est **le tableau du §3 de la note
 série** — ACP, dimensions effectives, `|r|` moyen, paire la plus liée — et à
