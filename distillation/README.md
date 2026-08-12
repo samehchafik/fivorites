@@ -70,24 +70,32 @@ uv run python distiller.py --corpus corpus.jsonl --sortie eleve-distille
 
 ### Sur le serveur, sans GPU
 
-Installer torch **en version processeur** — la roue par défaut embarque CUDA,
-soit deux gigaoctets inutiles ici :
+En conteneur, comme le reste : Debian 11 ne fournit que Python 3.9, et rien
+n'est installé hors Docker sur cette machine. L'image embarque torch **en
+version processeur** — la roue par défaut apporte deux gigaoctets de CUDA pour
+du matériel qui n'existe pas ici — et le modèle de départ, téléchargé à la
+construction pour qu'un entraînement de vingt heures ne meure pas à la première
+minute sur un aléa réseau.
 
 ```bash
-uv pip install torch --index-url https://download.pytorch.org/whl/cpu
-uv sync --inexact
+sudo docker compose --profile cli build distillation
 ```
 
-Puis, détaché, parce que ça dure une nuit ou deux :
-
-```bash
-nohup uv run python distiller.py --corpus corpus.jsonl --sortie eleve-distille \
-    --longueur 256 --geler 4 --lot 16 --fils 4 > distillation.log 2>&1 &
-```
+Le corpus doit être dans `export/`, où `training corpus-export` l'a écrit :
 
 ```bash
-tail -f distillation.log
+sudo docker compose run --rm -d distillation \
+    --corpus corpus.jsonl --sortie eleve-distille \
+    --longueur 256 --geler 4 --lot 16 --fils 4
 ```
+
+```bash
+sudo docker logs --follow $(sudo docker ps -q --filter ancestor=fivorites-v2/distillation:latest)
+```
+
+Tout vit dans `export/` : le corpus lu, `reprise.pt` écrit, l'élève produit.
+Rien dans le conteneur — c'est la condition pour qu'une coupure ne coûte que
+les derniers lots.
 
 Les trois réglages qui rendent ça tenable :
 
@@ -103,6 +111,19 @@ Les trois réglages qui rendent ça tenable :
 
 `--limite 8000` coupe le corpus si tu veux un premier résultat en une nuit
 plutôt qu'un résultat complet en deux.
+
+### Copier l'élève dans l'image admin
+
+Une fois `export/eleve-distille/` produit, il faut qu'`admin` le voie. Le plus
+simple, sans reconstruire d'image : le monter.
+
+```yaml
+    volumes:
+      - ./www:/srv/www:ro
+      - ./export/eleve-distille:/opt/models/eleve-distille:ro
+```
+
+Puis `EMBEDDER=local:/opt/models/eleve-distille` dans le `.env`.
 
 ### La reprise
 

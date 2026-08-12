@@ -44,6 +44,31 @@ services:
       ENRICH_RATE_LIMIT: ${ENRICH_RATE_LIMIT:-2}
       TMDB_SEASON_LANGUAGES: ${TMDB_SEASON_LANGUAGES:-fr-FR,en-US,es-ES,ar-SA,tr-TR}
 
+  # --- Distillation ----------------------------------------------------------
+  #
+  # Apprendre au petit encodeur local à reproduire la représentation du gros.
+  # Lancé à la demande, une fois tous les quelques mois, et long : comptez une
+  # dizaine d'heures sur processeur. Voir distillation/README.md.
+  #
+  # Tout passe par `./export` : le corpus y arrive (`training corpus-export`),
+  # la reprise s'y écrit, l'élève en sort. Rien ne vit dans le conteneur, ce qui
+  # est la condition pour qu'une coupure ne coûte que les derniers lots.
+  #
+  #   mkdir -p export && sudo chown 10002:10002 export
+  #   docker compose --profile cli build distillation
+  #   docker compose run --rm -d distillation --corpus corpus.jsonl \
+  #       --sortie eleve-distille --longueur 256 --geler 4 --lot 16 --fils 4
+  distillation:
+    build:
+      context: ./distillation
+    image: fivorites-v2/distillation:latest
+    profiles: ["cli"]
+    volumes:
+      - ./export:/travail
+    # Un entraînement qui rend la main en dix secondes n'existe pas : il faut
+    # laisser le temps d'écrire la reprise avant le SIGKILL.
+    stop_grace_period: 120s
+
   # --- Administration --------------------------------------------------------
   #
   # Service permanent, contrairement à `sourcing` : il répond en HTTP.
