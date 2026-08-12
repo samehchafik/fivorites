@@ -43,14 +43,20 @@ Deux flux alimentent le tout :
 
 ## 2. `tmdb_catalog` — l'inventaire
 
-Une ligne par série **connue de TMDB**, alimentée par l'export public quotidien
+Une ligne par œuvre **connue de TMDB**, alimentée par l'export public quotidien
 (`tv_series_ids_MM_DD_YYYY.json.gz` — aucune clé, aucun quota). Ce n'est pas du
 brut : c'est la liste de ce qui existe, la base de sondage, et le point de
-départ de toute collecte. ~228 500 lignes.
+départ de toute collecte. ~229 000 lignes de séries au 2026-08-12.
+
+La clé primaire est `(univers, id)` depuis le lot 12, et ce n'est pas de la
+prudence : sans elle, le premier `on conflict (id) do update` d'un export de
+films remplacerait les séries qui portent les mêmes numéros — sans erreur, et
+sans retour en arrière.
 
 | Colonne | Type | Signification |
 |---|---|---|
-| `id` | integer, **PK** | l'id TMDB de la série — l'identifiant premier de tout le projet |
+| `univers` | text, **PK** | `series` \| `movies`. ⚠️ Ajouté au lot 12 : les identifiants TMDB de films et de séries se chevauchent, `1399` désigne *Game of Thrones* **et** un film |
+| `id` | integer, **PK** | l'id TMDB — unique **dans son univers**, jamais seul |
 | `original_name` | text | le titre original (dans l'alphabet d'origine) |
 | `popularity` | real | la métrique d'usage du *site* TMDB. ⚠️ jamais un filtre : biais occidental mesuré (facteur 6 contre l'écriture arabe) |
 | `adult` | boolean | le drapeau TMDB |
@@ -154,8 +160,15 @@ l'enrichissement d'une série).
 
 Aucun identifiant universel n'existe dehors (la moitié du Wikidata « séries »
 ignore TMDB ; TVmaze ne porte jamais d'id TMDB) : **le nôtre est `oeuvre.id`**.
-C'est l'`oeuvre_id` que la couche 2 (notation) attend, et l'identité à laquelle
-la couche 1 (`catalog.series`, lot 4) se raccrochera.
+C'est l'`oeuvre_id` que la couche 2 (notation) attendait — elle l'utilise
+depuis le lot 12 — et l'identité à laquelle la couche 1 (`catalog.series`,
+lot 4) se raccrochera.
+
+Toute la notation s'y range désormais : `notation.score`, `training_run`,
+`media_caption`, `embedding`, plus `sourcing.video` et `video_scan`. Une note
+ne dit plus « la série TMDB 1399 vaut 8 en action » mais « l'œuvre 4212 vaut 8
+en action » — et c'est le pivot qui sait de quelle œuvre il s'agit, dans quel
+univers, chez quelles sources.
 
 | Colonne | Signification |
 |---|---|
@@ -166,11 +179,26 @@ la couche 1 (`catalog.series`, lot 4) se raccrochera.
 | `titre`, `annee` | pour les œuvres hors TMDB c'est tout ce qu'on a ; sinon confort de lecture |
 | `created_at` | — |
 
-Créée **paresseusement** à l'enrichissement (inutile de fabriquer 228 000
-lignes dont 64 % n'auront jamais d'enrichissement). Les identifiants appris en
-route remontent par `coalesce` — on complète, on n'écrase pas — et une
-collision d'unicité est journalisée « **réconciliation à faire** » : la fusion
-de deux identités est un geste humain, jamais un effet de bord.
+Créée **à la collecte** depuis le lot 12 : une œuvre existe dès que sa fiche a
+été téléchargée. Elle naissait auparavant à l'enrichissement, ce qui suffisait
+tant que le pivot ne servait qu'à `riche_source` ; ça ne suffit plus depuis que
+la notation s'y range — une série collectée doit pouvoir être notée sans avoir
+été enrichie, et l'administration n'écrit jamais dans `sourcing`.
+
+Conséquence sur la lecture : **la présence du pivot ne dit plus « enrichie »**.
+Ce sont ses identifiants externes qui le disent, eux seuls ne pouvant venir que
+de Wikidata, d'IMDb ou de TVmaze.
+
+⚠️ Aucune clé étrangère vers `tmdb_catalog`, et c'est délibéré : l'inventaire
+est une base de sondage remplie une fois par jour, une série créée aujourd'hui
+apparaît dans `/tv/changes` — donc peut être collectée — avant d'entrer dans
+l'export de demain. Faire dépendre l'identité de l'inventaire ferait échouer
+`tmdb fetch --id` sur une nouveauté parfaitement réelle.
+
+Les identifiants appris en route remontent par `coalesce` — on complète, on
+n'écrase pas — et une collision d'unicité est journalisée « **réconciliation à
+faire** » : la fusion de deux identités est un geste humain, jamais un effet de
+bord.
 
 ---
 
@@ -232,7 +260,7 @@ export quotidien ──► tmdb_catalog (first_seen_at)          « elle existe 
         backfill ──► raw_source tv + tv_season×5           « collectée »
                      fetch_state tmdb/tv (last_success_at)
       tmdb dates ──► tmdb_catalog.first_air_date           « datée »
-          enrich ──► oeuvre (le pivot naît ici)            « identifiée »
+        backfill ──► oeuvre (le pivot naît ici, lot 12)    « identifiée »
                      riche_source wikidata/wikipedia×n/tvmaze  « enrichie »
                      fetch_state wikidata/lookup           « ne sera pas retentée »
  catalog refresh ──► admin.tv_card                         « visible dans l'admin »

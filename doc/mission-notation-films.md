@@ -113,6 +113,13 @@ série. Ce n'est pas un risque théorique : c'est ce qui se passe au premier
 
 ### Trois issues
 
+*(Écrit avant la décision. Le lot A a retenu l'option C et l'a appliquée le
+2026-08-12 — migrations `sourcing/012_univers.sql` et
+`admin/012_notation_oeuvre.sql`. Un point n'avait pas été anticipé : le pivot
+ne pouvait pas garder de clé étrangère vers `tmdb_catalog`, sous peine de faire
+échouer `tmdb fetch --id` sur une série collectée avant d'entrer dans l'export.
+Voir le §5 du dictionnaire de données.)*
+
 | Option | Ce qu'elle coûte | Ce qu'elle laisse |
 |---|---|---|
 | **A.** `(univers, id_tmdb)` partout | 5 migrations, +1 colonne dans 5 tables, toutes les jointures à doubler | une clé composite dans chaque requête, et toujours rien pour les œuvres hors TMDB |
@@ -400,7 +407,7 @@ migrations), C avant F (sinon les 43/521 recommencent), et §11 avant A.
 | # | Lot | Contenu | Effort | Débloque |
 |---|---|---|---|---|
 | **0** | Les mesures | §11 — quatre sondes, aucune ligne de code | ½ j | tout le dimensionnement |
-| **A** | L'identité | `tmdb_catalog (univers, id)` ; `oeuvre_id` dans `score`, `training_run`, `media_caption`, `video` ; ~120 occurrences côté admin | 2 j | **tout**, et testable sur les séries seules |
+| ~~**A**~~ | ~~L'identité~~ | **fait le 2026-08-12** — `tmdb_catalog (univers, id)` ; `oeuvre_id` dans `score`, `training_run`, `media_caption`, `embedding`, `video`, `video_scan` | — | **tout**, et validé sur les séries seules |
 | **B** | La collecte | export films, `MOVIE_APPEND`, `collect_movie`, `movie_card`, `--univers` | 2 j | le front montre les films |
 | **C** | L'enrichissement | Wikidata `P4947`/`Q11424`, Wikipédia, TVmaze retiré | 1 j | le dossier film |
 | **D** | Le dossier | `build_dossier` variante film, `TAGLINE`, `MIN_CHARS` recalibré | 1 j | la notation |

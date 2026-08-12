@@ -14,7 +14,9 @@
 create table notation.training_run (
     id bigserial primary key,
 
-    id_tmdb       integer not null references sourcing.tmdb_catalog (id) on delete cascade,
+    -- Sans clé étrangère : la migration 012 la remplace par `oeuvre_id`, qui la
+    -- porte. Voir 003_notation.sql pour le raisonnement.
+    id_tmdb       integer not null,
     -- La fiche brute qui a nourri le dossier au moment de l'essai. `set null`
     -- et non cascade : si une purge du brut emportait la fiche, le journal
     -- de l'essai doit survivre — c'est lui, l'historique.

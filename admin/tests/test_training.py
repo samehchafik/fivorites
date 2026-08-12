@@ -41,11 +41,20 @@ PASSWORD = "un mot de passe assez long"
 AXES = ["luminosite", "intensite"]
 
 
-async def seed_series(conn: psycopg.AsyncConnection, id_tmdb: int = 1399) -> None:
-    """Une série collectée : fiche avec traduction anglaise, une saison en-US."""
+async def seed_series(conn: psycopg.AsyncConnection, id_tmdb: int = 1399) -> int:
+    """Une série collectée : fiche avec traduction anglaise, une saison en-US.
+
+    Renvoie son `oeuvre_id` — le pivot sous lequel la notation range tout
+    depuis le lot 12. La collecte le crée en même temps que la fiche ; ce seed
+    fait la même chose, sans quoi il décrirait une base qui n'existe pas.
+    """
     await conn.execute(
         "insert into tmdb_catalog (id, original_name, popularity, exported_on)"
         " values (%s, 'Game of Thrones', 400, current_date) on conflict do nothing",
+        (id_tmdb,),
+    )
+    await conn.execute(
+        "insert into oeuvre (univers, id_tmdb) values ('series', %s) on conflict do nothing",
         (id_tmdb,),
     )
     payload = {
@@ -100,6 +109,12 @@ async def seed_series(conn: psycopg.AsyncConnection, id_tmdb: int = 1399) -> Non
         " payload_sha256) values ('tmdb', 'tv_season', %s, 'en-US', 200, %s, sha256(%s::bytea))",
         (f"{id_tmdb}/s1", Jsonb(season), f"{id_tmdb}/s1"),
     )
+    row = await (
+        await conn.execute(
+            "select id from oeuvre where univers = 'series' and id_tmdb = %s", (id_tmdb,)
+        )
+    ).fetchone()
+    return row[0]  # type: ignore[index]
 
 
 @pytest_asyncio.fixture
@@ -322,7 +337,8 @@ async def test_phase1_note_avec_les_deux_juges_et_mesure_l_ecart(
     async with conn.cursor() as cur:
         await cur.execute(
             "select count(*), count(distinct modele), count(distinct prompt_sha256)"
-            " from notation.score where id_tmdb = 1399"
+            " from notation.score s join oeuvre o on o.id = s.oeuvre_id"
+            " where o.id_tmdb = 1399"
         )
         lignes, modeles, prompts = await cur.fetchone()
     assert lignes == len(AXES) * 2
@@ -333,8 +349,9 @@ async def test_phase1_note_avec_les_deux_juges_et_mesure_l_ecart(
     # fiche brute référencée, les deux verdicts côte à côte.
     async with conn.cursor() as cur:
         await cur.execute(
-            "select id, raw_source_id, prompt, openai, claude, claude_at"
-            " from notation.training_run where id_tmdb = 1399"
+            "select t.id, t.raw_source_id, t.prompt, t.openai, t.claude, t.claude_at"
+            " from notation.training_run t join oeuvre o on o.id = t.oeuvre_id"
+            " where o.id_tmdb = 1399"
         )
         runs = await cur.fetchall()
     assert len(runs) == 1
@@ -402,8 +419,9 @@ async def test_phase1_sans_cle_anthropic_note_avec_openai_seul(
 
     async with conn.cursor() as cur:
         await cur.execute(
-            "select modele, count(*) from notation.score where id_tmdb = 1399"
-            " group by modele order by modele"
+            "select s.modele, count(*) from notation.score s"
+            " join oeuvre o on o.id = s.oeuvre_id where o.id_tmdb = 1399"
+            " group by s.modele order by s.modele"
         )
         assert await cur.fetchall() == [("claude-web-manuel", 2), ("gpt-test", len(AXES))]
 
@@ -412,7 +430,8 @@ async def test_phase1_sans_cle_anthropic_note_avec_openai_seul(
     # ligne, les deux verdicts dessus.
     async with conn.cursor() as cur:
         await cur.execute(
-            "select openai, claude, claude_at from notation.training_run where id_tmdb = 1399"
+            "select t.openai, t.claude, t.claude_at from notation.training_run t"
+            " join oeuvre o on o.id = t.oeuvre_id where o.id_tmdb = 1399"
         )
         runs = await cur.fetchall()
     assert len(runs) == 1
@@ -468,14 +487,14 @@ async def test_entrainement_puis_prediction_interne(
     # testerait surtout la patience du juge simulé).
     for n in range(12):
         id_tmdb = 3000 + n
-        await seed_series(conn, id_tmdb)
+        oeuvre_id = await seed_series(conn, id_tmdb)
         async with conn.cursor() as cur:
             for axe in AXES:
                 await cur.execute(
-                    "insert into notation.score (id_tmdb, axe, valeur, confiance,"
+                    "insert into notation.score (oeuvre_id, axe, valeur, confiance,"
                     " rubric_version, modele, input_sha256, prompt_sha256)"
                     " values (%s, %s, %s, 0.8, 'v-poids', 'gpt-test', 'sha-in', 'sha-p')",
-                    (id_tmdb, axe, 4 + (n % 5)),
+                    (oeuvre_id, axe, 4 + (n % 5)),
                 )
 
     entrainement = await client.post(
@@ -513,8 +532,9 @@ async def test_entrainement_puis_prediction_interne(
     # Le journal porte le vecteur interne, à côté des verdicts.
     async with conn.cursor() as cur:
         await cur.execute(
-            "select interne, interne_at from notation.training_run"
-            " where id_tmdb = 1399 and rubric_version = 'v-poids'"
+            "select t.interne, t.interne_at from notation.training_run t"
+            " join oeuvre o on o.id = t.oeuvre_id"
+            " where o.id_tmdb = 1399 and t.rubric_version = 'v-poids'"
         )
         interne, interne_at = await cur.fetchone()
     assert set(interne.keys()) == set(AXES)
@@ -529,7 +549,8 @@ async def test_entrainement_puis_prediction_interne(
     # La prédiction interne est stockée sous son propre nom de modèle.
     async with conn.cursor() as cur:
         await cur.execute(
-            "select count(*) from notation.score where id_tmdb = 1399 and modele = 'interne-ridge'"
+            "select count(*) from notation.score s join oeuvre o on o.id = s.oeuvre_id"
+            " where o.id_tmdb = 1399 and s.modele = 'interne-ridge'"
         )
         assert (await cur.fetchone())[0] == len(AXES)
 
@@ -547,21 +568,21 @@ async def test_l_entrainement_regenere_les_oeuvres_deja_jugees(
 
     for n in range(12):
         id_tmdb = 5000 + n
-        await seed_series(conn, id_tmdb)
+        oeuvre_id = await seed_series(conn, id_tmdb)
         async with conn.cursor() as cur:
             for axe in AXES:
                 await cur.execute(
-                    "insert into notation.score (id_tmdb, axe, valeur, confiance,"
+                    "insert into notation.score (oeuvre_id, axe, valeur, confiance,"
                     " rubric_version, modele, input_sha256, prompt_sha256)"
                     " values (%s, %s, %s, 0.8, 'v-regen', 'gpt-test', 'sha-in', 'sha-p')",
-                    (id_tmdb, axe, 3 + (n % 6)),
+                    (oeuvre_id, axe, 3 + (n % 6)),
                 )
             # Seules les trois premières ont un essai journalisé avec verdict.
             if n < 3:
                 await cur.execute(
-                    "insert into notation.training_run (id_tmdb, rubric_version, prompt,"
+                    "insert into notation.training_run (oeuvre_id, rubric_version, prompt,"
                     " dossier_sha256, openai) values (%s, 'v-regen', %s, 'sha-in', %s)",
-                    (id_tmdb, "r" * 60, Jsonb({"model": "gpt-test", "scores": {}})),
+                    (oeuvre_id, "r" * 60, Jsonb({"model": "gpt-test", "scores": {}})),
                 )
 
     entrainement = await client.post(
@@ -625,14 +646,14 @@ async def test_le_journal_expose_le_vecteur_genere(
 
     for n in range(12):
         id_tmdb = 6000 + n
-        await seed_series(conn, id_tmdb)
+        oeuvre_id = await seed_series(conn, id_tmdb)
         async with conn.cursor() as cur:
             for axe in AXES:
                 await cur.execute(
-                    "insert into notation.score (id_tmdb, axe, valeur, confiance,"
+                    "insert into notation.score (oeuvre_id, axe, valeur, confiance,"
                     " rubric_version, modele, input_sha256, prompt_sha256)"
                     " values (%s, %s, %s, 0.8, 'v-relu', 'gpt-test', 'sha-in', 'sha-p')",
-                    (id_tmdb, axe, 4 + (n % 5)),
+                    (oeuvre_id, axe, 4 + (n % 5)),
                 )
 
     assert (
@@ -680,16 +701,17 @@ def test_la_selection_des_visuels_est_deterministe_et_votee() -> None:
 
 
 async def test_le_dossier_integre_saisons_et_legendes(conn: psycopg.AsyncConnection) -> None:
-    await seed_series(conn, 2100)
+    oeuvre_id = await seed_series(conn, 2100)
     async with conn.cursor() as cur:
         for url, kind, label, caption in [
             ("https://image.tmdb.org/t/p/w780/e1.jpg", "still", "S01E01", "bright open field"),
             ("https://image.tmdb.org/t/p/w780/a.jpg", "backdrop", "backdrop 1", "dark castle"),
         ]:
             await cur.execute(
-                "insert into notation.media_caption (id_tmdb, url, kind, label, caption, modele)"
-                " values (2100, %s, %s, %s, %s, 'gpt-vision-test')",
-                (url, kind, label, caption),
+                "insert into notation.media_caption"
+                " (oeuvre_id, url, kind, label, caption, modele)"
+                " values (%s, %s, %s, %s, %s, 'gpt-vision-test')",
+                (oeuvre_id, url, kind, label, caption),
             )
 
     built = await build_dossier(conn, 2100)

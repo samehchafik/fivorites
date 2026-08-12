@@ -81,7 +81,7 @@ async def mark_changed(
     moment = at or datetime.now(UTC)
     async with conn.cursor() as cur:
         await cur.execute(
-            "update tmdb_catalog set changed_at = %s where id = any(%s)",
+            "update tmdb_catalog set changed_at = %s where univers = 'series' and id = any(%s)",
             (moment, list(ids)),
         )
         return cur.rowcount

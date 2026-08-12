@@ -86,11 +86,12 @@ async def pending_ids(
             from tmdb_catalog c
             left join fetch_state f
                    on f.source = 'tmdb' and f.kind = 'tv' and f.source_id = c.id::text
-            where f.last_success_at is null
-               or (c.changed_at is not null and c.changed_at > f.last_success_at)
-               or (%(refresh_after)s::int is not null
-                   and f.last_success_at < now()
-                                         - make_interval(days => %(refresh_after)s::int))
+            where c.univers = 'series'
+              and (f.last_success_at is null
+                   or (c.changed_at is not null and c.changed_at > f.last_success_at)
+                   or (%(refresh_after)s::int is not null
+                       and f.last_success_at < now()
+                                             - make_interval(days => %(refresh_after)s::int)))
             order by {ORDERS[order]}
             limit %(limit)s
             """,  # noqa: S608 — `order` est validé contre ORDERS juste au-dessus

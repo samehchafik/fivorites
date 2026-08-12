@@ -428,7 +428,7 @@ def videos_check(
             vivantes = mortes = reportees = 0
             fetcher = build_fetcher(settings)
             async with fetcher:
-                for numero, (id_tmdb, site, cle) in enumerate(cibles, 1):
+                for numero, (oeuvre_id, site, cle) in enumerate(cibles, 1):
                     try:
                         ok, statut = await canal.verifier_une(fetcher, site, cle)
                     except canal.IndisponibleTemporairement:
@@ -437,7 +437,7 @@ def videos_check(
                         # disparaître tout le catalogue d'un coup.
                         reportees += 1
                         continue
-                    await canal.marquer(conn, id_tmdb, site, cle, vivante=ok, statut=statut)
+                    await canal.marquer(conn, oeuvre_id, site, cle, vivante=ok, statut=statut)
                     vivantes, mortes = vivantes + ok, mortes + (not ok)
                     if numero % 500 == 0:
                         typer.echo(f"  {numero}/{len(cibles)} · {mortes} morte(s)")
@@ -625,7 +625,7 @@ def tmdb_dates() -> None:
             async with conn.cursor() as cur:
                 await cur.execute(
                     "select count(*) filter (where first_air_date is not null), count(*) "
-                    "from tmdb_catalog"
+                    "from tmdb_catalog where univers = 'series'"
                 )
                 datees, total = await cur.fetchone()
             return majs, datees, total
@@ -851,8 +851,9 @@ def tmdb_catalog() -> None:
                 """
                 select count(*), count(*) filter (where adult),
                        max(exported_on), count(*) filter (where exported_on < (
-                           select max(exported_on) from tmdb_catalog))
-                from tmdb_catalog
+                           select max(exported_on) from tmdb_catalog
+                           where univers = 'series'))
+                from tmdb_catalog where univers = 'series'
                 """
             )
             resume = await cur.fetchone()
@@ -866,7 +867,7 @@ def tmdb_catalog() -> None:
                 from (
                     select popularity,
                            ntile(10) over (order by popularity desc) as decile
-                    from tmdb_catalog
+                    from tmdb_catalog where univers = 'series'
                 ) t
                 group by decile order by decile
                 """
@@ -919,7 +920,7 @@ def tmdb_stats() -> None:
                 select (select count(distinct source_id) from raw_source
                         where source = 'tmdb' and kind = 'tv'),
                        pg_total_relation_size('raw_source'),
-                       (select count(*) from tmdb_catalog)
+                       (select count(*) from tmdb_catalog where univers = 'series')
                 """
             )
             return rows, await cur.fetchone()

@@ -212,6 +212,16 @@ SEASON_1_AR = {
 }
 
 
+def pivot(id_tmdb: int) -> str:
+    """Le pivot d'une série, en SQL.
+
+    Les tests insèrent notes et vidéos par lots de plusieurs lignes : un
+    sous-select se lit mieux qu'un aller-retour en base par ligne, et il dit
+    exactement ce que fait le code de production.
+    """
+    return f"(select id from oeuvre where univers = 'series' and id_tmdb = {id_tmdb})"
+
+
 async def seed(conn: psycopg.AsyncConnection) -> None:
     await conn.execute(
         """
@@ -220,6 +230,12 @@ async def seed(conn: psycopg.AsyncConnection) -> None:
             (2000, 'باب الحارة',       11.4, date '2026-08-05'),
             (4000, 'Jamais collectée',  0.1, date '2026-08-05')
         """
+    )
+    # Le pivot des deux séries collectées : c'est la collecte qui le crée en
+    # production (`collect_series`), et c'est par lui que notes et vidéos se
+    # rangent depuis le lot 12. 4000 n'en a pas — elle n'est pas collectée.
+    await conn.execute(
+        "insert into oeuvre (univers, id_tmdb) values ('series', 1399), ('series', 2000)"
     )
     for tv_id, payload, digest in (
         (1399, SERIES_1399, b"\x01"),
@@ -294,16 +310,18 @@ async def test_card_carries_the_axis_vector_when_scored(conn: psycopg.AsyncConne
     axe — jamais la contre-note manuelle, jamais la prédiction interne."""
     await seed(conn)
     await conn.execute(
-        """
+        f"""
         insert into notation.score
-            (id_tmdb, axe, valeur, confiance, rubric_version, modele,
+            (oeuvre_id, axe, valeur, confiance, rubric_version, modele,
              input_sha256, prompt_sha256, scored_at)
         values
-            (1399, 'luminosite', 3, 0.8, 'v1', 'gpt-test',
+            ({pivot(1399)}, 'luminosite', 3, 0.8, 'v1', 'gpt-test',
              'sha-in', 'sha-p', now() - interval '1 day'),
-            (1399, 'luminosite', 4, 0.8, 'v1', 'gpt-test', 'sha-in', 'sha-p', now()),
-            (1399, 'intensite',  9, 0.8, 'v1', 'interne-ridge', 'sha-in', 'sha-p', now()),
-            (1399, 'humour',     2, 0.8, 'v1', 'claude-web-manuel', 'sha-in', 'sha-p', now())
+            ({pivot(1399)}, 'luminosite', 4, 0.8, 'v1', 'gpt-test', 'sha-in', 'sha-p', now()),
+            ({pivot(1399)}, 'intensite',  9, 0.8, 'v1', 'interne-ridge',
+             'sha-in', 'sha-p', now()),
+            ({pivot(1399)}, 'humour',     2, 0.8, 'v1', 'claude-web-manuel',
+             'sha-in', 'sha-p', now())
         """
     )
 
@@ -333,13 +351,13 @@ async def test_only_the_current_rubric_shows(conn: psycopg.AsyncConnection) -> N
         " ('v-suivant', 'p', '[\"joie\"]'::jsonb)"
     )
     await conn.execute(
-        """
+        f"""
         insert into notation.score
-            (id_tmdb, axe, valeur, confiance, rubric_version, modele,
+            (oeuvre_id, axe, valeur, confiance, rubric_version, modele,
              input_sha256, prompt_sha256)
         values
-            (1399, 'luminosite', 4, 0.8, 'v1',        'gpt-test', 'sha-in', 'sha-p'),
-            (1399, 'joie',       7, 0.8, 'v-suivant', 'gpt-test', 'sha-in', 'sha-p')
+            ({pivot(1399)}, 'luminosite', 4, 0.8, 'v1',        'gpt-test', 'sha-in', 'sha-p'),
+            ({pivot(1399)}, 'joie',       7, 0.8, 'v-suivant', 'gpt-test', 'sha-in', 'sha-p')
         """
     )
 
@@ -682,13 +700,18 @@ async def test_rich_sources_are_grouped_by_source(conn: psycopg.AsyncConnection)
     « qu'y a-t-il en français ? ».
     """
     await seed(conn)
+    # L'enrichissement ne crée plus le pivot — la collecte l'a posé — il le
+    # complète avec les identifiants trouvés dehors.
     await conn.execute(
         """
-        insert into oeuvre (univers, id_tmdb, wikidata_qid, imdb_id, tvmaze_id, titre, annee)
-        values ('series', 1399, 'Q23572', 'tt0944947', 82, 'Game of Thrones', 2011)
+        update oeuvre set wikidata_qid = 'Q23572', imdb_id = 'tt0944947', tvmaze_id = 82,
+                          titre = 'Game of Thrones', annee = 2011
+        where univers = 'series' and id_tmdb = 1399
         """
     )
-    oeuvre = await (await conn.execute("select id from oeuvre where id_tmdb = 1399")).fetchone()
+    oeuvre = await (
+        await conn.execute("select id from oeuvre where univers = 'series' and id_tmdb = 1399")
+    ).fetchone()
     assert oeuvre is not None
 
     long_article = "Le Trône de fer est une série télévisée. " * 100
@@ -775,12 +798,24 @@ async def test_rich_sources_are_grouped_by_source(conn: psycopg.AsyncConnection)
 
 async def test_rich_sources_of_a_work_never_enriched(conn: psycopg.AsyncConnection) -> None:
     """Le cas le plus fréquent aujourd'hui : rien. Ce n'est pas une erreur —
-    l'enrichissement passe après la collecte et ne couvre pas le catalogue."""
+    l'enrichissement passe après la collecte et ne couvre pas le catalogue.
+
+    La série a bien un pivot — la collecte le pose depuis le lot 12 — mais il
+    ne porte aucun identifiant externe, et c'est ça, « jamais enrichie ». Le
+    panneau ne doit pas afficher un bloc d'identité vide sous prétexte que la
+    ligne existe."""
     await seed(conn)
+
+    assert (
+        await (
+            await conn.execute("select id from oeuvre where univers = 'series' and id_tmdb = 1399")
+        ).fetchone()
+        is not None
+    ), "le pivot existe : la fiche a été collectée"
 
     rich = await fetch_rich(conn, 1399)
 
-    assert rich["oeuvre"] is None
+    assert rich["oeuvre"] is None, "aucun identifiant externe : rien à montrer"
     assert rich["sources"] == []
 
 
@@ -864,14 +899,14 @@ async def test_work_detail_orders_the_videos(conn: psycopg.AsyncConnection) -> N
     langue départage ensuite — français, puis anglais, puis le reste."""
     await seed(conn)
     await conn.execute(
-        """
-        insert into sourcing.video (id_tmdb, site, cle, type, nom, lang, officiel, saison)
+        f"""
+        insert into sourcing.video (oeuvre_id, site, cle, type, nom, lang, officiel, saison)
         values
-            (1399, 'YouTube', 'clip', 'Clip',    'Extrait',   'en', true,  null),
-            (1399, 'YouTube', 'vo',   'Trailer', 'Trailer',   'en', true,  null),
-            (1399, 'YouTube', 'vf',   'Trailer', 'Annonce',   'fr', true,  null),
-            (1399, 'YouTube', 'fan',  'Trailer', 'Officieux', 'fr', false, null),
-            (1399, 'YouTube', 's2',   'Teaser',  'Saison 2',  'en', true,  2)
+            ({pivot(1399)}, 'YouTube', 'clip', 'Clip',    'Extrait',   'en', true,  null),
+            ({pivot(1399)}, 'YouTube', 'vo',   'Trailer', 'Trailer',   'en', true,  null),
+            ({pivot(1399)}, 'YouTube', 'vf',   'Trailer', 'Annonce',   'fr', true,  null),
+            ({pivot(1399)}, 'YouTube', 'fan',  'Trailer', 'Officieux', 'fr', false, null),
+            ({pivot(1399)}, 'YouTube', 's2',   'Teaser',  'Saison 2',  'en', true,  2)
         """
     )
 
@@ -896,12 +931,12 @@ async def test_work_detail_hides_dead_videos(conn: psycopg.AsyncConnection) -> N
     vider l'onglet avant la première passe de contrôle."""
     await seed(conn)
     await conn.execute(
-        """
-        insert into sourcing.video (id_tmdb, site, cle, type, nom, lang, officiel, vivante)
+        f"""
+        insert into sourcing.video (oeuvre_id, site, cle, type, nom, lang, officiel, vivante)
         values
-            (1399, 'YouTube', 'morte',    'Trailer', 'Retiree',  'fr', true, false),
-            (1399, 'YouTube', 'vivante',  'Trailer', 'Lisible',  'fr', true, true),
-            (1399, 'YouTube', 'inconnue', 'Trailer', 'Pas vue',  'fr', true, null)
+            ({pivot(1399)}, 'YouTube', 'morte',    'Trailer', 'Retiree',  'fr', true, false),
+            ({pivot(1399)}, 'YouTube', 'vivante',  'Trailer', 'Lisible',  'fr', true, true),
+            ({pivot(1399)}, 'YouTube', 'inconnue', 'Trailer', 'Pas vue',  'fr', true, null)
         """
     )
 
@@ -914,11 +949,12 @@ async def test_work_detail_hides_dead_videos(conn: psycopg.AsyncConnection) -> N
 async def test_work_detail_carries_the_axis_vector(conn: psycopg.AsyncConnection) -> None:
     await seed(conn)
     await conn.execute(
-        """
+        f"""
         insert into notation.score
-            (id_tmdb, axe, valeur, confiance, rubric_version, modele,
+            (oeuvre_id, axe, valeur, confiance, rubric_version, modele,
              input_sha256, prompt_sha256, scored_at)
-        values (1399, 'sensoriel', 7, 0.9, 'v1', 'gpt-test', 'sha-in', 'sha-p', now())
+        values ({pivot(1399)}, 'sensoriel', 7, 0.9, 'v1', 'gpt-test',
+                'sha-in', 'sha-p', now())
         """
     )
 

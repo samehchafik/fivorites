@@ -170,7 +170,11 @@ async def load_seasons(
 
 
 async def build_dossier(
-    conn: psycopg.AsyncConnection, id_tmdb: int, *, medias: bool = True
+    conn: psycopg.AsyncConnection,
+    id_tmdb: int,
+    *,
+    medias: bool = True,
+    oeuvre_id: int | None = None,
 ) -> dict[str, Any] | None:
     """Le dossier anglais d'une série, ou None si elle n'est pas collectée.
 
@@ -179,6 +183,10 @@ async def build_dossier(
     mesurer ce que les visuels apportent réellement, en comparant deux
     dossiers qui ne diffèrent que par elle. Sans ça, la question « faut-il
     payer les légendes sur la traîne ? » ne se répond que par conviction.
+
+    `oeuvre_id` évite une requête quand l'appelant a déjà résolu le pivot —
+    seules les légendes en dépendent, le brut se lisant par identifiant TMDB.
+    Le passer ou non ne change pas le texte produit, donc pas l'empreinte.
     """
     fiche = await load_fiche(conn, id_tmdb)
     if fiche is None:
@@ -201,14 +209,29 @@ async def build_dossier(
         # Les légendes visuelles, si elles ont été payées (bouton de la page
         # Training 1). L'index porte exactement cet ordre : il est stable, et
         # la stabilité de l'ordre est celle de l'empreinte.
-        await cur.execute(
-            """
-            select label, caption from notation.media_caption
-            where id_tmdb = %(id)s order by kind, label, url
-            """,
-            {"id": id_tmdb},
-        )
-        captions = await cur.fetchall()
+        #
+        # Elles se rangent sous le pivot depuis le lot 12. Une œuvre sans pivot
+        # n'a par construction aucune légende : la requête est simplement
+        # sautée, plutôt que de faire échouer un dossier qui se lit très bien
+        # sans sa section MEDIA.
+        if oeuvre_id is None:
+            await cur.execute(
+                "select id from sourcing.oeuvre where univers = 'series' and id_tmdb = %(id)s",
+                {"id": id_tmdb},
+            )
+            trouve = await cur.fetchone()
+            oeuvre_id = trouve["id"] if trouve else None
+
+        captions = []
+        if oeuvre_id is not None:
+            await cur.execute(
+                """
+                select label, caption from notation.media_caption
+                where oeuvre_id = %(id)s order by kind, label, url
+                """,
+                {"id": oeuvre_id},
+            )
+            captions = await cur.fetchall()
 
     seasons = [(number, p.get("episodes") or []) for number, p in season_payloads]
     episodes = _sample_episodes(seasons)
@@ -327,6 +350,11 @@ async def build_dossier(
     text = "\n\n".join(parts)
     return {
         "idTmdb": id_tmdb,
+        # Le pivot, pour que l'appelant n'ait pas à le redemander : c'est par
+        # lui que le cache d'embeddings et les notes se rangent. `None` quand
+        # la fiche n'a jamais été collectée par la version courante de la
+        # collecte — le dossier se lit quand même, il ne s'entraîne pas.
+        "oeuvreId": oeuvre_id,
         "rawSourceId": fiche["id"],
         "title": title,
         "text": text,

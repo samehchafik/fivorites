@@ -21,6 +21,8 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from fiv_sourcing import store
+
 # TMDB déclare le site en toutes lettres. On garde tel quel plutôt que de
 # normaliser : le jour où un troisième hébergeur apparaît, une valeur inconnue
 # vaut mieux qu'une valeur écrasée.
@@ -105,6 +107,13 @@ async def projeter_serie(
         # — la marquer prétendrait qu'on l'a examinée.
         return 0
 
+    # La projection se range sous le pivot, comme `riche_source` et comme la
+    # notation. La fiche ayant été collectée, l'œuvre existe déjà — mais on
+    # passe par `ensure_oeuvres` plutôt que par une lecture : une base
+    # collectée avant le lot 12 n'a de pivot que ce que la migration lui a
+    # rattrapé, et une re-projection ne doit pas tomber sur ce trou-là.
+    oeuvre_id = (await store.ensure_oeuvres(conn, [id_tmdb]))[id_tmdb]
+
     videos = extraire(fiche_serie["payload"])
     for f in fiches:
         if f["kind"] != "tv_season":
@@ -116,31 +125,31 @@ async def projeter_serie(
         for v in videos:
             await cur.execute(
                 """
-                insert into video (id_tmdb, site, cle, source, type, nom, lang,
+                insert into video (oeuvre_id, site, cle, source, type, nom, lang,
                                    officiel, publie_le, definition, saison, raw_source_id)
                 values (%(id)s, %(site)s, %(cle)s, 'tmdb', %(type)s, %(nom)s, %(lang)s,
                         %(officiel)s, %(publie_le)s, %(definition)s, %(saison)s, %(raw)s)
-                on conflict (id_tmdb, site, cle) do update set
+                on conflict (oeuvre_id, site, cle) do update set
                     type = excluded.type, nom = excluded.nom, lang = excluded.lang,
                     officiel = excluded.officiel, publie_le = excluded.publie_le,
                     definition = excluded.definition, raw_source_id = excluded.raw_source_id,
                     fetched_at = now()
                 """,
-                {**v, "id": id_tmdb, "raw": fiche_serie["id"]},
+                {**v, "id": oeuvre_id, "raw": fiche_serie["id"]},
             )
         # `saison` volontairement absente du `do update` : une bande-annonce
         # listée sur la série *et* sur une saison garde le rattachement de la
         # première vue, sinon l'ordre de parcours déciderait du résultat.
         await cur.execute(
             """
-            insert into video_scan (id_tmdb, raw_source_id, videos)
+            insert into video_scan (oeuvre_id, raw_source_id, videos)
             values (%s, %s, %s)
-            on conflict (id_tmdb) do update set
+            on conflict (oeuvre_id) do update set
                 raw_source_id = excluded.raw_source_id,
                 videos = excluded.videos,
                 scanned_at = now()
             """,
-            (id_tmdb, fiche_serie["id"], len({(v["site"], v["cle"]) for v in videos})),
+            (oeuvre_id, fiche_serie["id"], len({(v["site"], v["cle"]) for v in videos})),
         )
     return len({(v["site"], v["cle"]) for v in videos})
 
@@ -171,12 +180,19 @@ async def series_a_projeter(
     # `exists` plutôt qu'un `left join` : on ne veut pas dédoublonner derrière
     # une jointure sur `raw_source`, qui est append-only et compte plusieurs
     # lignes par série.
-    condition = "" if tout else "and not exists (select 1 from video_scan s where s.id_tmdb = c.id)"
+    condition = (
+        ""
+        if tout
+        else """and not exists (
+                select 1 from video_scan s
+                join oeuvre o on o.id = s.oeuvre_id
+                where o.univers = 'series' and o.id_tmdb = c.id)"""
+    )
     async with conn.cursor() as cur:
         await cur.execute(
             f"""
             select c.id from tmdb_catalog c
-            where exists (
+            where c.univers = 'series' and exists (
                 select 1 from raw_source r
                 where r.source = 'tmdb' and r.kind = 'tv'
                   and r.source_id = c.id::text and r.http_status between 200 and 299
@@ -198,7 +214,7 @@ async def bilan(conn: psycopg.AsyncConnection) -> dict[str, int]:
                    (select count(*) from video_scan where videos > 0),
                    (select count(*) from video),
                    (select count(*) from video where type = 'Trailer' and officiel),
-                   (select count(distinct id_tmdb) from video where lang = 'fr'),
+                   (select count(distinct oeuvre_id) from video where lang = 'fr'),
                    (select count(*) from video where vivante is null),
                    (select count(*) from video where vivante is false)
             """
@@ -245,7 +261,7 @@ async def videos_a_verifier(
     async with conn.cursor() as cur:
         await cur.execute(
             f"""
-            select id_tmdb, site, cle from video
+            select oeuvre_id, site, cle from video
             where site = any(%(sites)s) {condition}
             order by verifiee_le nulls first
             limit %(limit)s
@@ -291,11 +307,17 @@ class IndisponibleTemporairement(Exception):
 
 
 async def marquer(
-    conn: psycopg.AsyncConnection, id_tmdb: int, site: str, cle: str, *, vivante: bool, statut: int
+    conn: psycopg.AsyncConnection,
+    oeuvre_id: int,
+    site: str,
+    cle: str,
+    *,
+    vivante: bool,
+    statut: int,
 ) -> None:
     async with conn.cursor() as cur:
         await cur.execute(
             "update video set vivante = %s, statut = %s, verifiee_le = now()"
-            " where id_tmdb = %s and site = %s and cle = %s",
-            (vivante, statut, id_tmdb, site, cle),
+            " where oeuvre_id = %s and site = %s and cle = %s",
+            (vivante, statut, oeuvre_id, site, cle),
         )

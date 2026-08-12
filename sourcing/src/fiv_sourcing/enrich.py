@@ -425,10 +425,11 @@ async def pending_ids(
             left join fetch_state f
                    on f.source = 'wikidata' and f.kind = 'lookup'
                   and f.source_id = c.id::text
-            where f.last_fetched_at is null
-               or (%(refresh_after)s::int is not null
-                   and f.last_fetched_at < now()
-                                         - make_interval(days => %(refresh_after)s::int))
+            where c.univers = 'series'
+              and (f.last_fetched_at is null
+                   or (%(refresh_after)s::int is not null
+                       and f.last_fetched_at < now()
+                                             - make_interval(days => %(refresh_after)s::int)))
             order by {ORDERS[order]}
             limit %(limit)s
             """,  # noqa: S608 — `order` est validé contre ORDERS juste au-dessus
@@ -617,7 +618,7 @@ async def _titres_du_catalogue(conn: psycopg.AsyncConnection, ids: list[int]) ->
     async with conn.cursor() as cur:
         await cur.execute(
             "select id, original_name from tmdb_catalog "
-            "where id = any(%s) and original_name is not null",
+            "where univers = 'series' and id = any(%s) and original_name is not null",
             (ids,),
         )
         return dict(await cur.fetchall())
@@ -647,7 +648,10 @@ async def _imdbs_depuis_la_collecte(
 # ---------------------------------------------------------------------- outils
 async def _titre_du_catalogue(conn: psycopg.AsyncConnection, tv_id: int) -> str | None:
     async with conn.cursor() as cur:
-        await cur.execute("select original_name from tmdb_catalog where id = %s", (tv_id,))
+        await cur.execute(
+            "select original_name from tmdb_catalog where univers = 'series' and id = %s",
+            (tv_id,),
+        )
         row = await cur.fetchone()
     return row[0] if row and row[0] else None
 

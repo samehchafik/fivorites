@@ -26,6 +26,12 @@ log = logging.getLogger(__name__)
 
 EXPORT_BASE = "http://files.tmdb.org/p/exports"
 
+# L'univers de ce module. Une constante et non une valeur en dur dans les
+# requêtes : le jour où l'export des films arrive, c'est le seul endroit qui
+# doit apprendre à en changer, et `grep UNIVERS` donne la liste exacte des
+# points à plomber.
+UNIVERS = "series"
+
 # Recopie la date de première diffusion du brut vers l'inventaire.
 #
 # Le garde-fou par expression régulière n'est pas de la superstition : TMDB
@@ -46,7 +52,7 @@ from (
       and http_status between 200 and 299
     order by source_id, fetched_at desc
 ) d
-where c.id = d.id
+where c.univers = 'series' and c.id = d.id
   and c.first_air_date is distinct from d.date_diffusion
 """
 
@@ -138,7 +144,11 @@ async def download_export(
 
 
 async def load_catalog(
-    conn: psycopg.AsyncConnection, records: Iterator[dict], exported_on: date
+    conn: psycopg.AsyncConnection,
+    records: Iterator[dict],
+    exported_on: date,
+    *,
+    univers: str = UNIVERS,
 ) -> tuple[int, int, int]:
     """Charge l'export dans `tmdb_catalog`. Renvoie (lues, insérées, mises à jour).
 
@@ -172,14 +182,19 @@ async def load_catalog(
         # `distinct on` par sécurité : un id en double dans l'export ferait
         # échouer l'upsert avec « ON CONFLICT DO UPDATE ne peut affecter la
         # ligne une seconde fois ».
+        # `on conflict (univers, id)` et non `(id)` seul : c'est la clé primaire
+        # depuis la migration 012, et c'est ce qui empêche l'export d'un univers
+        # d'écraser celui d'un autre. Les identifiants TMDB de films et de
+        # séries se chevauchent — l'ancienne forme aurait remplacé Game of
+        # Thrones par le film qui porte le numéro 1399.
         await cur.execute(
             """
             insert into sourcing.tmdb_catalog
-                   (id, original_name, popularity, adult, exported_on)
-            select distinct on (id) id, original_name, popularity, adult, %s
+                   (univers, id, original_name, popularity, adult, exported_on)
+            select distinct on (id) %s, id, original_name, popularity, adult, %s
             from tmdb_catalog_load
             order by id
-            on conflict (id) do update set
+            on conflict (univers, id) do update set
                 original_name = excluded.original_name,
                 popularity    = excluded.popularity,
                 adult         = excluded.adult,
@@ -187,7 +202,7 @@ async def load_catalog(
                 last_seen_at  = now()
             returning (xmax = 0) as est_nouvelle
             """,
-            (exported_on,),
+            (univers, exported_on),
         )
         flags = [row[0] for row in await cur.fetchall()]
 

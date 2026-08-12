@@ -22,13 +22,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from fiv_admin.config import Settings, get_settings
 from fiv_admin.db import build_pool
+from fiv_admin.oeuvre import SansPivot
 from fiv_admin.queries import SummaryCache
 from fiv_admin.routes import acquisition, auth, catalog, training
 from fiv_admin.security import LoginThrottle
@@ -120,6 +121,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_methods=["GET", "POST"],
             allow_headers=["Content-Type"],
         )
+
+    # Une œuvre sans pivot n'a pas été collectée : c'est un 404, pas un 500.
+    # Le message de `SansPivot` dit déjà quoi faire ; le traduire ici évite
+    # d'attraper l'exception dans chacune des routes qui touche à la notation.
+    @app.exception_handler(SansPivot)
+    async def _sans_pivot(request: Request, exc: SansPivot) -> JSONResponse:
+        return JSONResponse({"detail": str(exc)}, status_code=status.HTTP_404_NOT_FOUND)
 
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(acquisition.router, prefix="/api", tags=["acquisition"])

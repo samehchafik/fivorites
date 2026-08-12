@@ -61,6 +61,20 @@ async def collect_series(
         report.errors.append(result.error or f"HTTP {result.status}")
         return report
 
+    # Le pivot d'identité naît ici, et pas ailleurs.
+    #
+    # Il était jusqu'au lot 12 créé paresseusement, à l'enrichissement : inutile
+    # de fabriquer 228 000 lignes pour un catalogue dont la plus grande part
+    # n'aura jamais une ligne de `riche_source`. Ce raisonnement est tombé le
+    # jour où la notation a cessé de désigner ses œuvres par leur identifiant
+    # TMDB — une série collectée doit pouvoir être notée sans être passée par
+    # l'enrichissement, et l'admin n'écrit jamais dans `sourcing`.
+    #
+    # La règle est donc : **une œuvre existe dès que sa fiche a été
+    # téléchargée**. Après le `return` ci-dessus, et pas avant : un 404 dit
+    # quelque chose sur la source, pas sur l'existence d'une œuvre.
+    await store.ensure_oeuvres(conn, [tv_id])
+
     season_numbers = [
         s["season_number"]
         for s in result.payload.get("seasons") or []

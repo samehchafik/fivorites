@@ -41,6 +41,7 @@ from fiv_admin.llm import (
     score_anthropic,
     score_openai,
 )
+from fiv_admin.oeuvre import pivot
 from fiv_admin.stills import select_images
 from fiv_admin.weights import comparer_modeles as comparer_modeles_axe
 from fiv_admin.weights import (
@@ -83,7 +84,7 @@ async def _rubric(conn: Any, version: str) -> dict[str, Any]:
 async def _store_scores(
     conn: Any,
     *,
-    id_tmdb: int,
+    oeuvre_id: int,
     scores: dict[str, dict[str, Any]],
     rubric_version: str,
     modele: str,
@@ -95,12 +96,12 @@ async def _store_scores(
             await cur.execute(
                 """
                 insert into notation.score
-                    (id_tmdb, axe, valeur, confiance, rubric_version, modele,
+                    (oeuvre_id, axe, valeur, confiance, rubric_version, modele,
                      input_sha256, prompt_sha256)
                 values (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    id_tmdb,
+                    oeuvre_id,
                     axe,
                     entry.get("score"),
                     entry.get("confidence"),
@@ -136,13 +137,19 @@ def _gaps(
 # ---------------------------------------------------------------- les visuels
 
 
-async def _caption_missing(conn: Any, settings: Any, work_id: int) -> dict[str, Any]:
+async def _caption_missing(
+    conn: Any, settings: Any, work_id: int, oeuvre_id: int
+) -> dict[str, Any]:
     """Légende ce qui ne l'est pas encore, et seulement ça.
 
     Le cœur du légendage, partagé entre le bouton et le chemin automatique :
     sélection déterministe des visuels, un appel vision pour les images
     inconnues, insertion figée. `total` à 0 = rien à légender (série non
     collectée, ou brut sans visuel). Les erreurs vision remontent en LlmError.
+
+    Deux identifiants, et ce n'est pas une redondance : `work_id` lit le brut
+    (c'est ce que TMDB a servi), `oeuvre_id` écrit la légende (c'est notre
+    pivot). Voir [`oeuvre.py`](../oeuvre.py).
     """
     model = settings.openai_model
     bilan = {"captioned": 0, "already": 0, "total": 0, "model": model}
@@ -154,7 +161,9 @@ async def _caption_missing(conn: Any, settings: Any, work_id: int) -> dict[str, 
         return bilan
 
     async with conn.cursor() as cur:
-        await cur.execute("select url from notation.media_caption where id_tmdb = %s", (work_id,))
+        await cur.execute(
+            "select url from notation.media_caption where oeuvre_id = %s", (oeuvre_id,)
+        )
         known = {row[0] for row in await cur.fetchall()}
     fresh = [image for image in images if image["url"] not in known]
 
@@ -172,11 +181,11 @@ async def _caption_missing(conn: Any, settings: Any, work_id: int) -> dict[str, 
                 await cur.execute(
                     """
                     insert into notation.media_caption
-                        (id_tmdb, url, kind, label, caption, modele)
+                        (oeuvre_id, url, kind, label, caption, modele)
                     values (%s, %s, %s, %s, %s, %s)
-                    on conflict (id_tmdb, url) do nothing
+                    on conflict (oeuvre_id, url) do nothing
                     """,
-                    (work_id, image["url"], image["kind"], image["label"], caption, model),
+                    (oeuvre_id, image["url"], image["kind"], image["label"], caption, model),
                 )
                 captioned += 1
 
@@ -188,7 +197,7 @@ async def _caption_missing(conn: Any, settings: Any, work_id: int) -> dict[str, 
     }
 
 
-async def _auto_captions(conn: Any, settings: Any, work_id: int) -> None:
+async def _auto_captions(conn: Any, settings: Any, work_id: int, oeuvre_id: int) -> None:
     """Le chemin automatique : les légendes se créent à la première lecture.
 
     La donnée visuelle ne bouge pratiquement pas — une fois payée, la légende
@@ -199,7 +208,7 @@ async def _auto_captions(conn: Any, settings: Any, work_id: int) -> None:
     if not settings.openai_api_key:
         return
     with contextlib.suppress(LlmError):
-        await _caption_missing(conn, settings, work_id)
+        await _caption_missing(conn, settings, work_id, oeuvre_id)
 
 
 async def works_a_noter(
@@ -253,20 +262,28 @@ async def works_a_noter(
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
+            -- La jointure sur `sourcing.oeuvre` n'est pas décorative : c'est
+            -- elle qui écarte les fiches sans pivot, donc non collectables —
+            -- et c'est par `oeuvre_id` que le journal des essais se lit
+            -- désormais. Une œuvre collectée a toujours son pivot (la collecte
+            -- le crée), une œuvre qui n'en a pas ne peut de toute façon pas
+            -- être notée.
             with page as (
                 select v.id                                as id_tmdb,
+                       o.id                                as oeuvre_id,
                        coalesce(v.name, v.original_name)   as titre,
                        c.popularity                        as popularity,
                        v.vote_average                      as note
                 from admin.tv_card v
-                join tmdb_catalog c on c.id = v.id
+                join tmdb_catalog c on c.univers = 'series' and c.id = v.id
+                join sourcing.oeuvre o on o.univers = 'series' and o.id_tmdb = v.id
                 where (not %(filtres)s or nullif(v.poster_path, '') is not null)
                   and (%(rejouer)s or not exists (
                       select 1 from notation.training_run t
-                      where t.id_tmdb = v.id and t.rubric_version = %(rubric)s
+                      where t.oeuvre_id = o.id and t.rubric_version = %(rubric)s
                   ))
                   and (not %(inedites)s or not exists (
-                      select 1 from notation.training_run t where t.id_tmdb = v.id
+                      select 1 from notation.training_run t where t.oeuvre_id = o.id
                   ))
                 order by c.popularity desc nulls last, v.vote_average desc nulls last
                 limit %(limit)s
@@ -276,7 +293,7 @@ async def works_a_noter(
             -- candidates qu'on vient d'écarter.
             select p.*, (
                 select array_agg(distinct t.rubric_version order by t.rubric_version)
-                from notation.training_run t where t.id_tmdb = p.id_tmdb
+                from notation.training_run t where t.oeuvre_id = p.oeuvre_id
             ) as deja
             from page p
             order by popularity desc nulls last, note desc nulls last
@@ -329,15 +346,20 @@ async def note_work(
     `LlmError` — pour que chaque appelant décide : la route en fait des codes
     HTTP, le lot saute l'œuvre et poursuit.
     """
+    # Le pivot, résolu une fois pour tout l'essai : tout ce qui s'écrit
+    # ci-dessous se range sous lui, et une œuvre sans pivot n'est pas
+    # collectée — donc pas notable. `SansPivot` remonte comme les autres.
+    oeuvre_id = await pivot(conn, id_tmdb)
+
     if captions:
         # Quand on les demande, les légendes passent AVANT le dossier : le juge
         # doit lire la section MEDIA, pas découvrir qu'elle manquait une fois
         # la note rendue. Éteint par défaut — un appel de vision par œuvre
         # coûte plus cher que la notation elle-même, et l'entraînement se règle
         # d'abord sur du texte.
-        await _auto_captions(conn, settings, id_tmdb)
+        await _auto_captions(conn, settings, id_tmdb, oeuvre_id)
 
-    built = await build_dossier(conn, id_tmdb)
+    built = await build_dossier(conn, id_tmdb, oeuvre_id=oeuvre_id)
     if built is None:
         raise NonCollectee(f"série {id_tmdb} non collectée")
     if not built["enough"]:
@@ -374,7 +396,7 @@ async def note_work(
     for result in results:
         await _store_scores(
             conn,
-            id_tmdb=id_tmdb,
+            oeuvre_id=oeuvre_id,
             scores=result["scores"],
             rubric_version=rubric_version,
             modele=result["model"],
@@ -389,7 +411,7 @@ async def note_work(
         await cur.execute(
             """
             insert into notation.training_run
-                (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256,
+                (oeuvre_id, raw_source_id, rubric_version, prompt, dossier_sha256,
                  openai, claude, claude_at)
             values (%(id)s, %(raw)s, %(rubric)s, %(prompt)s, %(sha)s,
                     %(openai)s, %(claude)s,
@@ -397,7 +419,7 @@ async def note_work(
             returning id
             """,
             {
-                "id": id_tmdb,
+                "id": oeuvre_id,
                 "raw": built["rawSourceId"],
                 "rubric": rubric_version,
                 "prompt": prompt,
@@ -456,7 +478,7 @@ async def caption_work(
         )
 
     try:
-        bilan = await _caption_missing(conn, settings, work_id)
+        bilan = await _caption_missing(conn, settings, work_id, await pivot(conn, work_id))
     except LlmError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return {"id": work_id, **bilan}
@@ -590,7 +612,8 @@ async def manual_scores(
     """Enregistre une contre-note faite à la main, avec la même provenance
     qu'un appel automatique : empreinte du dossier, empreinte du prompt."""
     await _rubric(conn, body.rubricVersion)
-    built = await build_dossier(conn, body.id)
+    oeuvre_id = await pivot(conn, body.id)
+    built = await build_dossier(conn, body.id, oeuvre_id=oeuvre_id)
     if built is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {body.id} non collectée")
 
@@ -607,7 +630,7 @@ async def manual_scores(
     }
     await _store_scores(
         conn,
-        id_tmdb=body.id,
+        oeuvre_id=oeuvre_id,
         scores=cleaned,
         rubric_version=body.rubricVersion,
         modele="claude-web-manuel",
@@ -625,8 +648,8 @@ async def manual_scores(
         if body.runId is not None:
             await cur.execute(
                 "update notation.training_run set claude = %s, claude_at = now()"
-                " where id = %s and id_tmdb = %s returning id",
-                (claude_json, body.runId, body.id),
+                " where id = %s and oeuvre_id = %s returning id",
+                (claude_json, body.runId, oeuvre_id),
             )
             row = await cur.fetchone()
             run_id = row[0] if row else None
@@ -636,12 +659,12 @@ async def manual_scores(
                 update notation.training_run set claude = %(claude)s, claude_at = now()
                 where id = (
                     select id from notation.training_run
-                    where id_tmdb = %(id)s and prompt = %(prompt)s and claude is null
+                    where oeuvre_id = %(id)s and prompt = %(prompt)s and claude is null
                     order by created_at desc limit 1
                 )
                 returning id
                 """,
-                {"claude": claude_json, "id": body.id, "prompt": body.prompt},
+                {"claude": claude_json, "id": oeuvre_id, "prompt": body.prompt},
             )
             row = await cur.fetchone()
             run_id = row[0] if row else None
@@ -649,13 +672,13 @@ async def manual_scores(
             await cur.execute(
                 """
                 insert into notation.training_run
-                    (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256,
+                    (oeuvre_id, raw_source_id, rubric_version, prompt, dossier_sha256,
                      claude, claude_at)
                 values (%s, %s, %s, %s, %s, %s, now())
                 returning id
                 """,
                 (
-                    body.id,
+                    oeuvre_id,
                     built["rawSourceId"],
                     body.rubricVersion,
                     body.prompt,
@@ -684,9 +707,9 @@ async def work_runs(
             select id, rubric_version, prompt, dossier_sha256, openai, claude,
                    interne, created_at, claude_at, interne_at
             from notation.training_run
-            where id_tmdb = %s order by created_at desc limit %s
+            where oeuvre_id = %s order by created_at desc limit %s
             """,
-            (work_id, min(max(limit, 1), 50)),
+            (await pivot(conn, work_id), min(max(limit, 1), 50)),
         )
         rows = await cur.fetchall()
     return [
@@ -713,11 +736,11 @@ async def work_scores(user: CurrentUser, conn: Conn, work_id: int) -> list[dict[
         await cur.execute(
             """
             select axe, valeur, confiance, rubric_version, modele, scored_at
-            from notation.score where id_tmdb = %s
+            from notation.score where oeuvre_id = %s
             order by scored_at desc, axe
             limit 400
             """,
-            (work_id,),
+            (await pivot(conn, work_id),),
         )
         return list(await cur.fetchall())
 
@@ -737,15 +760,21 @@ async def _embedding(conn: Any, settings: Any, built: dict[str, Any]) -> list[fl
     venait à être remplacé — auquel cas `EMBEDDER` change et les anciens
     vecteurs cessent simplement d'être relus.
     """
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "select vector from notation.embedding"
-            " where id_tmdb = %s and input_sha256 = %s and embedder = %s",
-            (built["idTmdb"], built["sha256"], EMBEDDER),
-        )
-        row = await cur.fetchone()
-    if row is not None:
-        return row[0]
+    # Sans pivot, pas de cache : la table le porte en clé. Le vecteur se
+    # calcule quand même — c'est du CPU local, pas un appel payant — et le cas
+    # ne se présente que pour une fiche collectée avant le lot 12 et jamais
+    # revue depuis.
+    oeuvre_id = built.get("oeuvreId")
+    if oeuvre_id is not None:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select vector from notation.embedding"
+                " where oeuvre_id = %s and input_sha256 = %s and embedder = %s",
+                (oeuvre_id, built["sha256"], EMBEDDER),
+            )
+            row = await cur.fetchone()
+        if row is not None:
+            return row[0]
 
     # `to_thread` : l'inférence ONNX est du calcul bloquant, et la tenir dans
     # la boucle d'événements figerait l'API pendant tout un entraînement.
@@ -753,14 +782,15 @@ async def _embedding(conn: Any, settings: Any, built: dict[str, Any]) -> list[fl
         embed_texts, [built["text"]], cache_dir=settings.embed_cache_dir
     )
     vector = vectors[0]
-    async with conn.cursor() as cur:
-        await cur.execute(
-            """
-            insert into notation.embedding (id_tmdb, input_sha256, embedder, vector)
-            values (%s, %s, %s, %s) on conflict do nothing
-            """,
-            (built["idTmdb"], built["sha256"], EMBEDDER, Jsonb(vector)),
-        )
+    if oeuvre_id is not None:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                insert into notation.embedding (oeuvre_id, input_sha256, embedder, vector)
+                values (%s, %s, %s, %s) on conflict do nothing
+                """,
+                (oeuvre_id, built["sha256"], EMBEDDER, Jsonb(vector)),
+            )
     return vector
 
 
@@ -780,7 +810,7 @@ def _predict_all(vector: list[float], weights: dict[str, dict[str, Any]]) -> dic
 async def _store_internal(
     conn: Any,
     *,
-    id_tmdb: int,
+    oeuvre_id: int,
     internal: dict[str, Any],
     rubric_version: str,
     prompt: str,
@@ -795,7 +825,7 @@ async def _store_internal(
     """
     await _store_scores(
         conn,
-        id_tmdb=id_tmdb,
+        oeuvre_id=oeuvre_id,
         scores={
             axe: {"score": entry["score"], "confidence": None} for axe, entry in internal.items()
         },
@@ -812,24 +842,24 @@ async def _store_internal(
             update notation.training_run set interne = %(interne)s, interne_at = now()
             where id = (
                 select id from notation.training_run
-                where id_tmdb = %(id)s and rubric_version = %(rubric)s
+                where oeuvre_id = %(id)s and rubric_version = %(rubric)s
                 order by created_at desc limit 1
             )
             returning id
             """,
-            {"interne": interne_json, "id": id_tmdb, "rubric": rubric_version},
+            {"interne": interne_json, "id": oeuvre_id, "rubric": rubric_version},
         )
         row = await cur.fetchone()
         if row is None:
             await cur.execute(
                 """
                 insert into notation.training_run
-                    (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256,
+                    (oeuvre_id, raw_source_id, rubric_version, prompt, dossier_sha256,
                      interne, interne_at)
                 values (%s, %s, %s, %s, %s, %s, now())
                 returning id
                 """,
-                (id_tmdb, raw_source_id, rubric_version, prompt, dossier_sha256, interne_json),
+                (oeuvre_id, raw_source_id, rubric_version, prompt, dossier_sha256, interne_json),
             )
             row = await cur.fetchone()
     return row[0]
@@ -902,11 +932,12 @@ async def _notes_et_dossiers(
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
-            select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
-            from notation.score
-            where rubric_version = %s and modele <> %s and modele not like 'claude%%'
-              and valeur is not null
-            order by id_tmdb, axe, scored_at desc
+            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
+            from notation.score s
+            join sourcing.oeuvre o on o.id = s.oeuvre_id
+            where s.rubric_version = %s and s.modele <> %s and s.modele not like 'claude%%'
+              and s.valeur is not null
+            order by o.id_tmdb, s.axe, s.scored_at desc
             """,
             (rubric["version"], INTERNAL_MODEL),
         )
@@ -943,9 +974,10 @@ async def _vecteurs_deja_payes(
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            select id_tmdb, vector from notation.embedding
-            where embedder = %s
-              and (id_tmdb, input_sha256) in (select * from unnest(%s::int[], %s::text[]))
+            select o.id_tmdb, e.vector from notation.embedding e
+            join sourcing.oeuvre o on o.id = e.oeuvre_id
+            where e.embedder = %s
+              and (o.id_tmdb, e.input_sha256) in (select * from unnest(%s::int[], %s::text[]))
             """,
             (etiquette, list(dossiers), [d["sha256"] for d in dossiers.values()]),
         )
@@ -1067,11 +1099,12 @@ async def comparer_encodeurs(
                 async with conn.cursor() as cur:
                     await cur.executemany(
                         """
-                        insert into notation.embedding (id_tmdb, input_sha256, embedder, vector)
+                        insert into notation.embedding
+                            (oeuvre_id, input_sha256, embedder, vector)
                         values (%s, %s, %s, %s) on conflict do nothing
                         """,
                         [
-                            (i, dossiers[i]["sha256"], etiquette, Jsonb(v))
+                            (dossiers[i]["oeuvreId"], dossiers[i]["sha256"], etiquette, Jsonb(v))
                             for i, v in zip(manquants, frais, strict=True)
                         ],
                     )
@@ -1116,11 +1149,12 @@ async def comparer_visuels(conn: Any, settings: Any, rubric: dict[str, Any]) -> 
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
-            select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
-            from notation.score
-            where rubric_version = %s and modele <> %s and modele not like 'claude%%'
-              and valeur is not null
-            order by id_tmdb, axe, scored_at desc
+            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
+            from notation.score s
+            join sourcing.oeuvre o on o.id = s.oeuvre_id
+            where s.rubric_version = %s and s.modele <> %s and s.modele not like 'claude%%'
+              and s.valeur is not null
+            order by o.id_tmdb, s.axe, s.scored_at desc
             """,
             (rubric["version"], INTERNAL_MODEL),
         )
@@ -1197,11 +1231,12 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
-            select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
-            from notation.score
-            where rubric_version = %s and modele not in (%s) and modele not like 'claude%%'
-              and valeur is not null
-            order by id_tmdb, axe, scored_at desc
+            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
+            from notation.score s
+            join sourcing.oeuvre o on o.id = s.oeuvre_id
+            where s.rubric_version = %s and s.modele not in (%s) and s.modele not like 'claude%%'
+              and s.valeur is not null
+            order by o.id_tmdb, s.axe, s.scored_at desc
             """,
             (rubric_version, INTERNAL_MODEL),
         )
@@ -1322,10 +1357,11 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
-                select distinct on (id_tmdb) id_tmdb, prompt
-                from notation.training_run
-                where rubric_version = %s and openai is not null
-                order by id_tmdb, created_at desc
+                select distinct on (t.oeuvre_id) t.oeuvre_id, o.id_tmdb, t.prompt
+                from notation.training_run t
+                join sourcing.oeuvre o on o.id = t.oeuvre_id
+                where t.rubric_version = %s and t.openai is not null
+                order by t.oeuvre_id, t.created_at desc
                 """,
                 (rubric_version,),
             )
@@ -1342,7 +1378,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
             vector = vectors.get(id_tmdb) or await _embedding(conn, settings, built)
             await _store_internal(
                 conn,
-                id_tmdb=id_tmdb,
+                oeuvre_id=entry["oeuvre_id"],
                 internal=_predict_all(vector, weights_json),
                 rubric_version=rubric_version,
                 prompt=entry["prompt"],
@@ -1423,7 +1459,8 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
         )
     weight_rows: dict[str, dict[str, Any]] = weights_row["weights"]
 
-    built = await build_dossier(conn, body.id)
+    oeuvre_id = await pivot(conn, body.id)
+    built = await build_dossier(conn, body.id, oeuvre_id=oeuvre_id)
     if built is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {body.id} non collectée")
 
@@ -1448,7 +1485,7 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
     if llm_result is not None:
         await _store_scores(
             conn,
-            id_tmdb=body.id,
+            oeuvre_id=oeuvre_id,
             scores=llm_result["scores"],
             rubric_version=body.rubricVersion,
             modele=llm_result["model"],
@@ -1464,11 +1501,11 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
                 """
                 select distinct on (axe) axe, valeur, confiance, modele, scored_at
                 from notation.score
-                where id_tmdb = %s and rubric_version = %s
+                where oeuvre_id = %s and rubric_version = %s
                   and modele <> %s and modele not like 'claude%%'
                 order by axe, scored_at desc
                 """,
-                (body.id, body.rubricVersion, INTERNAL_MODEL),
+                (oeuvre_id, body.rubricVersion, INTERNAL_MODEL),
             )
             stored = await cur.fetchall()
         llm_scores = {
@@ -1492,10 +1529,10 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
             """
             select distinct on (axe) axe, valeur, confiance, modele, scored_at
             from notation.score
-            where id_tmdb = %s and rubric_version = %s and modele like 'claude%%'
+            where oeuvre_id = %s and rubric_version = %s and modele like 'claude%%'
             order by axe, scored_at desc
             """,
-            (body.id, body.rubricVersion),
+            (oeuvre_id, body.rubricVersion),
         )
         contre = await cur.fetchall()
     claude_scores = {
@@ -1513,7 +1550,7 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
 
     run_id = await _store_internal(
         conn,
-        id_tmdb=body.id,
+        oeuvre_id=oeuvre_id,
         internal=internal,
         rubric_version=body.rubricVersion,
         prompt=rubric["prompt"],
@@ -1561,11 +1598,12 @@ async def comparer_modeles(conn: Any, settings: Any, rubric: dict[str, Any]) -> 
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
-            select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
-            from notation.score
-            where rubric_version = %s and modele <> %s and modele not like 'claude%%'
-              and valeur is not null
-            order by id_tmdb, axe, scored_at desc
+            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
+            from notation.score s
+            join sourcing.oeuvre o on o.id = s.oeuvre_id
+            where s.rubric_version = %s and s.modele <> %s and s.modele not like 'claude%%'
+              and s.valeur is not null
+            order by o.id_tmdb, s.axe, s.scored_at desc
             """,
             (rubric["version"], INTERNAL_MODEL),
         )
@@ -1632,11 +1670,12 @@ async def diagnostic_matiere(
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
-            select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
-            from notation.score
-            where rubric_version = %s and modele <> %s and modele not like 'claude%%'
-              and valeur is not null
-            order by id_tmdb, axe, scored_at desc
+            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
+            from notation.score s
+            join sourcing.oeuvre o on o.id = s.oeuvre_id
+            where s.rubric_version = %s and s.modele <> %s and s.modele not like 'claude%%'
+              and s.valeur is not null
+            order by o.id_tmdb, s.axe, s.scored_at desc
             """,
             (rubric["version"], INTERNAL_MODEL),
         )

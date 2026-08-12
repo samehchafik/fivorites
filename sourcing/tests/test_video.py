@@ -93,6 +93,17 @@ async def seed(conn: psycopg.AsyncConnection, id_tmdb: int, payload: dict, *, sa
         )
 
 
+async def oeuvre(conn: psycopg.AsyncConnection, id_tmdb: int) -> int | None:
+    """Le pivot d'une série. Depuis le lot 12, c'est par lui que le canal vidéo
+    range ses lignes — l'identifiant TMDB ne suffit plus à désigner une œuvre."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from oeuvre where univers = 'series' and id_tmdb = %s", (id_tmdb,)
+        )
+        row = await cur.fetchone()
+    return row[0] if row else None
+
+
 async def test_projeter_ecrit_les_videos_et_marque_la_serie(conn) -> None:
     await seed(conn, 1399, {"videos": {"results": [video("a"), video("b", type="Teaser")]}})
 
@@ -103,7 +114,9 @@ async def test_projeter_ecrit_les_videos_et_marque_la_serie(conn) -> None:
         assert await cur.fetchall() == [("a", "Trailer", 0), ("b", "Teaser", 2)], (
             "la bande-annonce officielle passe devant le teaser"
         )
-        await cur.execute("select videos from video_scan where id_tmdb = 1399")
+        await cur.execute(
+            "select videos from video_scan where oeuvre_id = %s", (await oeuvre(conn, 1399),)
+        )
         assert await cur.fetchone() == (2,)
 
 
@@ -115,7 +128,9 @@ async def test_une_serie_sans_video_est_marquee_quand_meme(conn) -> None:
     assert await projeter_serie(conn, 1400) == 0
 
     async with conn.cursor() as cur:
-        await cur.execute("select videos from video_scan where id_tmdb = 1400")
+        await cur.execute(
+            "select videos from video_scan where oeuvre_id = %s", (await oeuvre(conn, 1400),)
+        )
         assert await cur.fetchone() == (0,)
     assert await series_a_projeter(conn) == [], "elle ne doit pas revenir à la passe suivante"
 
@@ -155,7 +170,9 @@ async def test_rejouer_ne_duplique_pas(conn) -> None:
     await projeter_serie(conn, 1403)
 
     async with conn.cursor() as cur:
-        await cur.execute("select count(*) from video where id_tmdb = 1403")
+        await cur.execute(
+            "select count(*) from video where oeuvre_id = %s", (await oeuvre(conn, 1403),)
+        )
         assert await cur.fetchone() == (1,)
 
 
@@ -169,7 +186,7 @@ async def test_une_serie_non_collectee_nest_pas_marquee(conn) -> None:
 
     assert await projeter_serie(conn, 1404) == 0
     async with conn.cursor() as cur:
-        await cur.execute("select count(*) from video_scan where id_tmdb = 1404")
+        await cur.execute("select count(*) from video_scan")
         assert await cur.fetchone() == (0,)
 
 
@@ -247,7 +264,7 @@ async def test_une_video_lisible_est_marquee_vivante(conn) -> None:
 
     ok, statut = await verifier_une(FauxFetcher({"vivante": 200}), "YouTube", "vivante")
     assert (ok, statut) == (True, 200)
-    await marquer(conn, 1500, "YouTube", "vivante", vivante=ok, statut=statut)
+    await marquer(conn, await oeuvre(conn, 1500), "YouTube", "vivante", vivante=ok, statut=statut)
 
     async with conn.cursor() as cur:
         await cur.execute("select vivante, statut, verifiee_le is not null from video")
@@ -262,7 +279,7 @@ async def test_une_video_retiree_est_marquee_morte_mais_conservee(conn) -> None:
 
     ok, statut = await verifier_une(FauxFetcher({"morte": 404}), "YouTube", "morte")
     assert (ok, statut) == (False, 404)
-    await marquer(conn, 1501, "YouTube", "morte", vivante=ok, statut=statut)
+    await marquer(conn, await oeuvre(conn, 1501), "YouTube", "morte", vivante=ok, statut=statut)
 
     async with conn.cursor() as cur:
         await cur.execute("select count(*), bool_and(vivante is false) from video")
@@ -280,7 +297,7 @@ async def test_un_hebergeur_injoignable_ne_condamne_rien(conn) -> None:
 async def test_les_jamais_verifiees_passent_en_premier(conn) -> None:
     await seed(conn, 1502, {"videos": {"results": [video("a"), video("b")]}})
     await projeter_serie(conn, 1502)
-    await marquer(conn, 1502, "YouTube", "a", vivante=True, statut=200)
+    await marquer(conn, await oeuvre(conn, 1502), "YouTube", "a", vivante=True, statut=200)
 
     assert [c for _, _, c in await videos_a_verifier(conn)] == ["b", "a"]
 
@@ -290,7 +307,7 @@ async def test_lage_borne_la_reprise(conn) -> None:
     chaque jour."""
     await seed(conn, 1503, {"videos": {"results": [video("recente")]}})
     await projeter_serie(conn, 1503)
-    await marquer(conn, 1503, "YouTube", "recente", vivante=True, statut=200)
+    await marquer(conn, await oeuvre(conn, 1503), "YouTube", "recente", vivante=True, statut=200)
 
     assert await videos_a_verifier(conn, age_jours=30) == [], "vue à l'instant : on n'y revient pas"
     assert len(await videos_a_verifier(conn, age_jours=0)) == 1
@@ -299,7 +316,7 @@ async def test_lage_borne_la_reprise(conn) -> None:
 async def test_le_bilan_compte_les_mortes(conn) -> None:
     await seed(conn, 1504, {"videos": {"results": [video("a"), video("b")]}})
     await projeter_serie(conn, 1504)
-    await marquer(conn, 1504, "YouTube", "a", vivante=False, statut=404)
+    await marquer(conn, await oeuvre(conn, 1504), "YouTube", "a", vivante=False, statut=404)
 
     etat = await bilan(conn)
     assert etat["mortes"] == 1

@@ -294,7 +294,7 @@ async def fetch_cards(
                 """
                 select count(*) as total
                 from admin.tv_card v
-                left join tmdb_catalog c on c.id = v.id
+                left join tmdb_catalog c on c.univers = 'series' and c.id = v.id
                 where {where}
                 """
             ).format(where=where),
@@ -314,7 +314,7 @@ async def fetch_cards(
                            v.genres, v.origin_country, v.fetched_at,
                            c.popularity, c.adult
                     from admin.tv_card v
-                    left join tmdb_catalog c on c.id = v.id
+                    left join tmdb_catalog c on c.univers = 'series' and c.id = v.id
                     where {where}
                     order by {order}
                     limit %(limit)s offset %(offset)s
@@ -355,13 +355,15 @@ async def fetch_cards(
                 -- pas devenue la référence. Absent tant qu'une série n'a jamais
                 -- été notée sous ce barème : `null`, pas des zéros.
                 scores as (
-                    select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
-                    from notation.score
-                    where id_tmdb = any (array(select id from page))
-                      and valeur is not null
-                      and rubric_version = {bareme}
-                      and modele <> 'interne-ridge' and modele not like 'claude%%'
-                    order by id_tmdb, axe, scored_at desc
+                    select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
+                    from notation.score s
+                    join sourcing.oeuvre o on o.id = s.oeuvre_id
+                    where o.univers = 'series'
+                      and o.id_tmdb = any (array(select id from page))
+                      and s.valeur is not null
+                      and s.rubric_version = {bareme}
+                      and s.modele <> 'interne-ridge' and s.modele not like 'claude%%'
+                    order by o.id_tmdb, s.axe, s.scored_at desc
                 ),
                 vectors as (
                     select id_tmdb, jsonb_object_agg(axe, valeur) as axis_scores
@@ -371,12 +373,14 @@ async def fetch_cards(
                 -- Elle sert à afficher l'écart avec le juge : c'est la mesure
                 -- de ce que le modèle interne a appris, œuvre par œuvre.
                 internes as (
-                    select distinct on (id_tmdb, axe) id_tmdb, axe, valeur
-                    from notation.score
-                    where id_tmdb = any (array(select id from page))
-                      and valeur is not null and modele = 'interne-ridge'
-                      and rubric_version = {bareme}
-                    order by id_tmdb, axe, scored_at desc
+                    select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
+                    from notation.score s
+                    join sourcing.oeuvre o on o.id = s.oeuvre_id
+                    where o.univers = 'series'
+                      and o.id_tmdb = any (array(select id from page))
+                      and s.valeur is not null and s.modele = 'interne-ridge'
+                      and s.rubric_version = {bareme}
+                    order by o.id_tmdb, s.axe, s.scored_at desc
                 ),
                 vecteurs_internes as (
                     select id_tmdb, jsonb_object_agg(axe, valeur) as internal_scores
@@ -628,7 +632,9 @@ async def fetch_work(
         collected = await cur.fetchall()
 
         await cur.execute(
-            "select popularity, adult, exported_on from tmdb_catalog where id = %s", (work_id,)
+            "select popularity, adult, exported_on from tmdb_catalog"
+            " where univers = 'series' and id = %s",
+            (work_id,),
         )
         catalog = await cur.fetchone()
 
@@ -637,12 +643,13 @@ async def fetch_work(
         # manuelle, ni la prédiction interne.
         await cur.execute(
             f"""
-            select distinct on (axe) axe, valeur
-            from notation.score
-            where id_tmdb = %s and valeur is not null
-              and rubric_version = {BAREME_COURANT}
-              and modele <> 'interne-ridge' and modele not like 'claude%%'
-            order by axe, scored_at desc
+            select distinct on (s.axe) s.axe, s.valeur
+            from notation.score s
+            join sourcing.oeuvre o on o.id = s.oeuvre_id
+            where o.univers = 'series' and o.id_tmdb = %s and s.valeur is not null
+              and s.rubric_version = {BAREME_COURANT}
+              and s.modele <> 'interne-ridge' and s.modele not like 'claude%%'
+            order by s.axe, s.scored_at desc
             """,
             (work_id,),
         )
@@ -651,11 +658,13 @@ async def fetch_work(
         # La prédiction interne, pour afficher l'écart avec le juge.
         await cur.execute(
             f"""
-            select distinct on (axe) axe, valeur
-            from notation.score
-            where id_tmdb = %s and valeur is not null and modele = 'interne-ridge'
-              and rubric_version = {BAREME_COURANT}
-            order by axe, scored_at desc
+            select distinct on (s.axe) s.axe, s.valeur
+            from notation.score s
+            join sourcing.oeuvre o on o.id = s.oeuvre_id
+            where o.univers = 'series' and o.id_tmdb = %s and s.valeur is not null
+              and s.modele = 'interne-ridge'
+              and s.rubric_version = {BAREME_COURANT}
+            order by s.axe, s.scored_at desc
             """,
             (work_id,),
         )
@@ -674,12 +683,14 @@ async def fetch_work(
         # une régression garantie le jour de la mise en service.
         await cur.execute(
             """
-            select site, cle, type, nom, lang, officiel, publie_le, definition, saison
-            from sourcing.video
-            where id_tmdb = %s and vivante is not false
-            order by priorite,
-                     case lang when 'fr' then 0 when 'en' then 1 else 2 end,
-                     publie_le desc nulls last
+            select v.site, v.cle, v.type, v.nom, v.lang, v.officiel, v.publie_le,
+                   v.definition, v.saison
+            from sourcing.video v
+            join sourcing.oeuvre o on o.id = v.oeuvre_id
+            where o.univers = 'series' and o.id_tmdb = %s and v.vivante is not false
+            order by v.priorite,
+                     case v.lang when 'fr' then 0 when 'en' then 1 else 2 end,
+                     v.publie_le desc nulls last
             """,
             (work_id,),
         )
@@ -1030,22 +1041,36 @@ async def fetch_rich(conn: psycopg.AsyncConnection, work_id: int) -> dict[str, A
     viennent.
     """
     async with conn.cursor(row_factory=dict_row) as cur:
-        # Le pivot d'identité, s'il existe : c'est lui qui porte les
-        # identifiants externes, et son absence est en soi l'information
-        # « cette série n'a jamais été enrichie ».
+        # Le pivot d'identité, **s'il porte quelque chose**.
+        #
+        # La nuance date du lot 12. Avant, le pivot naissait à l'enrichissement
+        # et son absence disait donc « jamais enrichie ». Il naît maintenant à
+        # la collecte, comme identité de l'œuvre : toute série collectée en a
+        # un, et sa seule présence ne dit plus rien. Ce sont les identifiants
+        # externes qui portent l'information — ils ne peuvent venir que de
+        # Wikidata, d'IMDb ou de TVmaze, donc de l'enrichissement.
+        #
+        # C'est aussi ce qu'attend le panneau : il n'affiche que des liens
+        # externes, et un bloc d'identité vide serait pire qu'absent.
         await cur.execute(
             """
             select id, univers, wikidata_qid, imdb_id, tvmaze_id, titre, annee
-            from oeuvre where id_tmdb = %(id)s order by id limit 1
+            from oeuvre where univers = 'series' and id_tmdb = %(id)s order by id limit 1
             """,
             {"id": work_id},
         )
-        oeuvre = await cur.fetchone()
+        pivot = await cur.fetchone()
+        oeuvre = (
+            pivot
+            if pivot and any(pivot[cle] for cle in ("wikidata_qid", "imdb_id", "tvmaze_id"))
+            else None
+        )
 
-        # Par `oeuvre_id` quand le pivot existe — c'est le lien qui fait foi et
-        # il couvre les lignes dont l'`id_tmdb` est nul. Sinon par `id_tmdb`,
-        # qui reste renseigné sur ce que l'enrichissement a écrit avant que le
-        # pivot ne soit posé.
+        # Par le pivot quand il existe — c'est le lien qui fait foi, et il
+        # couvre les lignes dont l'`id_tmdb` est nul. Le pivot ici, pas
+        # `oeuvre` : celui-ci est filtré pour l'affichage (identifiants
+        # externes), la jointure ne l'est pas. Sinon par `id_tmdb`, qui reste
+        # renseigné sur ce que l'enrichissement a écrit avant le lot 7.
         await cur.execute(
             sql.SQL(
                 """
@@ -1057,9 +1082,9 @@ async def fetch_rich(conn: psycopg.AsyncConnection, work_id: int) -> dict[str, A
                 order by source, lang, source_id
                 """
             ).format(
-                lien=sql.SQL("oeuvre_id = %(oeuvre)s") if oeuvre else sql.SQL("id_tmdb = %(id)s")
+                lien=sql.SQL("oeuvre_id = %(oeuvre)s") if pivot else sql.SQL("id_tmdb = %(id)s")
             ),
-            {"id": work_id, "oeuvre": oeuvre["id"] if oeuvre else None, "extrait": EXTRAIT_CHARS},
+            {"id": work_id, "oeuvre": pivot["id"] if pivot else None, "extrait": EXTRAIT_CHARS},
         )
         lignes = await cur.fetchall()
 

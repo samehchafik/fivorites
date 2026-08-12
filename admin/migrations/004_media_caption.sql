@@ -14,7 +14,9 @@
 -- une suppression explicite, pas par un écrasement silencieux.
 
 create table notation.media_caption (
-    id_tmdb integer not null references sourcing.tmdb_catalog (id) on delete cascade,
+    -- Sans clé étrangère : la migration 012 la remplace par `oeuvre_id`, qui la
+    -- porte. Voir 003_notation.sql pour le raisonnement.
+    id_tmdb integer not null,
     url     text    not null,             -- l'image exacte qui a été lue
     kind    text    not null,             -- backdrop | still
     label   text    not null default '',  -- 'backdrop 1' | 'S01E03' — l'étiquette du dossier

@@ -32,7 +32,12 @@ comment on table notation.rubric is
 -- lecture courante prend la plus récente.
 create table notation.score (
     id             bigserial   primary key,
-    id_tmdb        integer     not null references sourcing.tmdb_catalog (id),
+    -- Sans clé étrangère depuis la migration 012 : `tmdb_catalog` y devient
+    -- multi-univers (clé primaire `(univers, id)`), et cette colonne cède la
+    -- place à `oeuvre_id`, qui porte la contrainte. La déclarer encore ici
+    -- empêcherait toute base neuve de se construire — la contrainte serait
+    -- créée puis retirée quelques fichiers plus loin.
+    id_tmdb        integer     not null,
     axe            text        not null,
     valeur         numeric(3, 1),               -- 1.0 à 10.0 — null = « ne sait pas »
     confiance      numeric(3, 2),               -- 0.00 à 1.00
@@ -83,7 +88,7 @@ comment on table notation.weights is
 -- l'entrée fait partie de la clé — si le dossier change, le vecteur est
 -- recalculé, jamais réutilisé à tort.
 create table notation.embedding (
-    id_tmdb      integer     not null references sourcing.tmdb_catalog (id),
+    id_tmdb      integer     not null,   -- voir `score` ci-dessus : pivot en 012
     input_sha256 text        not null,
     embedder     text        not null,
     vector       jsonb       not null,
