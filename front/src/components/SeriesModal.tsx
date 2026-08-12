@@ -580,10 +580,10 @@ export function SeriesModal({
           </Tabs.Panel>
 
           <Tabs.Panel value="training1" p="lg">
-            <TrainingTab id={data.id} phase={1} />
+            <TrainingTab id={data.id} media={media} phase={1} />
           </Tabs.Panel>
           <Tabs.Panel value="training2" p="lg">
-            <TrainingTab id={data.id} phase={2} />
+            <TrainingTab id={data.id} media={media} phase={2} />
           </Tabs.Panel>
         </Tabs>
       )}

@@ -39,12 +39,23 @@ import type { AxisScore, Gaps, Phase1Result, Phase2Result, Rubric, TrainingRun }
  * forte → le bouton « Réentraîner » refait les poids sur tout l'historique ;
  * divergence au niveau du bruit → les poids tiennent, on continue.
  */
-export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
+export function TrainingTab({
+  id,
+  media,
+  phase,
+}: {
+  id: number
+  /** L'univers de l'œuvre. Il qualifie `id` : les deux catalogues TMDB se
+   *  chevauchent, et une requête sans lui lit la fiche d'une autre œuvre —
+   *  ou n'en lit aucune, ce qui affichait un dossier vide en films. */
+  media: string
+  phase: 1 | 2
+}) {
   const queryClient = useQueryClient()
 
   const dossier = useQuery({
-    queryKey: ['training-dossier', id],
-    queryFn: () => api.trainingDossier(id),
+    queryKey: ['training-dossier', id, media],
+    queryFn: () => api.trainingDossier(id, media),
     retry: false,
   })
   const rubrics = useQuery({ queryKey: ['rubrics'], queryFn: api.rubrics })
@@ -53,7 +64,7 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
   // d'une fiche ni par une notation. Un appel de vision par œuvre coûte plus
   // cher que la notation elle-même — ça se demande, ça ne s'impose pas.
   const caption = useMutation({
-    mutationFn: () => api.captionWork(id),
+    mutationFn: () => api.captionWork(id, media),
     onSuccess: (result) => {
       notifications.show({
         color: 'teal',
@@ -64,7 +75,7 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
               (result.already > 0 ? `, ${result.already} déjà en base.` : '.')
             : `Les ${result.already} images étaient déjà légendées — rien à payer.`,
       })
-      void queryClient.invalidateQueries({ queryKey: ['training-dossier', id] })
+      void queryClient.invalidateQueries({ queryKey: ['training-dossier', id, media] })
     },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Légende impossible', message: error.message }),
@@ -120,12 +131,13 @@ export function TrainingTab({ id, phase }: { id: number; phase: 1 | 2 }) {
       {phase === 1 ? (
         <Phase1
           id={id}
+          media={media}
           dossierText={dossier.data?.text}
           rubrics={rubrics.data ?? []}
           loading={rubrics.isLoading || dossier.isLoading}
         />
       ) : (
-        <Phase2 id={id} rubrics={rubrics.data ?? []} />
+        <Phase2 id={id} media={media} rubrics={rubrics.data ?? []} />
       )}
     </Stack>
   )
@@ -224,11 +236,13 @@ function GapSummary({ gaps }: { gaps: Gaps }) {
 
 function Phase1({
   id,
+  media,
   dossierText,
   rubrics,
   loading,
 }: {
   id: number
+  media: string
   dossierText: string | undefined
   rubrics: Rubric[]
   loading: boolean
@@ -257,7 +271,10 @@ function Phase1({
   // Le journal des essais : c'est lui qui rend la page rechargeable. Sans
   // lui, les verdicts ne vivaient que dans l'état du navigateur et un F5
   // faisait croire que la notation n'avait jamais eu lieu.
-  const runs = useQuery({ queryKey: ['training-runs', id], queryFn: () => api.trainingRuns(id) })
+  const runs = useQuery({
+    queryKey: ['training-runs', id, media],
+    queryFn: () => api.trainingRuns(id, media),
+  })
 
   // Le dernier essai **de ce barème**, et pas simplement le dernier. Prendre
   // le plus récent tous barèmes confondus affichait un essai v1 sous un
@@ -289,6 +306,7 @@ function Phase1({
     mutationFn: () =>
       api.phase1({
         id,
+        media,
         rubricVersion: selected?.version ?? 'v1',
         prompt,
         axes: selected?.axes ?? [],
@@ -296,7 +314,7 @@ function Phase1({
     onSuccess: (next) => {
       setResult(next)
       setManual({})
-      void client.invalidateQueries({ queryKey: ['training-runs', id] })
+      void client.invalidateQueries({ queryKey: ['training-runs', id, media] })
     },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Notation échouée', message: error.message }),
@@ -306,6 +324,7 @@ function Phase1({
     mutationFn: () =>
       api.manualScores({
         id,
+        media,
         rubricVersion: selected?.version ?? 'v1',
         prompt,
         scores: Object.fromEntries(
@@ -323,7 +342,7 @@ function Phase1({
         title: 'Contre-note enregistrée',
         message: `${stored.stored} axe(s) sous « ${stored.modele} » — même provenance qu'un juge automatique.`,
       })
-      void client.invalidateQueries({ queryKey: ['training-runs', id] })
+      void client.invalidateQueries({ queryKey: ['training-runs', id, media] })
     },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Enregistrement refusé', message: error.message }),
@@ -690,7 +709,7 @@ interface ShownPhase2 {
   storedAt: string | null
 }
 
-function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
+function Phase2({ id, media, rubrics }: { id: number; media: string; rubrics: Rubric[] }) {
   const client = useQueryClient()
   const [version, setVersion] = useState<string | null>(null)
   const [result, setResult] = useState<Phase2Result | null>(null)
@@ -700,7 +719,10 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
   // Le journal, comme en phase 1 : ce qui a déjà été généré pour cette œuvre
   // s'affiche à l'ouverture. Sans ça, un vecteur pourtant calculé et stocké
   // donnait un écran vide, et « Générer » semblait obligatoire pour le voir.
-  const runs = useQuery({ queryKey: ['training-runs', id], queryFn: () => api.trainingRuns(id) })
+  const runs = useQuery({
+    queryKey: ['training-runs', id, media],
+    queryFn: () => api.trainingRuns(id, media),
+  })
 
   const train = useMutation({
     mutationFn: () => api.trainWeights(selected?.version ?? 'v1'),
@@ -722,7 +744,7 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
       // Les poids qui viennent de changer ont périmé le tableau affiché — mais
       // l'entraînement a régénéré le journal, qui reprend la main.
       setResult(null)
-      void client.invalidateQueries({ queryKey: ['training-runs', id] })
+      void client.invalidateQueries({ queryKey: ['training-runs', id, media] })
     },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Entraînement refusé', message: error.message }),
@@ -730,10 +752,10 @@ function Phase2({ id, rubrics }: { id: number; rubrics: Rubric[] }) {
 
   const compare = useMutation({
     mutationFn: (runLlm: boolean) =>
-      api.phase2({ id, rubricVersion: selected?.version ?? 'v1', runLlm }),
+      api.phase2({ id, media, rubricVersion: selected?.version ?? 'v1', runLlm }),
     onSuccess: (next) => {
       setResult(next)
-      void client.invalidateQueries({ queryKey: ['training-runs', id] })
+      void client.invalidateQueries({ queryKey: ['training-runs', id, media] })
     },
     onError: (error: Error) =>
       notifications.show({ color: 'red', title: 'Génération échouée', message: error.message }),

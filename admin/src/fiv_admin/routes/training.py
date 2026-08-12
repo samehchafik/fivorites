@@ -42,6 +42,7 @@ from fiv_admin.llm import (
     score_anthropic,
     score_openai,
 )
+from fiv_admin.media import DEFAULT_MEDIA, MEDIA
 from fiv_admin.oeuvre import pivot
 from fiv_admin.stills import select_images
 from fiv_admin.weights import comparer_modeles as comparer_modeles_axe
@@ -139,7 +140,7 @@ def _gaps(
 
 
 async def _caption_missing(
-    conn: Any, settings: Any, work_id: int, oeuvre_id: int
+    conn: Any, settings: Any, work_id: int, oeuvre_id: int, *, univers: str = "series"
 ) -> dict[str, Any]:
     """Légende ce qui ne l'est pas encore, et seulement ça.
 
@@ -154,10 +155,11 @@ async def _caption_missing(
     """
     model = settings.openai_model
     bilan = {"captioned": 0, "already": 0, "total": 0, "model": model}
-    fiche = await load_fiche(conn, work_id)
+    fiche = await load_fiche(conn, work_id, univers=univers)
     if fiche is None:
         return bilan
-    images = select_images(fiche["payload"], await load_seasons(conn, work_id))
+    saisons = [] if univers != "series" else await load_seasons(conn, work_id)
+    images = select_images(fiche["payload"], saisons)
     if not images:
         return bilan
 
@@ -198,7 +200,9 @@ async def _caption_missing(
     }
 
 
-async def _auto_captions(conn: Any, settings: Any, work_id: int, oeuvre_id: int) -> None:
+async def _auto_captions(
+    conn: Any, settings: Any, work_id: int, oeuvre_id: int, *, univers: str = "series"
+) -> None:
     """Le chemin automatique : les légendes se créent à la première lecture.
 
     La donnée visuelle ne bouge pratiquement pas — une fois payée, la légende
@@ -209,7 +213,7 @@ async def _auto_captions(conn: Any, settings: Any, work_id: int, oeuvre_id: int)
     if not settings.openai_api_key:
         return
     with contextlib.suppress(LlmError):
-        await _caption_missing(conn, settings, work_id, oeuvre_id)
+        await _caption_missing(conn, settings, work_id, oeuvre_id, univers=univers)
 
 
 async def works_a_noter(
@@ -335,6 +339,7 @@ async def note_work(
     prompt: str,
     axes: list[str],
     captions: bool = False,
+    univers: str = "series",
 ) -> dict[str, Any]:
     """Note une œuvre et journalise l'essai — le chemin commun au bouton et au lot.
 
@@ -350,7 +355,7 @@ async def note_work(
     # Le pivot, résolu une fois pour tout l'essai : tout ce qui s'écrit
     # ci-dessous se range sous lui, et une œuvre sans pivot n'est pas
     # collectée — donc pas notable. `SansPivot` remonte comme les autres.
-    oeuvre_id = await pivot(conn, id_tmdb)
+    oeuvre_id = await pivot(conn, id_tmdb, univers=univers)
 
     if captions:
         # Quand on les demande, les légendes passent AVANT le dossier : le juge
@@ -358,11 +363,11 @@ async def note_work(
         # la note rendue. Éteint par défaut — un appel de vision par œuvre
         # coûte plus cher que la notation elle-même, et l'entraînement se règle
         # d'abord sur du texte.
-        await _auto_captions(conn, settings, id_tmdb, oeuvre_id)
+        await _auto_captions(conn, settings, id_tmdb, oeuvre_id, univers=univers)
 
-    built = await build_dossier(conn, id_tmdb, oeuvre_id=oeuvre_id)
+    built = await build_dossier(conn, id_tmdb, oeuvre_id=oeuvre_id, univers=univers)
     if built is None:
-        raise NonCollectee(f"série {id_tmdb} non collectée")
+        raise NonCollectee(f"œuvre {id_tmdb} non collectée en {univers}")
     if not built["enough"]:
         raise DossierMaigre(built["chars"])
 
@@ -437,23 +442,44 @@ async def note_work(
 # ---------------------------------------------------------------- le dossier
 
 
+def _univers(media: str) -> str:
+    """`tv`/`movie` → `series`/`movies`. Liste fermée : la valeur vient de HTTP.
+
+    Sans ce passage, l'atelier construisait toujours un dossier de série, donc
+    cherchait la fiche d'un film sous `kind = 'tv'` et n'en trouvait aucune —
+    l'onglet Training s'affichait vide en univers films.
+    """
+    if media not in MEDIA:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"univers inconnu : {media} (attendus : {', '.join(MEDIA)})",
+        )
+    return MEDIA[media].univers
+
+
 @router.get("/training/works/{work_id}/dossier")
-async def dossier(user: CurrentUser, conn: Conn, work_id: int) -> dict[str, Any]:
+async def dossier(
+    user: CurrentUser, conn: Conn, work_id: int, media: str = DEFAULT_MEDIA
+) -> dict[str, Any]:
     """Le dossier tel qu'il est en base — aucune dépense déclenchée par une
     simple lecture. Les légendes visuelles se demandent explicitement, par le
-    bouton : ouvrir une fiche ne doit jamais coûter un appel de vision."""
-    built = await build_dossier(conn, work_id)
+    bouton : ouvrir une fiche ne doit jamais coûter un appel de vision.
+
+    `media` qualifie l'identifiant : les deux catalogues TMDB se chevauchent,
+    et 550 désigne un film comme une série."""
+    built = await build_dossier(conn, work_id, univers=_univers(media))
     if built is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
-            f"aucune fiche collectée pour {work_id} — impossible de construire un dossier.",
+            f"aucune fiche collectée pour {work_id} en {media}"
+            " — impossible de construire un dossier.",
         )
     return built
 
 
 @router.post("/training/works/{work_id}/captions")
 async def caption_work(
-    user: CurrentUser, conn: Conn, settings: Config, work_id: int
+    user: CurrentUser, conn: Conn, settings: Config, work_id: int, media: str = DEFAULT_MEDIA
 ) -> dict[str, Any]:
     """Le légendage à la demande — utile après une re-collecte, pour ne pas
     attendre la prochaine lecture de dossier.
@@ -468,10 +494,14 @@ async def caption_work(
             "OPENAI_API_KEY doit être renseignée dans le .env de l'admin "
             "pour légender les visuels.",
         )
-    fiche = await load_fiche(conn, work_id)
+    univers = _univers(media)
+    fiche = await load_fiche(conn, work_id, univers=univers)
     if fiche is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {work_id} non collectée")
-    if not select_images(fiche["payload"], await load_seasons(conn, work_id)):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"œuvre {work_id} non collectée en {media}")
+    # Un film n'a pas de saisons : la liste vide vaut « pas de stills », et
+    # `select_images` retombe alors sur les seuls backdrops de la fiche.
+    saisons = [] if univers != "series" else await load_seasons(conn, work_id)
+    if not select_images(fiche["payload"], saisons):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "aucun visuel dans le brut collecté — ni backdrop sur la fiche, "
@@ -479,7 +509,13 @@ async def caption_work(
         )
 
     try:
-        bilan = await _caption_missing(conn, settings, work_id, await pivot(conn, work_id))
+        bilan = await _caption_missing(
+            conn,
+            settings,
+            work_id,
+            await pivot(conn, work_id, univers=univers),
+            univers=univers,
+        )
     except LlmError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return {"id": work_id, **bilan}
@@ -534,6 +570,9 @@ async def save_rubric(user: CurrentUser, conn: Conn, body: RubricIn) -> dict[str
 class Phase1In(BaseModel):
     id: int
     rubricVersion: str
+    # L'univers de l'œuvre. Un identifiant TMDB seul ne désigne rien : les
+    # deux catalogues se chevauchent, et 550 est un film comme une série.
+    media: str = DEFAULT_MEDIA
     # Le prompt réellement envoyé — celui de l'éditeur, sauvé ou non. Son
     # empreinte accompagne chaque note : un essai non sauvé reste traçable.
     prompt: str = Field(min_length=50)
@@ -565,6 +604,7 @@ async def phase1(user: CurrentUser, conn: Conn, settings: Config, body: Phase1In
             rubric_version=body.rubricVersion,
             prompt=body.prompt,
             axes=body.axes,
+            univers=_univers(body.media),
         )
     except NonCollectee as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
@@ -595,6 +635,9 @@ async def phase1(user: CurrentUser, conn: Conn, settings: Config, body: Phase1In
 class ManualIn(BaseModel):
     id: int
     rubricVersion: str
+    # L'univers de l'œuvre. Un identifiant TMDB seul ne désigne rien : les
+    # deux catalogues se chevauchent, et 550 est un film comme une série.
+    media: str = DEFAULT_MEDIA
     prompt: str = Field(min_length=50)
     # La contre-note saisie à la main — obtenue en collant consigne + dossier
     # dans claude.ai. `score` null = « le contre-juge ne sait pas », comme
@@ -613,10 +656,11 @@ async def manual_scores(
     """Enregistre une contre-note faite à la main, avec la même provenance
     qu'un appel automatique : empreinte du dossier, empreinte du prompt."""
     await _rubric(conn, body.rubricVersion)
-    oeuvre_id = await pivot(conn, body.id)
-    built = await build_dossier(conn, body.id, oeuvre_id=oeuvre_id)
+    univers = _univers(body.media)
+    oeuvre_id = await pivot(conn, body.id, univers=univers)
+    built = await build_dossier(conn, body.id, oeuvre_id=oeuvre_id, univers=univers)
     if built is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {body.id} non collectée")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"œuvre {body.id} non collectée")
 
     cleaned = {
         axe: {
@@ -694,7 +738,7 @@ async def manual_scores(
 
 @router.get("/training/works/{work_id}/runs")
 async def work_runs(
-    user: CurrentUser, conn: Conn, work_id: int, limit: int = 10
+    user: CurrentUser, conn: Conn, work_id: int, limit: int = 10, media: str = DEFAULT_MEDIA
 ) -> list[dict[str, Any]]:
     """Les derniers essais du journal, le plus récent d'abord.
 
@@ -710,7 +754,7 @@ async def work_runs(
             from notation.training_run
             where oeuvre_id = %s order by created_at desc limit %s
             """,
-            (await pivot(conn, work_id), min(max(limit, 1), 50)),
+            (await pivot(conn, work_id, univers=_univers(media)), min(max(limit, 1), 50)),
         )
         rows = await cur.fetchall()
     return [
@@ -731,7 +775,9 @@ async def work_runs(
 
 
 @router.get("/training/works/{work_id}/scores")
-async def work_scores(user: CurrentUser, conn: Conn, work_id: int) -> list[dict[str, Any]]:
+async def work_scores(
+    user: CurrentUser, conn: Conn, work_id: int, media: str = DEFAULT_MEDIA
+) -> list[dict[str, Any]]:
     """L'historique des notes d'une œuvre — tous modèles, tous barèmes."""
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
@@ -741,7 +787,7 @@ async def work_scores(user: CurrentUser, conn: Conn, work_id: int) -> list[dict[
             order by scored_at desc, axe
             limit 400
             """,
-            (await pivot(conn, work_id),),
+            (await pivot(conn, work_id, univers=_univers(media)),),
         )
         return list(await cur.fetchall())
 
@@ -1423,6 +1469,9 @@ async def train_weights(
 class Phase2In(BaseModel):
     id: int
     rubricVersion: str
+    # L'univers de l'œuvre. Un identifiant TMDB seul ne désigne rien : les
+    # deux catalogues se chevauchent, et 550 est un film comme une série.
+    media: str = DEFAULT_MEDIA
     # Noter aussi avec OpenAI dans la foulée : c'est la « vérification avec le
     # LLM » de la boucle — comparer l'interne à une note fraîche, pas à une
     # note d'il y a trois barèmes.
@@ -1465,10 +1514,11 @@ async def phase2(user: CurrentUser, conn: Conn, settings: Config, body: Phase2In
         )
     weight_rows: dict[str, dict[str, Any]] = weights_row["weights"]
 
-    oeuvre_id = await pivot(conn, body.id)
-    built = await build_dossier(conn, body.id, oeuvre_id=oeuvre_id)
+    univers = _univers(body.media)
+    oeuvre_id = await pivot(conn, body.id, univers=univers)
+    built = await build_dossier(conn, body.id, oeuvre_id=oeuvre_id, univers=univers)
     if built is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"série {body.id} non collectée")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"œuvre {body.id} non collectée")
 
     async with httpx.AsyncClient() as http:
         try:
@@ -1844,7 +1894,7 @@ async def diagnostic_matiere(
     }
 
 
-CARTE_PAR_UNIVERS = {"series": "admin.tv_card", "movies": "admin.movie_card"}
+CARTE_PAR_UNIVERS = {m.univers: f"admin.{m.card_view}" for m in MEDIA.values()}
 
 
 async def constituer_corpus(

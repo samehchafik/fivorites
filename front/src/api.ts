@@ -109,17 +109,24 @@ export const api = {
 
   // --------------------------------------------------------- entraînement
 
-  trainingDossier: (id: number) => request<Dossier>(`/api/training/works/${id}/dossier`),
+  /** Toutes les routes d'atelier portent `media`. Un identifiant TMDB seul ne
+   *  désigne rien : les deux catalogues se chevauchent, et 550 est un film
+   *  comme une série. Sans lui, l'atelier cherchait la fiche d'un film sous le
+   *  `kind` des séries et affichait un dossier vide. */
+  trainingDossier: (id: number, media: string) =>
+    request<Dossier>(`/api/training/works/${id}/dossier?media=${media}`),
 
-  trainingScores: (id: number) => request<StoredScore[]>(`/api/training/works/${id}/scores`),
+  trainingScores: (id: number, media: string) =>
+    request<StoredScore[]>(`/api/training/works/${id}/scores?media=${media}`),
 
   /** Les derniers essais du journal — ce qui rend la page rechargeable. */
-  trainingRuns: (id: number) => request<TrainingRun[]>(`/api/training/works/${id}/runs`),
+  trainingRuns: (id: number, media: string) =>
+    request<TrainingRun[]>(`/api/training/works/${id}/runs?media=${media}`),
 
   /** Légende les visuels (backdrops + stills) via le modèle de vision, une
    *  fois pour toutes : les images déjà légendées ne sont jamais repayées. */
-  captionWork: (id: number) =>
-    request<CaptionResult>(`/api/training/works/${id}/captions`, { method: 'POST' }),
+  captionWork: (id: number, media: string) =>
+    request<CaptionResult>(`/api/training/works/${id}/captions?media=${media}`, { method: 'POST' }),
 
   rubrics: () => request<Rubric[]>('/api/training/rubrics'),
 
@@ -130,7 +137,13 @@ export const api = {
     }),
 
   /** Phase 1 : une œuvre, deux juges (OpenAI note, Haiku contre-note). */
-  phase1: (body: { id: number; rubricVersion: string; prompt: string; axes: string[] }) =>
+  phase1: (body: {
+    id: number
+    media: string
+    rubricVersion: string
+    prompt: string
+    axes: string[]
+  }) =>
     request<Phase1Result>('/api/training/phase1', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -139,6 +152,7 @@ export const api = {
   /** Contre-note saisie à la main — le verdict de claude.ai, recopié. */
   manualScores: (body: {
     id: number
+    media: string
     rubricVersion: string
     prompt: string
     scores: Record<string, { score: number | null; confidence?: number | null }>
@@ -157,7 +171,7 @@ export const api = {
     }),
 
   /** Phase 2 : la prédiction interne face aux notes LLM. */
-  phase2: (body: { id: number; rubricVersion: string; runLlm?: boolean }) =>
+  phase2: (body: { id: number; media: string; rubricVersion: string; runLlm?: boolean }) =>
     request<Phase2Result>('/api/training/phase2', {
       method: 'POST',
       body: JSON.stringify(body),

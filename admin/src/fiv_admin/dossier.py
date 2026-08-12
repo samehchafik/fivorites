@@ -24,6 +24,8 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from fiv_admin.media import MEDIA
+
 SOURCE = "tmdb"
 KIND_SERIES = "tv"
 KIND_SEASON = "tv_season"
@@ -37,7 +39,11 @@ KIND_MOVIE = "movie"
 # émotionnelle, pas un format. Une échelle unique est ce qui permet de mêler
 # films et séries dans une même recommandation ; deux barèmes en donneraient
 # deux, incomparables.
-KIND_PAR_UNIVERS = {"series": KIND_SERIES, "movies": KIND_MOVIE}
+#
+# La correspondance se lit dans `media.py` plutôt que d'être réécrite ici : un
+# univers ajouté là doit apparaître partout à la fois, sinon il s'affiche dans
+# la grille et reste muet à la notation.
+KIND_PAR_UNIVERS = {m.univers: m.kind for m in MEDIA.values()}
 
 # Combien de synopsis d'épisodes entrent dans le dossier. Répartis sur tout
 # l'arc — début, milieu, fin — parce que le ton d'une série change entre sa
