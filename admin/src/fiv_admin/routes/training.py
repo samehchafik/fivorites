@@ -33,7 +33,14 @@ from pydantic import BaseModel, Field
 from fiv_admin.deps import Config, Conn, CurrentUser
 from fiv_admin.dossier import build_dossier, load_fiche, load_seasons
 from fiv_admin.embed import EMBEDDER, MAX_CHARS, embed_texts, liberer_modeles
-from fiv_admin.llm import LlmError, caption_openai, score_anthropic, score_openai
+from fiv_admin.llm import (
+    TARIF_EMBEDDING,
+    LlmError,
+    caption_openai,
+    embed_openai,
+    score_anthropic,
+    score_openai,
+)
 from fiv_admin.stills import select_images
 from fiv_admin.weights import comparer_modeles as comparer_modeles_axe
 from fiv_admin.weights import (
@@ -849,21 +856,45 @@ ENCODEURS_CANDIDATS = (
 )
 
 
-async def comparer_encodeurs(
-    conn: Any, settings: Any, rubric: dict[str, Any], modeles: tuple[str, ...]
-) -> list[dict[str, Any]]:
-    """Met des encodeurs en concurrence sur les notes déjà rendues.
+def _encodeur_api(modele: str) -> tuple[str, int | None] | None:
+    """Découpe `openai/text-embedding-3-large@512`, ou None si c'est un modèle local.
 
-    Le protocole est celui de l'entraînement, à ceci près qu'il ne stocke
-    rien : mêmes œuvres, mêmes notes, même régression, seul l'encodeur change.
-    On compare des erreurs de validation croisée — ce que chaque encodeur
-    permettrait de prédire sur une œuvre jamais vue.
-
-    Rien n'est écrit en base, et surtout pas dans `notation.embedding` : y
-    ranger les vecteurs des candidats écartés mêlerait des espaces vectoriels
-    incompatibles dans la table qui sert la production.
+    Le préfixe distingue les deux chemins, le suffixe `@N` demande le vecteur
+    raccourci. Sans lui, la comparaison confondrait deux causes : un candidat à
+    3 072 dimensions qui bat les 512 de jina gagne peut-être uniquement parce
+    qu'il en a six fois plus, sur un corpus de 502 exemples.
     """
-    axes: list[str] = rubric["axes"]
+    if not modele.startswith("openai/"):
+        return None
+    nom, _, dims = modele.removeprefix("openai/").partition("@")
+    return nom, int(dims) if dims else None
+
+
+def cout_encodeurs(modeles: tuple[str, ...], textes: list[str]) -> float:
+    """La dépense en dollars qu'engagerait la comparaison, avant de la lancer.
+
+    Un caractère vaut environ un quart de token en anglais. L'estimation vise
+    l'ordre de grandeur : assez pour décider, jamais présentée comme une
+    facture.
+    """
+    tokens = sum(min(len(t), MAX_CHARS) for t in textes) / 4.0
+    total = 0.0
+    for modele in modeles:
+        api = _encodeur_api(modele)
+        if api is not None:
+            total += tokens / 1_000_000 * TARIF_EMBEDDING.get(api[0], 0.13)
+    return total
+
+
+async def _notes_et_dossiers(
+    conn: Any, rubric: dict[str, Any]
+) -> tuple[dict[int, dict[str, float]], dict[int, str]]:
+    """Les notes du juge et le texte des dossiers, pour un barème.
+
+    Partagé entre l'aperçu et la comparaison : le second doit chiffrer
+    exactement ce que la première annonce, et deux requêtes écrites deux fois
+    finissent toujours par diverger.
+    """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
@@ -890,6 +921,49 @@ async def comparer_encodeurs(
         built = await build_dossier(conn, id_tmdb)
         if built is not None:
             textes[id_tmdb] = built["text"]
+    return by_work, textes
+
+
+async def apercu_encodeurs(
+    conn: Any, rubric: dict[str, Any], modeles: tuple[str, ...]
+) -> dict[str, Any]:
+    """Ce que la comparaison couvrirait et coûterait, sans rien encoder.
+
+    Les candidats locaux sont gratuits ; ceux d'API ne le sont pas. Voir le
+    montant avant de le dépenser est la seule façon de relancer sereinement
+    une comparaison qu'on veut faire varier.
+    """
+    _, textes = await _notes_et_dossiers(conn, rubric)
+    return {
+        "oeuvres": len(textes),
+        "cout": round(cout_encodeurs(modeles, list(textes.values())), 2),
+        "modeles": list(modeles),
+    }
+
+
+async def comparer_encodeurs(
+    conn: Any, settings: Any, rubric: dict[str, Any], modeles: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """Met des encodeurs en concurrence sur les notes déjà rendues.
+
+    Le protocole est celui de l'entraînement, à ceci près qu'il ne stocke
+    rien : mêmes œuvres, mêmes notes, même régression, seul l'encodeur change.
+    On compare des erreurs de validation croisée — ce que chaque encodeur
+    permettrait de prédire sur une œuvre jamais vue.
+
+    Un candidat préfixé `openai/` passe par l'API et devient payant. C'est le
+    seul moyen de trancher ce que les quatre candidats locaux ne peuvent pas :
+    ils s'équivalent à 0,006 près parce qu'ils sont de la même famille, tous
+    petits, tous entraînés pour la similarité sémantique — leur égalité dit
+    qu'ils sont interchangeables entre eux, pas qu'un encodeur plus savant ne
+    ferait pas mieux.
+
+    Rien n'est écrit en base, et surtout pas dans `notation.embedding` : y
+    ranger les vecteurs des candidats écartés mêlerait des espaces vectoriels
+    incompatibles dans la table qui sert la production.
+    """
+    axes: list[str] = rubric["axes"]
+    by_work, textes = await _notes_et_dossiers(conn, rubric)
 
     ids = [i for i in by_work if i in textes]
     resultats: list[dict[str, Any]] = []
@@ -900,15 +974,33 @@ async def comparer_encodeurs(
         log.info(
             "encodeur %d/%d : %s — %d dossiers à encoder", rang, len(modeles), modele, len(ids)
         )
-        vecteurs = await asyncio.to_thread(
-            embed_texts,
-            [textes[i] for i in ids],
-            cache_dir=settings.embed_cache_dir,
-            model=modele,
-        )
-        # Chaque candidat évalué est aussitôt déchargé : sans ça, les
-        # arènes ONNX des quatre modèles s'empilent en mémoire résidente.
-        liberer_modeles()
+        api = _encodeur_api(modele)
+        if api is None:
+            vecteurs = await asyncio.to_thread(
+                embed_texts,
+                [textes[i] for i in ids],
+                cache_dir=settings.embed_cache_dir,
+                model=modele,
+            )
+            # Chaque candidat évalué est aussitôt déchargé : sans ça, les
+            # arènes ONNX des quatre modèles s'empilent en mémoire résidente.
+            liberer_modeles()
+        else:
+            nom, dims = api
+            if not settings.openai_api_key:
+                raise LlmError(f"{modele} demande OPENAI_API_KEY, absente du .env")
+            # La même troncature que le chemin local, appliquée ici à la main.
+            # Sans elle la comparaison mesurerait deux choses en même temps —
+            # l'encodeur ET la quantité de texte lue — et un candidat d'API
+            # gagnerait sans qu'on sache par quoi.
+            async with httpx.AsyncClient() as http:
+                vecteurs = await embed_openai(
+                    http,
+                    api_key=settings.openai_api_key,
+                    model=nom,
+                    textes=[textes[i][:MAX_CHARS] for i in ids],
+                    dimensions=dims,
+                )
         log.info(
             "encodeur %d/%d : %s — encodage terminé, régression en cours",
             rang,

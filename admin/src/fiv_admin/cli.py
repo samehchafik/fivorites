@@ -294,6 +294,10 @@ def training_encodeurs(
         str | None,
         typer.Option("--modeles", help="Liste séparée par des virgules. Défaut : les candidats."),
     ] = None,
+    apercu: Annotated[
+        bool,
+        typer.Option("--apercu", help="Afficher les candidats et le coût, sans rien appeler."),
+    ] = False,
 ) -> None:
     """Compare des encodeurs sur les notes déjà rendues, et n'écrit rien.
 
@@ -307,6 +311,20 @@ def training_encodeurs(
     validation croisée, c'est-à-dire ce que chaque encodeur permettrait de
     prédire sur une œuvre jamais vue.
 
+    Un candidat préfixé `openai/` passe par l'API au lieu d'un modèle local, et
+    devient payant — quelques dizaines de centimes pour cinq cents dossiers.
+    C'est le seul moyen de tester l'hypothèse que les quatre candidats locaux
+    ne peuvent pas départager : ils s'équivalent à 0,006 près parce qu'ils sont
+    de la même famille, tous petits, tous entraînés pour la similarité
+    sémantique. Le voisinage de Lucifer a rendu la question concrète — le
+    titre est dans le dossier, mais aucun d'eux ne sait ce qu'il désigne.
+
+        --modeles jinaai/jina-embeddings-v2-small-en,openai/text-embedding-3-large
+
+    Le suffixe `@512` demande à l'API un vecteur raccourci, pour comparer à
+    dimension égale : sans ça, un gain pourrait ne venir que des 3 072
+    dimensions face aux 512 de jina. `--apercu` chiffre la dépense sans appeler.
+
     Rien n'est stocké : ni vecteurs, ni poids. Changer d'encodeur reste un
     geste explicite, à faire dans `embed.py` au vu de ces chiffres.
     """
@@ -314,6 +332,7 @@ def training_encodeurs(
         ENCODEURS_CANDIDATS,
         PasAssezDOeuvres,
         _rubric,
+        apercu_encodeurs,
         comparer_encodeurs,
     )
 
@@ -339,6 +358,25 @@ def training_encodeurs(
                 f"barème {rubric['version']} · {len(candidats)} encodeur(s) à comparer"
                 " — le premier passage télécharge les modèles."
             )
+            try:
+                devis = await apercu_encodeurs(conn, rubric, candidats)
+            except PasAssezDOeuvres as exc:
+                typer.echo(f"ERREUR : {exc}")
+                raise typer.Exit(1) from exc
+
+            for m in candidats:
+                typer.echo(
+                    f"  {'API payante' if m.startswith('openai/') else 'local gratuit':<14} {m}"
+                )
+            cout = float(devis["cout"])
+            typer.echo(
+                f"\n{devis['oeuvres']} dossier(s)"
+                + (f" — coût estimé ~{cout:.2f} $" if cout else " — gratuit, aucun appel payant")
+            )
+            if apercu:
+                typer.echo("aperçu seul, rien n'a été encodé.")
+                return
+
             try:
                 resultats = await comparer_encodeurs(conn, settings, rubric, candidats)
             except PasAssezDOeuvres as exc:

@@ -5,9 +5,21 @@ les poids internes s'apprennent dessus : un juge d'une autre famille est le
 seul à pouvoir détecter un biais que toute la lignée partagerait. Haiku ne
 note pas la masse — il contredit, ou pas.
 
-Ce module ne contient plus que des appels payants à des juges. L'encodage des
-dossiers, lui, est local (`embed.py`) : la traîne du catalogue ne doit
-dépendre d'aucune API.
+Ce module ne contient que des appels payants. L'encodage de **production** est
+local (`embed.py`) : la traîne du catalogue ne doit dépendre d'aucune API.
+`embed_openai` n'est pas une exception à cette règle — c'est un candidat de
+comparaison, jamais un chemin de production, et `comparer_encodeurs` est seul à
+l'appeler.
+
+Pourquoi un encodeur d'API malgré la règle : les quatre candidats locaux sont
+tous de petits modèles de similarité sémantique, et ils s'équivalent à 0,006
+près — ce qui dit qu'ils sont interchangeables entre eux, pas qu'un encodeur
+plus savant ne ferait pas mieux. Le voisinage de Lucifer a rendu la question
+concrète : ses dix plus proches sont des policiers sombres, l'encodeur retient
+le sujet et jette le ton, alors que le titre de la série est dans le dossier.
+Un modèle qui sait ce que « Lucifer » désigne la rangerait ailleurs sur le même
+texte. Cette hypothèse-là se mesure pour vingt centimes ; la refuser par
+principe coûterait plus cher que de la tester.
 
 La sortie est **contrainte** au schéma dans les deux cas : six entiers et six
 confiances, jamais de prose à reparser. Les bornes 1-10 sont vérifiées ici (les
@@ -18,6 +30,7 @@ une maladresse d'échelle, pas une absence de jugement.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -28,6 +41,19 @@ ANTHROPIC_BASE = "https://api.anthropic.com/v1"
 # Assez pour un dossier de ~2 000 tokens et une réponse de ~300 : un appel qui
 # dépasse ça est un appel parti en vrille, pas un appel lent.
 TIMEOUT = httpx.Timeout(90.0, connect=10.0)
+
+# Le tarif public des encodeurs OpenAI au 2026-08-11, en dollars par million de
+# tokens. Sert à annoncer la dépense AVANT d'appeler : une comparaison dont on
+# découvre le coût sur la facture ne se relance jamais.
+TARIF_EMBEDDING = {
+    "text-embedding-3-large": 0.13,
+    "text-embedding-3-small": 0.02,
+}
+
+# Assez de dossiers par requête pour que la latence réseau ne domine pas, assez
+# peu pour rester loin des 300 000 tokens acceptés par appel : à douze mille
+# caractères, cinquante dossiers font environ 150 000 tokens.
+LOT_EMBEDDING = 50
 
 
 class LlmError(RuntimeError):
@@ -229,3 +255,71 @@ async def caption_openai(
         raise LlmError(f"réponse vision illisible : {exc}") from exc
 
     return {"model": body.get("model", model), "captions": captions}
+
+
+async def embed_openai(
+    http: httpx.AsyncClient,
+    *,
+    api_key: str,
+    model: str,
+    textes: list[str],
+    dimensions: int | None = None,
+) -> list[list[float]]:
+    """Les vecteurs d'une liste de dossiers, par l'API OpenAI.
+
+    Candidat de comparaison uniquement : `comparer_encodeurs` est seul appelant,
+    et rien de ce qui sort d'ici n'atteint `notation.embedding`. Mélanger deux
+    espaces vectoriels dans la table qui sert la production coûterait bien plus
+    qu'une comparaison ratée.
+
+    `dimensions` exploite le rétrécissement natif de la famille
+    `text-embedding-3` : le même modèle rend un vecteur plus court sans être
+    réencodé. C'est ce qui permet de séparer deux causes qu'on confondrait
+    sinon — un candidat qui gagne avec 3 072 dimensions contre les 512 de jina
+    gagne peut-être seulement parce qu'il en a six fois plus, sur un corpus qui
+    n'a que 502 exemples. Le comparer aussi à 512 tranche.
+
+    Les lots sont séquentiels, pas concurrents : cinq cents dossiers font dix
+    appels, la durée totale est de quelques secondes, et un parallélisme ne
+    ferait gagner que du 429.
+    """
+    vecteurs: list[list[float]] = []
+    for depart in range(0, len(textes), LOT_EMBEDDING):
+        lot = textes[depart : depart + LOT_EMBEDDING]
+        charge: dict[str, Any] = {"model": model, "input": lot}
+        if dimensions:
+            charge["dimensions"] = dimensions
+
+        # Reprise sur 429 et sur les 5xx : un encodage de cinq cents dossiers
+        # qui échoue au neuvième lot aurait déjà été payé pour rien.
+        derniere: str = ""
+        for essai in range(4):
+            response = await http.post(
+                f"{OPENAI_BASE}/embeddings",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=charge,
+                timeout=TIMEOUT,
+            )
+            if response.status_code == 200:
+                break
+            derniere = f"OpenAI {response.status_code} : {response.text[:300]}"
+            if response.status_code != 429 and response.status_code < 500:
+                raise LlmError(derniere)
+            await asyncio.sleep(2.0 * (essai + 1))
+        else:
+            raise LlmError(f"encodage abandonné après quatre essais — {derniere}")
+
+        body = response.json()
+        try:
+            # L'API ne garantit pas l'ordre de `data` ; `index` si. Se fier au
+            # rang de la liste rendrait des vecteurs appariés aux mauvaises
+            # œuvres, et une régression sur des paires mélangées ne ressemble
+            # pas à une erreur — elle ressemble à un mauvais encodeur.
+            lot_vecteurs = sorted(body["data"], key=lambda d: int(d["index"]))
+            vecteurs.extend([float(v) for v in d["embedding"]] for d in lot_vecteurs)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise LlmError(f"réponse d'encodage illisible : {exc}") from exc
+
+    if len(vecteurs) != len(textes):
+        raise LlmError(f"{len(vecteurs)} vecteurs rendus pour {len(textes)} dossiers")
+    return vecteurs

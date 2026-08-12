@@ -24,6 +24,7 @@ from fiv_admin.app import create_app
 from fiv_admin.config import Settings
 from fiv_admin.dossier import build_dossier
 from fiv_admin.embed import MAX_CHARS
+from fiv_admin.llm import LOT_EMBEDDING, embed_openai
 from fiv_admin.security import hash_password
 from fiv_admin.stills import select_images
 from fiv_admin.weights import (
@@ -1107,3 +1108,53 @@ def test_predictions_ridge_reproduit_la_ligne_du_tableau() -> None:
 
     tableau = comparer_modeles(axe="test", vectors=vecteurs, values=notes)
     assert round(mae, 3) == tableau["ridge"]["maeCv"]
+
+
+async def test_embed_openai_recolle_les_vecteurs_dans_l_ordre_demande() -> None:
+    """Les lots peuvent revenir melanges ; l'appariement doit tenir quand meme.
+
+    L'API ne garantit pas l'ordre de `data`, seulement le champ `index`. Un
+    appariement fonde sur le rang de la liste collerait des vecteurs aux
+    mauvaises oeuvres — et une regression sur des paires melangees ne ressemble
+    pas a un bug, elle ressemble a un mauvais encodeur. On aurait conclu contre
+    le candidat au lieu de conclure contre le code.
+    """
+    import json
+
+    textes = [f"dossier {i}" for i in range(120)]
+    tailles: list[int] = []
+
+    def repondre(request: httpx.Request) -> httpx.Response:
+        lot = json.loads(request.content)["input"]
+        tailles.append(len(lot))
+        data = [
+            {"index": rang, "embedding": [float(int(t.split()[1])), 0.0]}
+            for rang, t in enumerate(lot)
+        ]
+        # Renvoye a l'envers, exactement ce que le contrat autorise.
+        return httpx.Response(200, json={"data": list(reversed(data))})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(repondre)) as http:
+        vecteurs = await embed_openai(
+            http, api_key="cle", model="text-embedding-3-large", textes=textes
+        )
+
+    assert tailles == [LOT_EMBEDDING, LOT_EMBEDDING, 20], "les lots ne sont pas ceux annonces"
+    assert [v[0] for v in vecteurs] == [float(i) for i in range(120)]
+
+
+def test_encodeur_api_distingue_les_deux_chemins() -> None:
+    """Le prefixe decide du chemin, le suffixe de la dimension demandee."""
+    from fiv_admin.routes.training import _encodeur_api, cout_encodeurs
+
+    assert _encodeur_api("jinaai/jina-embeddings-v2-small-en") is None
+    assert _encodeur_api("openai/text-embedding-3-large") == ("text-embedding-3-large", None)
+    assert _encodeur_api("openai/text-embedding-3-large@512") == ("text-embedding-3-large", 512)
+
+    # Un candidat local ne coute rien, et la troncature borne la depense : un
+    # dossier de cinquante mille caracteres n'est facture que sur douze mille.
+    textes = ["x" * 50_000] * 100
+    local = cout_encodeurs(("jinaai/jina-embeddings-v2-small-en",), textes)
+    api = cout_encodeurs(("openai/text-embedding-3-large",), textes)
+    assert local == 0.0
+    assert api == pytest.approx(100 * MAX_CHARS / 4 / 1_000_000 * 0.13)
