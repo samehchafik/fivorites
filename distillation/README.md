@@ -50,29 +50,78 @@ signal, 20 000 un résultat exploitable** — la cible étant un vecteur de 512
 nombres et non six notes, chaque œuvre apporte 512 signaux, ce qui rend ces
 ordres de grandeur suffisants.
 
-## 2. Louer une heure de GPU
+## 2. Entraîner
 
-| | 20 000 dossiers, 3 époques |
+L'attention coûte le **carré** de la longueur : c'est elle qui décide du temps,
+pas le nombre de paramètres. D'où l'écart entre les deux chemins.
+
+| | 20 000 paires, 3 époques |
 |---|---|
-| CPU, 512 tokens | 5 à 16 h |
-| CPU, 2 048 tokens | plusieurs jours |
-| 1 GPU (T4, A10, 4090) | **< 1 h, 1 à 3 $** |
+| 1 GPU loué (T4, A10, 4090) | **< 1 h, 1 à 3 $** |
+| Serveur, 1 024 tokens | plusieurs jours |
+| Serveur, **256 tokens, 4 couches gelées** | ~10 à 20 h |
 
-L'attention coûte le carré de la longueur : c'est elle qui décide, pas le
-nombre de paramètres. Louer coûte moins cher que le corpus lui-même, et
-n'installe rien sur le serveur.
+### Sur GPU
 
 ```bash
 uv sync
 uv run python distiller.py --corpus corpus.jsonl --sortie eleve-distille
 ```
 
-Réglages utiles : `--longueur` (1 024 par défaut — le dossier place en tête ce
-qui porte le ton, la coupe tombe sur les synopsis d'épisodes répétitifs),
-`--lot`, `--epoques`.
+### Sur le serveur, sans GPU
 
-Le script affiche le cosinus **avant** tout entraînement. C'est le témoin :
-s'il ne monte pas, quelque chose ne va pas, et le script refuse d'exporter.
+Installer torch **en version processeur** — la roue par défaut embarque CUDA,
+soit deux gigaoctets inutiles ici :
+
+```bash
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+uv sync --inexact
+```
+
+Puis, détaché, parce que ça dure une nuit ou deux :
+
+```bash
+nohup uv run python distiller.py --corpus corpus.jsonl --sortie eleve-distille \
+    --longueur 256 --geler 4 --lot 16 --fils 4 > distillation.log 2>&1 &
+```
+
+```bash
+tail -f distillation.log
+```
+
+Les trois réglages qui rendent ça tenable :
+
+- **`--longueur 256`** — le facteur étant quadratique, passer de 1 024 à 256
+  divise le temps par bien plus que quatre. Et la tête du dossier tient dans
+  256 tokens : titre, faits, genres, mots-clés, début du synopsis. C'est elle
+  qui porte le ton.
+- **`--geler 4`** — la passe arrière pèse les deux tiers du calcul et ne remonte
+  plus que jusqu'à la première couche entraînée. Les couches basses portent la
+  syntaxe, les hautes le sens : c'est le sens qu'on déplace ici.
+- **`--fils`** — le nombre de cœurs laissés au calcul. En laisser au moins un
+  à l'admin, qui continue de servir le catalogue.
+
+`--limite 8000` coupe le corpus si tu veux un premier résultat en une nuit
+plutôt qu'un résultat complet en deux.
+
+### La reprise
+
+Le script écrit `reprise.pt` tous les 200 lots et à chaque fin d'époque. Il
+suffit de relancer **la même commande** : il repart à l'époque et au lot où il
+s'était arrêté, avec l'optimiseur et le planning dans l'état exact. Une coupure
+coûte au pire les derniers lots.
+
+Le mélange des exemples est semé par l'époque, pas laissé au hasard — sans ça
+une reprise rejouerait d'autres exemples, et l'époque serait à la fois
+incomplète et partiellement doublée.
+
+Pour repartir de zéro : supprimer `reprise.pt`.
+
+### Le témoin
+
+Le script affiche le cosinus **avant** tout entraînement. S'il ne monte pas,
+quelque chose ne va pas — et le script refuse d'exporter plutôt que d'écrire un
+élève inutile.
 
 ## 3. Vérifier avant de déployer
 

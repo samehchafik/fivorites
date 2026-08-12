@@ -177,72 +177,204 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
     tokenizer.save_pretrained(sortie)
 
 
+def geler(modele, couches: int) -> tuple[int, int]:
+    """Gèle les plongements et les `couches` premières couches de l'encodeur.
+
+    Sur processeur, c'est le réglage qui décide de la faisabilité. La passe
+    avant reste entière — il faut bien traverser tout le réseau — mais la passe
+    arrière ne remonte plus que jusqu'à la première couche entraînée, et elle
+    pèse les deux tiers du calcul. Geler la moitié des couches enlève environ
+    un tiers du temps total.
+
+    Ce qu'on perd : les couches basses d'un encodeur portent la syntaxe et le
+    vocabulaire, les hautes le sens de l'énoncé. C'est le sens qu'on veut
+    déplacer ici, donc les geler coûte peu — mais ce n'est pas gratuit, et sur
+    GPU il n'y a aucune raison de le faire.
+    """
+    if couches <= 0:
+        return 0, sum(p.numel() for p in modele.parameters())
+    figes = []
+    if hasattr(modele, "embeddings"):
+        figes.extend(modele.embeddings.parameters())
+    bloc = getattr(getattr(modele, "encoder", None), "layer", None)
+    if bloc is None:
+        print("⚠ structure de couches non reconnue — rien n'est gelé.")
+        return 0, sum(p.numel() for p in modele.parameters())
+    for couche in list(bloc)[:couches]:
+        figes.extend(couche.parameters())
+    for parametre in figes:
+        parametre.requires_grad_(False)
+    entrainables = sum(p.numel() for p in modele.parameters() if p.requires_grad)
+    return sum(p.numel() for p in figes), entrainables
+
+
+def sauver_reprise(
+    chemin: Path, modele, optimiseur, planning, etat: dict, meilleurs_poids: dict | None
+) -> None:
+    """Écrit l'état complet, par un fichier temporaire renommé.
+
+    Le renommage est atomique sur le même système de fichiers. Écrire
+    directement sur la reprise exposerait à la perdre entièrement si la
+    machine tombait pendant les quelques secondes de l'écriture — soit
+    précisément le scénario contre lequel elle existe.
+    """
+    provisoire = chemin.with_suffix(".tmp")
+    torch.save(
+        {
+            "modele": modele.state_dict(),
+            "optimiseur": optimiseur.state_dict(),
+            "planning": planning.state_dict(),
+            "meilleurs_poids": meilleurs_poids,
+            **etat,
+        },
+        provisoire,
+    )
+    provisoire.replace(chemin)
+
+
 def main() -> None:
     parseur = argparse.ArgumentParser(description=__doc__)
     parseur.add_argument("--corpus", type=Path, default=Path("corpus.jsonl"))
     parseur.add_argument("--sortie", type=Path, default=Path("eleve-distille"))
     parseur.add_argument("--epoques", type=int, default=3)
     parseur.add_argument("--lot", type=int, default=8)
-    # 1 024 plutôt que les 8 192 que jina accepte : l'attention coûte le carré
-    # de la longueur, et le dossier place en tête ce qui porte le ton — genres,
-    # mots-clés, synopsis, Wikipédia. Ce qui se fait couper est la fin d'une
-    # liste de synopsis d'épisodes répétitifs.
+    # Sur GPU, 1 024 : l'attention coûte le carré de la longueur, et le dossier
+    # place en tête ce qui porte le ton — genres, mots-clés, synopsis,
+    # Wikipédia. Ce qui se fait couper est la fin d'une liste de synopsis
+    # d'épisodes répétitifs.
+    #
+    # Sur processeur, descendre à 384 ou 256 : le facteur est quadratique, donc
+    # passer de 1 024 à 256 divise le temps par bien plus que quatre. La tête du
+    # dossier tient dans 256 tokens, et c'est elle qui porte le ton.
     parseur.add_argument("--longueur", type=int, default=1024)
     parseur.add_argument("--pas", type=float, default=2e-5)
     parseur.add_argument("--patience", type=int, default=2)
+    parseur.add_argument(
+        "--limite", type=int, default=0, help="Plafonne le corpus. 0 = tout prendre."
+    )
+    parseur.add_argument(
+        "--geler", type=int, default=0, help="Couches basses gelées (utile sur processeur)."
+    )
+    parseur.add_argument("--fils", type=int, default=0, help="Fils de calcul. 0 = laisser torch.")
+    parseur.add_argument(
+        "--reprise", type=Path, default=Path("reprise.pt"), help="Fichier d'état pour reprendre."
+    )
+    parseur.add_argument("--tous-les", type=int, default=200, help="Sauver l'état tous les N lots.")
     args = parseur.parse_args()
 
+    if args.fils > 0:
+        torch.set_num_threads(args.fils)
     appareil = "cuda" if torch.cuda.is_available() else "cpu"
     if appareil == "cpu":
-        print("⚠ aucun GPU détecté — comptez des heures plutôt que des minutes.")
+        print(
+            "⚠ aucun GPU — comptez des dizaines d'heures.\n"
+            "  Détacher le processus (nohup, tmux), et laisser la reprise faire son travail :\n"
+            "  une coupure ne coûte au pire que les derniers lots.\n"
+            f"  Réglages conseillés : --longueur 256 --geler 4 --lot 16 --fils {torch.get_num_threads()}"
+        )
 
     apprentissage, surveillance = charger(args.corpus)
+    if args.limite > 0:
+        apprentissage = apprentissage[: args.limite]
     print(f"{len(apprentissage)} paires d'apprentissage, {len(surveillance)} de surveillance")
     if len(apprentissage) < 1000:
         print("⚠ corpus très court : élargir avec `training corpus --limit 20000` d'abord.")
 
     tokenizer = AutoTokenizer.from_pretrained(ELEVE, trust_remote_code=True)
     modele = AutoModel.from_pretrained(ELEVE, trust_remote_code=True).to(appareil)
+    if args.geler > 0:
+        figes, entrainables = geler(modele, args.geler)
+        print(f"{figes / 1e6:.1f} M de paramètres gelés, {entrainables / 1e6:.1f} M entraînables")
 
-    def charge(lignes: list[dict], melange: bool) -> DataLoader:
+    def charge(lignes: list[dict], melange: bool, graine: int = 0) -> DataLoader:
+        # Le mélange est semé par l'époque, pas laissé au hasard : la reprise
+        # doit retrouver EXACTEMENT la même suite de lots pour pouvoir sauter
+        # ceux qui sont déjà passés. Sans ça, reprendre au lot 3 000 rejouerait
+        # d'autres exemples et l'époque serait à la fois incomplète et
+        # partiellement doublée.
+        generateur = torch.Generator().manual_seed(graine) if melange else None
         return DataLoader(
             Paires(lignes),
             batch_size=args.lot,
             shuffle=melange,
+            generator=generateur,
             collate_fn=lambda lot: collationner(lot, tokenizer, args.longueur),
         )
 
-    train = charge(apprentissage, True)
     veille = charge(surveillance, False)
+    lots_par_epoque = max((len(apprentissage) + args.lot - 1) // args.lot, 1)
 
-    optimiseur = torch.optim.AdamW(modele.parameters(), lr=args.pas, weight_decay=0.01)
-    total = max(len(train) * args.epoques, 1)
+    optimiseur = torch.optim.AdamW(
+        [p for p in modele.parameters() if p.requires_grad], lr=args.pas, weight_decay=0.01
+    )
     planning = torch.optim.lr_scheduler.OneCycleLR(
-        optimiseur, max_lr=args.pas, total_steps=total, pct_start=0.1
+        optimiseur, max_lr=args.pas, total_steps=lots_par_epoque * args.epoques, pct_start=0.1
     )
 
-    depart = surveiller(modele, veille, appareil)
-    print(f"cosinus au départ, sans entraînement : {depart:.4f}")
+    debut_epoque, debut_lot, meilleurs_poids = 1, 0, None
+    if args.reprise.exists():
+        etat = torch.load(args.reprise, map_location=appareil, weights_only=False)
+        modele.load_state_dict(etat["modele"])
+        optimiseur.load_state_dict(etat["optimiseur"])
+        planning.load_state_dict(etat["planning"])
+        meilleurs_poids = etat["meilleurs_poids"]
+        debut_epoque, debut_lot = etat["epoque"], etat["lot"]
+        depart, meilleur, sterile = etat["depart"], etat["meilleur"], etat["sterile"]
+        print(
+            f"reprise depuis {args.reprise} : époque {debut_epoque}, lot {debut_lot},"
+            f" meilleur cosinus {meilleur:.4f}"
+        )
+    else:
+        depart = surveiller(modele, veille, appareil)
+        meilleur, sterile = depart, 0
+        print(f"cosinus au départ, sans entraînement : {depart:.4f}")
 
-    meilleur, meilleurs_poids, sterile = depart, None, 0
-    for epoque in range(1, args.epoques + 1):
+    for epoque in range(debut_epoque, args.epoques + 1):
+        train = charge(apprentissage, True, graine=epoque)
         cumul, lots = 0.0, 0
         for encodage, cibles in train:
+            lots += 1
+            # Les lots déjà passés sont retraversés mais pas recalculés : la
+            # tokenisation d'un lot coûte des millisecondes, l'entraînement des
+            # secondes. C'est le prix d'une reprise exacte, et il est dérisoire.
+            if lots <= debut_lot:
+                continue
             encodage = {c: v.to(appareil) for c, v in encodage.items()}
             valeur = perte(vecteur(modele, encodage), cibles.to(appareil))
             valeur.backward()
-            torch.nn.utils.clip_grad_norm_(modele.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_([p for p in modele.parameters() if p.requires_grad], 1.0)
             optimiseur.step()
             planning.step()
             optimiseur.zero_grad(set_to_none=True)
             cumul += float(valeur)
-            lots += 1
+            vus = lots - debut_lot
             if lots % 50 == 0:
-                print(f"  époque {epoque} · lot {lots}/{len(train)} · perte {cumul / lots:.4f}")
+                print(
+                    f"  époque {epoque} · lot {lots}/{lots_par_epoque}"
+                    f" · perte {cumul / max(vus, 1):.4f}",
+                    flush=True,
+                )
+            if lots % args.tous_les == 0:
+                sauver_reprise(
+                    args.reprise,
+                    modele,
+                    optimiseur,
+                    planning,
+                    {
+                        "epoque": epoque,
+                        "lot": lots,
+                        "depart": depart,
+                        "meilleur": meilleur,
+                        "sterile": sterile,
+                    },
+                    meilleurs_poids,
+                )
+        debut_lot = 0
 
         score = surveiller(modele, veille, appareil)
         print(
-            f"époque {epoque} — perte {cumul / max(lots, 1):.4f}, cosinus hors-tranche {score:.4f}"
+            f"époque {epoque} — perte {cumul / max(lots, 1):.4f}, cosinus hors-tranche {score:.4f}",
+            flush=True,
         )
 
         # Arrêt précoce : sans lui, l'élève finit par apprendre ses exemples
@@ -253,9 +385,23 @@ def main() -> None:
             meilleurs_poids = {c: v.detach().cpu().clone() for c, v in modele.state_dict().items()}
         else:
             sterile += 1
-            if sterile >= args.patience:
-                print(f"aucun gain depuis {sterile} époque(s) — arrêt.")
-                break
+        sauver_reprise(
+            args.reprise,
+            modele,
+            optimiseur,
+            planning,
+            {
+                "epoque": epoque + 1,
+                "lot": 0,
+                "depart": depart,
+                "meilleur": meilleur,
+                "sterile": sterile,
+            },
+            meilleurs_poids,
+        )
+        if sterile >= args.patience:
+            print(f"aucun gain depuis {sterile} époque(s) — arrêt.")
+            break
 
     if meilleurs_poids is not None:
         modele.load_state_dict(meilleurs_poids)
