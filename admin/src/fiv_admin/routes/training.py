@@ -888,12 +888,16 @@ def cout_encodeurs(modeles: tuple[str, ...], textes: list[str]) -> float:
 
 async def _notes_et_dossiers(
     conn: Any, rubric: dict[str, Any]
-) -> tuple[dict[int, dict[str, float]], dict[int, str]]:
-    """Les notes du juge et le texte des dossiers, pour un barème.
+) -> tuple[dict[int, dict[str, float]], dict[int, dict[str, Any]]]:
+    """Les notes du juge et les dossiers assemblés, pour un barème.
 
     Partagé entre l'aperçu et la comparaison : le second doit chiffrer
     exactement ce que la première annonce, et deux requêtes écrites deux fois
     finissent toujours par diverger.
+
+    Rend le dossier entier et non son seul texte : le `sha256` sert de clé de
+    cache aux vecteurs payants, et le recalculer ailleurs serait la meilleure
+    façon de payer deux fois le même encodage.
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
@@ -916,12 +920,36 @@ async def _notes_et_dossiers(
 
     # Les dossiers, assemblés une seule fois : c'est la partie lente, et elle
     # ne dépend pas de l'encodeur qu'on évalue.
-    textes: dict[int, str] = {}
+    dossiers: dict[int, dict[str, Any]] = {}
     for id_tmdb in by_work:
         built = await build_dossier(conn, id_tmdb)
         if built is not None:
-            textes[id_tmdb] = built["text"]
-    return by_work, textes
+            dossiers[id_tmdb] = built
+    return by_work, dossiers
+
+
+async def _vecteurs_deja_payes(
+    conn: Any, dossiers: dict[int, dict[str, Any]], etiquette: str
+) -> dict[int, list[float]]:
+    """Les vecteurs d'API déjà en cache pour ces dossiers exacts.
+
+    Appariés sur `(id_tmdb, sha256)` : un dossier retouché depuis l'encodage
+    n'a plus le même sha, sa ligne ne remonte pas, et il est réencodé. C'est la
+    même règle que pour le modèle local, et c'est elle qui rend le cache sûr —
+    sans quoi enrichir une œuvre laisserait son ancien vecteur en place.
+    """
+    if not dossiers:
+        return {}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            select id_tmdb, vector from notation.embedding
+            where embedder = %s
+              and (id_tmdb, input_sha256) in (select * from unnest(%s::int[], %s::text[]))
+            """,
+            (etiquette, list(dossiers), [d["sha256"] for d in dossiers.values()]),
+        )
+        return {row[0]: row[1] for row in await cur.fetchall()}
 
 
 async def apercu_encodeurs(
@@ -930,15 +958,27 @@ async def apercu_encodeurs(
     """Ce que la comparaison couvrirait et coûterait, sans rien encoder.
 
     Les candidats locaux sont gratuits ; ceux d'API ne le sont pas. Voir le
-    montant avant de le dépenser est la seule façon de relancer sereinement
-    une comparaison qu'on veut faire varier.
+    montant avant de le dépenser est la seule façon de relancer sereinement une
+    comparaison qu'on veut faire varier.
+
+    Le devis déduit ce qui est déjà en cache : relancer la même comparaison
+    doit afficher zéro, faute de quoi on hésiterait à la relancer alors qu'elle
+    est gratuite.
     """
-    _, textes = await _notes_et_dossiers(conn, rubric)
-    return {
-        "oeuvres": len(textes),
-        "cout": round(cout_encodeurs(modeles, list(textes.values())), 2),
-        "modeles": list(modeles),
-    }
+    _, dossiers = await _notes_et_dossiers(conn, rubric)
+    total = 0.0
+    detail: list[dict[str, Any]] = []
+    for modele in modeles:
+        api = _encodeur_api(modele)
+        if api is None:
+            detail.append({"modele": modele, "aEncoder": len(dossiers), "cout": 0.0})
+            continue
+        cache = await _vecteurs_deja_payes(conn, dossiers, modele.removeprefix("openai/"))
+        restants = {i: d for i, d in dossiers.items() if i not in cache}
+        cout = cout_encodeurs((modele,), [d["text"] for d in restants.values()])
+        total += cout
+        detail.append({"modele": modele, "aEncoder": len(restants), "cout": round(cout, 2)})
+    return {"oeuvres": len(dossiers), "cout": round(total, 2), "modeles": detail}
 
 
 async def comparer_encodeurs(
@@ -958,14 +998,27 @@ async def comparer_encodeurs(
     qu'ils sont interchangeables entre eux, pas qu'un encodeur plus savant ne
     ferait pas mieux.
 
-    Rien n'est écrit en base, et surtout pas dans `notation.embedding` : y
-    ranger les vecteurs des candidats écartés mêlerait des espaces vectoriels
-    incompatibles dans la table qui sert la production.
+    Aucun poids n'est écrit. Les vecteurs d'API, si : ils sont rangés dans
+    `notation.embedding` sous leur propre étiquette d'encodeur.
+
+    C'est un revirement, et il se justifie en deux points. La crainte d'origine
+    — mêler des espaces vectoriels incompatibles dans la table de production —
+    ne tient pas : `embedder` fait partie de la clé primaire, et le seul
+    lecteur, `_embedding`, filtre dessus. Rien ne peut confondre un vecteur de
+    jina avec un vecteur d'API.
+
+    Et il y a une raison de les garder. Un vecteur d'API payé puis jeté se
+    repaie à chaque relance ; surtout, ces vecteurs sont la matière d'une
+    **distillation** — apprendre au petit modèle local à reproduire la
+    représentation du gros. Cette piste-là ne demande aucune note du juge, donc
+    aucune des 502 étiquettes qui bornent tout le reste : elle s'entraîne sur
+    autant de dossiers qu'on veut en encoder. Jeter les vecteurs fermerait la
+    porte avant de l'avoir essayée.
     """
     axes: list[str] = rubric["axes"]
-    by_work, textes = await _notes_et_dossiers(conn, rubric)
+    by_work, dossiers = await _notes_et_dossiers(conn, rubric)
 
-    ids = [i for i in by_work if i in textes]
+    ids = [i for i in by_work if i in dossiers]
     resultats: list[dict[str, Any]] = []
     for rang, modele in enumerate(modeles, start=1):
         # Le journal tient lieu de barre de progression : chaque encodage dure
@@ -978,7 +1031,7 @@ async def comparer_encodeurs(
         if api is None:
             vecteurs = await asyncio.to_thread(
                 embed_texts,
-                [textes[i] for i in ids],
+                [dossiers[i]["text"] for i in ids],
                 cache_dir=settings.embed_cache_dir,
                 model=modele,
             )
@@ -987,20 +1040,43 @@ async def comparer_encodeurs(
             liberer_modeles()
         else:
             nom, dims = api
-            if not settings.openai_api_key:
-                raise LlmError(f"{modele} demande OPENAI_API_KEY, absente du .env")
-            # La même troncature que le chemin local, appliquée ici à la main.
-            # Sans elle la comparaison mesurerait deux choses en même temps —
-            # l'encodeur ET la quantité de texte lue — et un candidat d'API
-            # gagnerait sans qu'on sache par quoi.
-            async with httpx.AsyncClient() as http:
-                vecteurs = await embed_openai(
-                    http,
-                    api_key=settings.openai_api_key,
-                    model=nom,
-                    textes=[textes[i][:MAX_CHARS] for i in ids],
-                    dimensions=dims,
+            etiquette = modele.removeprefix("openai/")
+            connus = await _vecteurs_deja_payes(conn, dossiers, etiquette)
+            manquants = [i for i in ids if i not in connus]
+            if manquants:
+                if not settings.openai_api_key:
+                    raise LlmError(f"{modele} demande OPENAI_API_KEY, absente du .env")
+                log.info(
+                    "encodeur %s : %d en cache, %d à payer",
+                    modele,
+                    len(ids) - len(manquants),
+                    len(manquants),
                 )
+                # La même troncature que le chemin local, appliquée ici à la
+                # main. Sans elle la comparaison mesurerait deux choses en même
+                # temps — l'encodeur ET la quantité de texte lue — et un
+                # candidat d'API gagnerait sans qu'on sache par quoi.
+                async with httpx.AsyncClient() as http:
+                    frais = await embed_openai(
+                        http,
+                        api_key=settings.openai_api_key,
+                        model=nom,
+                        textes=[dossiers[i]["text"][:MAX_CHARS] for i in manquants],
+                        dimensions=dims,
+                    )
+                async with conn.cursor() as cur:
+                    await cur.executemany(
+                        """
+                        insert into notation.embedding (id_tmdb, input_sha256, embedder, vector)
+                        values (%s, %s, %s, %s) on conflict do nothing
+                        """,
+                        [
+                            (i, dossiers[i]["sha256"], etiquette, Jsonb(v))
+                            for i, v in zip(manquants, frais, strict=True)
+                        ],
+                    )
+                connus.update(zip(manquants, frais, strict=True))
+            vecteurs = [connus[i] for i in ids]
         log.info(
             "encodeur %d/%d : %s — encodage terminé, régression en cours",
             rang,

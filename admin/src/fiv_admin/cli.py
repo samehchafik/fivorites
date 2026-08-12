@@ -325,8 +325,12 @@ def training_encodeurs(
     dimension égale : sans ça, un gain pourrait ne venir que des 3 072
     dimensions face aux 512 de jina. `--apercu` chiffre la dépense sans appeler.
 
-    Rien n'est stocké : ni vecteurs, ni poids. Changer d'encodeur reste un
-    geste explicite, à faire dans `embed.py` au vu de ces chiffres.
+    Aucun poids n'est écrit ; changer d'encodeur reste un geste explicite, à
+    faire dans `embed.py` au vu de ces chiffres. Les vecteurs d'API, eux, sont
+    gardés sous leur propre étiquette : relancer la comparaison ne les repaie
+    donc pas, et ils servent de matière à une distillation — apprendre au petit
+    modèle local à reproduire la représentation du gros, sans avoir besoin
+    d'une seule note du juge.
     """
     from fiv_admin.routes.training import (
         ENCODEURS_CANDIDATS,
@@ -364,14 +368,21 @@ def training_encodeurs(
                 typer.echo(f"ERREUR : {exc}")
                 raise typer.Exit(1) from exc
 
-            for m in candidats:
+            for m in devis["modeles"]:
+                paye = m["modele"].startswith("openai/")
+                reste = f"{m['aEncoder']} à encoder"
+                prix = f"~{m['cout']:.2f} $" if paye else "gratuit"
                 typer.echo(
-                    f"  {'API payante' if m.startswith('openai/') else 'local gratuit':<14} {m}"
+                    f"  {'API' if paye else 'local':<6} {m['modele']:<38} {reste:>16}  {prix}"
                 )
             cout = float(devis["cout"])
             typer.echo(
                 f"\n{devis['oeuvres']} dossier(s)"
-                + (f" — coût estimé ~{cout:.2f} $" if cout else " — gratuit, aucun appel payant")
+                + (
+                    f" — coût estimé ~{cout:.2f} $"
+                    if cout
+                    else " — gratuit : tout est local ou déjà en cache"
+                )
             )
             if apercu:
                 typer.echo("aperçu seul, rien n'a été encodé.")
