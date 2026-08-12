@@ -23,17 +23,26 @@ prédisait donc six axes de goût à partir d'une liste de genres, ce qui
 explique qu'elle plafonnait. Celui-ci accepte 8 192 tokens : le dossier entier
 tient dedans, avec de la marge.
 
-Le modèle est **figé ici, pas configurable**. Un vecteur n'a de sens qu'au
-sein du modèle qui l'a produit : deux encodeurs mélangés dans la même table
-donneraient des distances entre des points qui ne vivent pas dans le même
-espace. Changer d'encodeur est donc un geste explicite — on change ce nom, et
-`EMBEDDER` qui l'accompagne fait que les anciens vecteurs cessent d'être
-relus au lieu d'être confondus avec les nouveaux.
+Le modèle **se règle** (`EMBEDDER` dans le `.env`), et trois formes cohabitent :
+un nom fastembed, `openai/…` pour un encodeur d'API, `local:/chemin` pour un
+modèle maison servi en ONNX — c'est par là que revient l'élève distillé.
+
+Ce qui reste vrai, et qui plaidait pour une constante : un vecteur n'a de sens
+qu'au sein du modèle qui l'a produit. Mais l'argument demande une **étiquette
+rigoureuse**, pas une constante. `etiquette()` la calcule, elle fait partie de
+la clé du cache et l'entraînement filtre dessus : deux espaces vectoriels ne
+peuvent pas se mélanger, les anciens vecteurs cessent simplement d'être relus.
+
+Ce qui a rendu le réglage nécessaire : mesuré sur 502 œuvres, à dimension
+égale, jina rend 1,020 de MAE et `text-embedding-3-large@512` rend 0,853.
+L'écart ne vient pas du nombre de dimensions mais de ce que le modèle sait —
+jina lit « Lucifer » sans savoir ce que le mot désigne.
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 MODEL_NAME = "jinaai/jina-embeddings-v2-small-en"
@@ -44,6 +53,13 @@ DIMENSIONS = 512
 # cache et la sélection des poids la comparent, donc un vecteur produit par un
 # autre modèle n'est jamais réutilisé par erreur — il est recalculé.
 EMBEDDER = "jina-v2-small-en@512"
+
+# Le préfixe d'un modèle servi depuis un dossier local : `local:/opt/models/x`.
+# C'est par là que revient l'élève distillé — un `model.onnx` et son tokenizer,
+# produits par le projet `distillation/`, avec le pooling et la normalisation
+# inclus dans le graphe pour qu'aucune divergence d'implémentation ne s'installe
+# entre l'entraînement et la production.
+PREFIXE_LOCAL = "local:"
 
 # L'encodeur de secours quand celui de production est une API qui ne répond
 # pas. C'est le modèle local, et c'est le seul qui puisse tenir ce rôle : il ne
@@ -65,6 +81,12 @@ def etiquette(spec: str) -> str:
     """
     if spec.startswith("openai/"):
         return spec.removeprefix("openai/")
+    if spec.startswith(PREFIXE_LOCAL):
+        # Le nom du dossier, pas son chemin : l'élève distillé vit à des
+        # emplacements différents selon la machine, et une étiquette qui
+        # porterait le chemin ferait recalculer tous les vecteurs au premier
+        # déménagement.
+        return Path(spec.removeprefix(PREFIXE_LOCAL)).name
     return EMBEDDER if spec == MODEL_NAME else spec
 
 
@@ -105,6 +127,11 @@ def _model(cache_dir: str | None, name: str) -> Any:
 MAX_CHARS = 12_000
 LOT = 4
 
+# La borne en tokens du chemin local, alignée sur la longueur d'entraînement de
+# l'élève distillé. Encoder plus long qu'il n'a appris rendrait des vecteurs
+# hors de la distribution qu'il connaît — sans erreur, mais faux.
+MAX_TOKENS = 1024
+
 
 def embed_texts(
     texts: list[str], *, cache_dir: str | None = None, model: str | None = None
@@ -123,8 +150,53 @@ def embed_texts(
     if not texts:
         return []
     tronques = [text[:MAX_CHARS] for text in texts]
-    modele = _model(cache_dir, model or MODEL_NAME)
+    spec = model or MODEL_NAME
+    if spec.startswith(PREFIXE_LOCAL):
+        return _encoder_local(spec.removeprefix(PREFIXE_LOCAL), tronques)
+    modele = _model(cache_dir, spec)
     return [vector.tolist() for vector in modele.embed(tronques, batch_size=LOT)]
+
+
+@lru_cache(maxsize=2)
+def _session_locale(dossier: str) -> Any:
+    """La session ONNX et le tokenizer d'un modèle servi depuis un dossier.
+
+    `onnxruntime` et `tokenizers` sont déjà là — fastembed en dépend — donc
+    servir un modèle maison n'ajoute aucune dépendance. Ce qui est ajouté,
+    c'est la responsabilité de tokeniser comme à l'entraînement ; d'où le
+    tokenizer sauvé à côté du graphe par le script de distillation, plutôt
+    qu'un tokenizer reconstruit de mémoire.
+    """
+    import onnxruntime
+    from tokenizers import Tokenizer
+
+    chemin = Path(dossier)
+    graphe = chemin / "model.onnx"
+    if not graphe.exists():
+        raise FileNotFoundError(
+            f"{graphe} introuvable — le dossier doit contenir model.onnx et tokenizer.json,"
+            " tels que distillation/distiller.py les écrit."
+        )
+    tokenizer = Tokenizer.from_file(str(chemin / "tokenizer.json"))
+    tokenizer.enable_truncation(max_length=MAX_TOKENS)
+    tokenizer.enable_padding()
+    return onnxruntime.InferenceSession(str(graphe)), tokenizer
+
+
+def _encoder_local(dossier: str, textes: list[str]) -> list[list[float]]:
+    """Encode avec un modèle maison. Le graphe rend déjà le vecteur normalisé."""
+    import numpy as np
+
+    session, tokenizer = _session_locale(dossier)
+    vecteurs: list[list[float]] = []
+    for depart in range(0, len(textes), LOT):
+        lot = textes[depart : depart + LOT]
+        encodes = tokenizer.encode_batch(lot)
+        ids = np.array([e.ids for e in encodes], dtype=np.int64)
+        masque = np.array([e.attention_mask for e in encodes], dtype=np.int64)
+        sortie = session.run(None, {"input_ids": ids, "attention_mask": masque})[0]
+        vecteurs.extend(v.tolist() for v in sortie)
+    return vecteurs
 
 
 def liberer_modeles() -> None:
@@ -138,3 +210,4 @@ def liberer_modeles() -> None:
     une comparaison, sur une machine qui en partage cent vingt.
     """
     _model.cache_clear()
+    _session_locale.cache_clear()

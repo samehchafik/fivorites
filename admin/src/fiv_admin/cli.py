@@ -10,6 +10,7 @@ import asyncio
 import logging
 import secrets
 from collections.abc import Coroutine
+from pathlib import Path
 from typing import Annotated, Any
 
 import psycopg
@@ -644,6 +645,63 @@ def training_corpus(
                 typer.echo("\naperçu seul, rien n'a été appelé.")
             else:
                 typer.echo(f"encodées    : {bilan['encodes']}")
+
+    _run(run())
+
+
+@training_app.command("corpus-export")
+def training_corpus_export(
+    sortie: Annotated[Path, typer.Option("--sortie", help="Le fichier JSONL à écrire.")] = Path(
+        "/tmp/corpus.jsonl"
+    ),
+    professeur: Annotated[
+        str, typer.Option("--professeur", help="L'étiquette d'encodeur à exporter.")
+    ] = "text-embedding-3-large@512",
+) -> None:
+    """Exporte les paires dossier → vecteur, pour entraîner l'élève ailleurs.
+
+    La distillation ne tourne pas ici : elle demande torch, que cette image
+    n'embarque pas, et une heure de GPU loué plutôt que des jours de CPU. Ce
+    qu'elle demande d'ici, c'est le corpus — et le corpus doit sortir par ce
+    chemin plutôt que par une requête SQL, parce que **le texte n'est pas
+    stocké**. Seul son sha l'est. Le dossier se réassemble donc par le code
+    qui sait le faire, avec les mêmes sections dans le même ordre.
+
+    Le sha est revérifié paire par paire : une œuvre enrichie depuis son
+    encodage a changé de dossier, son vecteur ne lui correspond plus, et la
+    paire est écartée. Enseigner une correspondance périmée serait pire que
+    de perdre l'exemple.
+
+    Gratuit, aucun appel. Pour récupérer le fichier depuis le conteneur :
+
+        docker compose run --rm -v "$PWD:/sortie" admin \\
+            training corpus-export --sortie /sortie/corpus.jsonl
+    """
+    from fiv_admin.routes.training import exporter_corpus
+
+    settings = get_settings()
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            typer.echo(f"professeur {professeur} → {sortie}")
+
+            def montrer(faits: int, total: int) -> None:
+                typer.echo(f"  {faits}/{total}")
+
+            with sortie.open("w", encoding="utf-8") as fichier:
+                bilan = await exporter_corpus(conn, professeur, fichier, progres=montrer)
+
+            typer.echo(
+                f"\nvecteurs en base : {bilan['candidates']}"
+                f"\npaires écrites   : {bilan['ecrites']}"
+                f"\ndossier périmé   : {bilan['perimees']}  (réencoder pour les récupérer)"
+                f"\nnon collectées   : {bilan['introuvables']}"
+            )
+            if bilan["ecrites"] < 2000:
+                typer.echo(
+                    "\n⚠ moins de 2 000 paires : c'est peu pour distiller."
+                    " Élargir le corpus d'abord (training corpus --limit 20000)."
+                )
 
     _run(run())
 

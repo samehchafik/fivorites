@@ -1365,3 +1365,69 @@ async def test_le_secours_local_est_etiquete_et_ecarte_de_l_entrainement(
     rubric = {"version": "empreinte-v3", "prompt": "p" * 60, "axes": ["joie"]}
     with pytest.raises((EncodeurIndisponible, PasAssezDOeuvresErreur)):
         await entrainer_poids(conn, degrade, rubric)
+
+
+def test_l_etiquette_distingue_les_trois_familles_d_encodeurs() -> None:
+    """Nom fastembed, API, modele maison : trois formes, trois etiquettes.
+
+    C'est elle qui empeche le melange, et le melange serait silencieux : deux
+    espaces vectoriels dans une meme regression ne levent aucune erreur, ils
+    rendent des poids qui ne veulent rien dire.
+    """
+    from fiv_admin.embed import EMBEDDER, MODEL_NAME, etiquette
+
+    assert etiquette(MODEL_NAME) == EMBEDDER
+    assert etiquette("openai/text-embedding-3-large@512") == "text-embedding-3-large@512"
+    assert etiquette("BAAI/bge-small-en-v1.5") == "BAAI/bge-small-en-v1.5"
+
+    # Le chemin ne doit PAS entrer dans l'etiquette : l'eleve distille vit a
+    # des emplacements differents selon la machine, et un chemin en dur ferait
+    # recalculer tout le cache au premier demenagement.
+    assert etiquette("local:/opt/models/eleve-distille") == "eleve-distille"
+    assert etiquette("local:/srv/autre/chemin/eleve-distille") == "eleve-distille"
+
+
+async def test_l_export_du_corpus_ecarte_les_dossiers_perimes(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Un dossier modifie depuis son encodage ne doit pas entrer dans le corpus.
+
+    Le texte n'est pas stocke, seul son sha l'est. Une oeuvre enrichie depuis
+    l'encodage a change de dossier : son vecteur ne lui correspond plus, et la
+    paire enseignerait a l'eleve une correspondance qui n'a jamais existe.
+    """
+    import io
+    import json as json_
+
+    from fiv_admin.routes.training import exporter_corpus
+
+    oeuvre = await seed_series(conn, 2500)
+    built = await build_dossier(conn, 2500)
+    assert built is not None
+
+    async def ranger(sha: str) -> None:
+        await conn.execute(
+            "insert into notation.embedding (oeuvre_id, input_sha256, embedder, vector)"
+            " values (%s, %s, 'prof@512', %s) on conflict do nothing",
+            (oeuvre, sha, Jsonb([0.1] * 512)),
+        )
+
+    # Le bon sha : la paire doit sortir.
+    await ranger(built["sha256"])
+    sortie = io.StringIO()
+    bilan = await exporter_corpus(conn, "prof@512", sortie)
+    assert bilan["ecrites"] == 1
+    assert bilan["perimees"] == 0
+    paire = json_.loads(sortie.getvalue().strip())
+    assert paire["idTmdb"] == 2500
+    assert paire["text"] == built["text"]
+    assert len(paire["vector"]) == 512
+
+    # Le meme vecteur sous un sha qui ne correspond a rien : ecarte.
+    await conn.execute("delete from notation.embedding where embedder = 'prof@512'")
+    await ranger("0" * 64)
+    sortie = io.StringIO()
+    bilan = await exporter_corpus(conn, "prof@512", sortie)
+    assert bilan["ecrites"] == 0
+    assert bilan["perimees"] == 1
+    assert sortie.getvalue() == ""

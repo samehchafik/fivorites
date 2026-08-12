@@ -1,0 +1,21 @@
+[project]
+name = "fiv-distillation"
+version = "0.1.0"
+description = "Distiller text-embedding-3-large@512 dans jina-v2-small"
+requires-python = ">=3.11"
+
+# Volontairement séparé du projet admin. `admin` sert le catalogue et ne doit
+# embarquer ni torch ni transformers — deux à trois gigaoctets pour un usage
+# qui a lieu une fois tous les quelques mois, sur une machine louée à l'heure.
+# Ce qui revient dans l'image admin, c'est le fichier ONNX produit ici, et lui
+# seul : quelques dizaines de mégaoctets, servis par le runtime déjà présent.
+dependencies = [
+    "torch>=2.4",
+    "transformers>=4.44",
+    "einops>=0.8",          # exigé par le code distant de jina v2
+    "onnx>=1.16",
+    "numpy>=1.26",
+]
+
+[tool.ruff]
+line-length = 100

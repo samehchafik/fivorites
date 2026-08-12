@@ -97,6 +97,15 @@ services:
       # répondent par un message clair.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # L'encodeur des dossiers. Trois formes : un nom fastembed (local, gratuit),
+      # `openai/…` (API, payante), `local:/opt/models/x` (modèle maison en ONNX,
+      # c'est par là que revient l'élève distillé).
+      #
+      # Mesuré sur 502 œuvres, à dimension égale : jina rend 1,020 de MAE, le
+      # modèle d'API 0,853. Si la clé OpenAI manque ou que l'API tombe, le local
+      # reprend la main et son vecteur est rangé sous SON étiquette — il sert
+      # l'affichage, jamais l'entraînement.
+      EMBEDDER: ${EMBEDDER:-openai/text-embedding-3-large@512}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
       # Le nombre de fils de calcul de l'algèbre linéaire, brimé exprès.

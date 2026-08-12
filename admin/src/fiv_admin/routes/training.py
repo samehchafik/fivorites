@@ -2125,3 +2125,73 @@ async def constituer_corpus(
         "cout": devis,
         "encodes": faits,
     }
+
+
+async def exporter_corpus(
+    conn: Any, etiquette_prof: str, sortie: Any, *, progres: Any = None
+) -> dict[str, Any]:
+    """Écrit les paires `dossier → vecteur du professeur` dans un JSONL.
+
+    C'est l'entrée de la distillation, et elle se fait ici plutôt que dans le
+    script d'entraînement pour une raison : le texte n'est pas stocké. Seul son
+    sha l'est, à côté du vecteur. Le dossier doit donc être réassemblé par le
+    code qui sait le faire — même sections, même ordre, même troncature — sinon
+    l'élève apprendrait à associer un vecteur à un texte que le professeur n'a
+    jamais lu.
+
+    Le sha est revérifié pour chaque paire. Une œuvre enrichie depuis son
+    encodage a changé de dossier : son vecteur ne lui correspond plus, et la
+    paire est écartée plutôt que d'enseigner une correspondance fausse.
+
+    Aucun appel payant : tout est déjà en base.
+    """
+    import json
+
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select o.id_tmdb, o.univers, e.input_sha256, e.vector
+            from notation.embedding e
+            join sourcing.oeuvre o on o.id = e.oeuvre_id
+            where e.embedder = %s
+            order by o.univers, o.id_tmdb
+            """,
+            (etiquette_prof,),
+        )
+        lignes = await cur.fetchall()
+
+    ecrites = perimees = introuvables = 0
+    for n, row in enumerate(lignes, start=1):
+        built = await build_dossier(conn, row["id_tmdb"], univers=row["univers"])
+        if built is None:
+            introuvables += 1
+            continue
+        if built["sha256"] != row["input_sha256"]:
+            perimees += 1
+            continue
+        sortie.write(
+            json.dumps(
+                {
+                    "idTmdb": row["id_tmdb"],
+                    "univers": row["univers"],
+                    # Tronqué comme à l'encodage : l'élève doit voir exactement
+                    # ce que le professeur a vu, sans quoi il apprend à prédire
+                    # un vecteur depuis un texte plus long que l'original.
+                    "text": built["text"][:MAX_CHARS],
+                    "vector": row["vector"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+        ecrites += 1
+        if progres is not None and n % 500 == 0:
+            progres(n, len(lignes))
+
+    return {
+        "professeur": etiquette_prof,
+        "candidates": len(lignes),
+        "ecrites": ecrites,
+        "perimees": perimees,
+        "introuvables": introuvables,
+    }
