@@ -103,10 +103,18 @@ def perte(eleve: torch.Tensor, professeur: torch.Tensor) -> torch.Tensor:
 
     Le cosinus parce que c'est la distance que la production utilise : un
     élève qui reproduirait les normes sans les directions serait bon sur une
-    métrique dont personne ne se sert. Le terme quadratique, à faible poids,
-    stabilise le début d'entraînement — le cosinus seul est plat quand les
-    vecteurs sont déjà presque alignés, ce qui est le cas dès la première
-    époque entre deux encodeurs entraînés sur du texte.
+    métrique dont personne ne se sert.
+
+    Sur le point de départ, une correction : deux encodeurs entraînés
+    séparément n'ont **aucune** base commune. Mesuré, le cosinus de départ vaut
+    −0,002 — l'alignement de deux directions sans rapport. L'élève n'a donc pas
+    à ajuster une représentation déjà proche, il a tout un changement de repère
+    à apprendre. C'est faisable, c'est même l'exercice ordinaire de la
+    distillation, mais ça demande de laisser assez de couches libres : geler
+    presque tout ne laisserait pas de quoi tourner l'espace.
+
+    Le terme quadratique, à faible poids, tient les normes pendant que le
+    cosinus s'occupe des directions.
     """
     cible = fonctions.normalize(professeur, p=2, dim=1)
     return (
@@ -183,23 +191,38 @@ def geler(modele, couches: int) -> tuple[int, int]:
     Sur processeur, c'est le réglage qui décide de la faisabilité. La passe
     avant reste entière — il faut bien traverser tout le réseau — mais la passe
     arrière ne remonte plus que jusqu'à la première couche entraînée, et elle
-    pèse les deux tiers du calcul. Geler la moitié des couches enlève environ
-    un tiers du temps total.
+    pèse les deux tiers du calcul.
 
     Ce qu'on perd : les couches basses d'un encodeur portent la syntaxe et le
     vocabulaire, les hautes le sens de l'énoncé. C'est le sens qu'on veut
     déplacer ici, donc les geler coûte peu — mais ce n'est pas gratuit, et sur
     GPU il n'y a aucune raison de le faire.
+
+    **`jina-v2-small` n'a que quatre couches.** Le nombre demandé est donc
+    plafonné pour en laisser au moins une entraînable : `--geler 4` gelait
+    l'intégralité du réseau, ne laissant que le pooler — que ce script
+    n'utilise même pas, puisqu'il fait sa propre moyenne masquée. Résultat, un
+    graphe sans le moindre paramètre à dériver et un `backward` qui échoue au
+    premier lot, une heure après le lancement.
     """
     if couches <= 0:
         return 0, sum(p.numel() for p in modele.parameters())
-    figes = []
-    if hasattr(modele, "embeddings"):
-        figes.extend(modele.embeddings.parameters())
     bloc = getattr(getattr(modele, "encoder", None), "layer", None)
     if bloc is None:
         print("⚠ structure de couches non reconnue — rien n'est gelé.")
         return 0, sum(p.numel() for p in modele.parameters())
+
+    profondeur = len(list(bloc))
+    demande, couches = couches, min(couches, profondeur - 1)
+    if demande != couches:
+        print(
+            f"⚠ le modèle n'a que {profondeur} couches : --geler {demande} les gèlerait"
+            f" toutes. Ramené à {couches}, pour en laisser une entraînable."
+        )
+
+    figes = []
+    if hasattr(modele, "embeddings"):
+        figes.extend(modele.embeddings.parameters())
     for couche in list(bloc)[:couches]:
         figes.extend(couche.parameters())
     for parametre in figes:
@@ -270,7 +293,7 @@ def main() -> None:
             "⚠ aucun GPU — comptez des dizaines d'heures.\n"
             "  Détacher le processus (nohup, tmux), et laisser la reprise faire son travail :\n"
             "  une coupure ne coûte au pire que les derniers lots.\n"
-            f"  Réglages conseillés : --longueur 256 --geler 4 --lot 16 --fils {torch.get_num_threads()}"
+            "  Réglages conseillés : --longueur 256 --geler 1 --lot 16 --fils 4"
         )
 
     apprentissage, surveillance = charger(args.corpus)
@@ -285,6 +308,14 @@ def main() -> None:
     if args.geler > 0:
         figes, entrainables = geler(modele, args.geler)
         print(f"{figes / 1e6:.1f} M de paramètres gelés, {entrainables / 1e6:.1f} M entraînables")
+    # Le garde-fou qui a manqué : sans lui, `backward` échoue au premier lot
+    # avec « element 0 of tensors does not require grad », message qui ne dit
+    # nulle part que le vrai problème est un gel trop large. Et il échoue
+    # APRÈS le cosinus de départ, donc après plusieurs minutes de calcul.
+    a_deriver = [p for p in modele.parameters() if p.requires_grad]
+    if not a_deriver:
+        print("ERREUR : plus aucun paramètre entraînable — baisser --geler.")
+        return
 
     def charge(lignes: list[dict], melange: bool, graine: int = 0) -> DataLoader:
         # Le mélange est semé par l'époque, pas laissé au hasard : la reprise
@@ -304,9 +335,7 @@ def main() -> None:
     veille = charge(surveillance, False)
     lots_par_epoque = max((len(apprentissage) + args.lot - 1) // args.lot, 1)
 
-    optimiseur = torch.optim.AdamW(
-        [p for p in modele.parameters() if p.requires_grad], lr=args.pas, weight_decay=0.01
-    )
+    optimiseur = torch.optim.AdamW(a_deriver, lr=args.pas, weight_decay=0.01)
     planning = torch.optim.lr_scheduler.OneCycleLR(
         optimiseur, max_lr=args.pas, total_steps=lots_par_epoque * args.epoques, pct_start=0.1
     )

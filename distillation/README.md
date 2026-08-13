@@ -86,7 +86,7 @@ Le corpus doit être dans `export/`, où `training corpus-export` l'a écrit :
 ```bash
 sudo docker compose run --rm -d distillation \
     --corpus corpus.jsonl --sortie eleve-distille \
-    --longueur 256 --geler 4 --lot 16 --fils 4
+    --longueur 256 --geler 1 --lot 16 --fils 4
 ```
 
 ```bash
@@ -103,9 +103,15 @@ Les trois réglages qui rendent ça tenable :
   divise le temps par bien plus que quatre. Et la tête du dossier tient dans
   256 tokens : titre, faits, genres, mots-clés, début du synopsis. C'est elle
   qui porte le ton.
-- **`--geler 4`** — la passe arrière pèse les deux tiers du calcul et ne remonte
+- **`--geler 1`** — la passe arrière pèse les deux tiers du calcul et ne remonte
   plus que jusqu'à la première couche entraînée. Les couches basses portent la
   syntaxe, les hautes le sens : c'est le sens qu'on déplace ici.
+
+  **`jina-v2-small` n'a que quatre couches**, pas douze : `--geler 4` gèle tout
+  le réseau et ne laisse rien à dériver. Le script plafonne désormais la valeur
+  pour en garder une libre, et refuse de démarrer s'il n'en reste aucune. Ne
+  pas monter au-delà de 2 — l'élève a un changement de repère complet à
+  apprendre, pas un ajustement.
 - **`--fils`** — le nombre de cœurs laissés au calcul. En laisser au moins un
   à l'admin, qui continue de servir le catalogue.
 
