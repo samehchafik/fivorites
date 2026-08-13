@@ -375,7 +375,10 @@ def main() -> None:
             optimiseur.step()
             planning.step()
             optimiseur.zero_grad(set_to_none=True)
-            cumul += float(valeur)
+            # `.detach()` explicite : `float()` le fait tout seul, mais en
+            # avertissant — et un avertissement dans un journal de vingt heures
+            # finit par ressembler à un symptôme.
+            cumul += float(valeur.detach())
             vus = lots - debut_lot
             if lots % 50 == 0:
                 print(
