@@ -41,6 +41,9 @@ def training_note(
     bareme: Annotated[
         str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
     ] = None,
+    univers: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
     legendes: Annotated[
         bool,
         typer.Option("--legendes", help="Décrire les visuels et les joindre au dossier (payant)."),
@@ -139,12 +142,13 @@ def training_note(
                 inedites=inedites,
                 filtres=not sans_filtre,
                 rejouer=rejouer,
+                univers=univers,
             )
             if not candidates:
-                typer.echo(f"aucune série à noter sur le barème {version} — tout est déjà jugé.")
+                typer.echo(f"aucune œuvre à noter sur le barème {version} — tout est déjà jugé.")
                 return 0
 
-            typer.echo(f"barème {version} · {len(candidates)} série(s) à noter")
+            typer.echo(f"barème {version} · {univers} · {len(candidates)} œuvre(s) à noter")
             if apercu:
                 for n, c in enumerate(candidates, start=1):
                     pop = f"{c['popularity']:.1f}" if c["popularity"] is not None else "—"
@@ -178,6 +182,7 @@ def training_note(
                         prompt=prompt,
                         axes=axes,
                         captions=legendes,
+                        univers=univers,
                     )
                 except DossierMaigre as exc:
                     typer.echo(f"  {n:3d}/{len(candidates)} ⨯ {titre} — {exc}")

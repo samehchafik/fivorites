@@ -224,8 +224,9 @@ async def works_a_noter(
     inedites: bool = False,
     filtres: bool = True,
     rejouer: bool = False,
+    univers: str = "series",
 ) -> list[dict[str, Any]]:
-    """Les séries collectées qu'aucun juge n'a encore notées sur ce barème.
+    """Les œuvres collectées qu'aucun juge n'a encore notées sur ce barème.
 
     « Pas encore notées » se lit dans `notation.training_run` : une œuvre qui a
     déjà un essai sur ce barème est écartée, quel que soit son contenu. C'est
@@ -264,9 +265,15 @@ async def works_a_noter(
     est celle de la grille — une série fraîchement collectée n'apparaît
     qu'après `catalog refresh`.
     """
+    carte = CARTE_PAR_UNIVERS.get(univers)
+    if carte is None:
+        raise LlmError(f"univers inconnu : {univers} — attendus {sorted(CARTE_PAR_UNIVERS)}")
     async with conn.cursor(row_factory=dict_row) as cur:
+        # Le nom de la vue est interpolé, pas paramétré — PostgreSQL n'accepte
+        # pas de table en paramètre. Il ne vient jamais de l'extérieur :
+        # `CARTE_PAR_UNIVERS` est une table close, vérifiée juste au-dessus.
         await cur.execute(
-            """
+            f"""
             -- La jointure sur `sourcing.oeuvre` n'est pas décorative : c'est
             -- elle qui écarte les fiches sans pivot, donc non collectables —
             -- et c'est par `oeuvre_id` que le journal des essais se lit
@@ -279,9 +286,9 @@ async def works_a_noter(
                        coalesce(v.name, v.original_name)   as titre,
                        c.popularity                        as popularity,
                        v.vote_average                      as note
-                from admin.tv_card v
-                join tmdb_catalog c on c.univers = 'series' and c.id = v.id
-                join sourcing.oeuvre o on o.univers = 'series' and o.id_tmdb = v.id
+                from {carte} v
+                join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
+                join sourcing.oeuvre o on o.univers = %(univers)s and o.id_tmdb = v.id
                 where (not %(filtres)s or nullif(v.poster_path, '') is not null)
                   and (%(rejouer)s or not exists (
                       select 1 from notation.training_run t
@@ -309,6 +316,7 @@ async def works_a_noter(
                 "filtres": filtres,
                 "rejouer": rejouer,
                 "limit": limit,
+                "univers": univers,
             },
         )
         return list(await cur.fetchall())

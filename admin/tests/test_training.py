@@ -1431,3 +1431,34 @@ async def test_l_export_du_corpus_ecarte_les_dossiers_perimes(
     assert bilan["ecrites"] == 0
     assert bilan["perimees"] == 1
     assert sortie.getvalue() == ""
+
+
+async def test_la_liste_a_noter_ne_melange_pas_les_univers(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Un film et une serie au meme id_tmdb : chaque liste doit rester chez elle.
+
+    `works_a_noter` lisait `tv_card` en dur ; la version films doit lire
+    `movie_card` ET porter l'univers dans ses jointures — sans quoi le pivot
+    d'un film serait celui de la serie de meme identifiant, et le journal
+    marquerait la mauvaise oeuvre comme jugee.
+    """
+    from fiv_admin.routes.training import works_a_noter
+
+    await seed_series(conn, 1399)
+    await seed_film(conn, 1399)
+    # Les listes lisent les projections, pas le brut.
+    from fiv_admin.catalog import refresh_cards
+
+    await refresh_cards(conn)
+
+    series = await works_a_noter(conn, "empreinte-v3", 10, filtres=False)
+    films = await works_a_noter(conn, "empreinte-v3", 10, filtres=False, univers="movies")
+
+    assert [c["id_tmdb"] for c in series] == [1399]
+    assert [c["id_tmdb"] for c in films] == [1399]
+    assert series[0]["titre"] == "Game of Thrones"
+    assert films[0]["titre"] == "Fight Club"
+    assert series[0]["oeuvre_id"] != films[0]["oeuvre_id"], (
+        "meme pivot pour deux univers : le journal marquerait la mauvaise oeuvre"
+    )
