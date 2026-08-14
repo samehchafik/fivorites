@@ -165,6 +165,19 @@ def surveiller(modele, chargeur, appareil: str) -> float:
     return total / max(vus, 1)
 
 
+def _poids_exporte(sortie: Path) -> int:
+    """Le poids reel de l'export, fichiers de donnees externes compris.
+
+    `model.onnx` seul ne pese qu'un megaoctet : au-dela de 2 Go, protobuf
+    refuse d'embarquer les tenseurs et ONNX les ecrit a cote, dans
+    `model.onnx.data`. Annoncer la taille du seul graphe donne « 1 Mo » pour un
+    modele de 130 — le meme genre de chiffre faux que celui qui a laisse croire
+    au retaillage d'ALiBi : exact sur ce qu'il mesure, trompeur sur ce qu'il
+    pretend dire.
+    """
+    return sum(f.stat().st_size for f in sortie.glob("model.onnx*"))
+
+
 def _retailler_alibi(modele, longueur: int) -> tuple[int, int]:
     """Ramene le biais ALiBi a `longueur` positions, et verifie que c'est fait.
 
@@ -316,7 +329,7 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
     # prouve : 2,27 Go, dont 2,1 de biais ALiBi non retaille. Le dire ici evite
     # de le decouvrir au chargement, par un message d'onnxruntime qui ne
     # nommera pas la cause.
-    poids = sum(f.stat().st_size for f in sortie.glob("model.onnx*"))
+    poids = _poids_exporte(sortie)
     if poids > 500e6:
         print(
             f"⚠ {poids / 1e6:.0f} Mo exportes pour un modele qui en pese ~130."
@@ -474,8 +487,7 @@ def main() -> None:
         modele.load_state_dict(poids)
         print(f"poids {quels}, cosinus {etat.get('meilleur', float('nan')):.4f} — export…")
         exporter_onnx(modele, tokenizer, args.sortie, args.longueur)
-        taille = (args.sortie / "model.onnx").stat().st_size / 1e6
-        print(f"ecrit dans {args.sortie} ({taille:.0f} Mo)")
+        print(f"ecrit dans {args.sortie} ({_poids_exporte(args.sortie) / 1e6:.0f} Mo)")
         return
 
     if args.geler > 0:
@@ -616,8 +628,7 @@ def main() -> None:
         return
 
     exporter_onnx(modele, tokenizer, args.sortie, args.longueur)
-    taille = (args.sortie / "model.onnx").stat().st_size / 1e6
-    print(f"écrit dans {args.sortie} ({taille:.0f} Mo)")
+    print(f"écrit dans {args.sortie} ({_poids_exporte(args.sortie) / 1e6:.0f} Mo)")
     print("\nÀ copier dans l'image admin, puis :")
     print(f"  EMBEDDER=local:/opt/models/{args.sortie.name}")
     print("  docker compose run --rm admin training encodeurs \\")
