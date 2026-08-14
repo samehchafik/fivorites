@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import torch
@@ -44,6 +45,31 @@ ELEVE = "jinaai/jina-embeddings-v2-small-en"
 # reste de l'identifiant TMDB, pas au hasard : relancer l'entraînement doit
 # redonner la même partition, sans quoi comparer deux essais ne veut rien dire.
 PART_SURVEILLANCE = 10
+
+
+class Journal:
+    """Duplique la sortie vers un fichier, en plus du terminal.
+
+    Le conteneur se lance avec `--rm` : à sa sortie, `docker logs` n'a plus
+    rien à montrer. Vingt heures de calcul dont on ne peut plus lire la cause
+    d'échec, c'est ce qui est arrivé au premier essai — l'export ONNX a raté et
+    le message est parti avec le conteneur.
+
+    Le fichier vit dans le volume, donc il survit.
+    """
+
+    def __init__(self, chemin: Path) -> None:
+        self.terminal = sys.stdout
+        self.fichier = chemin.open("a", encoding="utf-8")
+
+    def write(self, texte: str) -> None:
+        self.terminal.write(texte)
+        self.fichier.write(texte)
+        self.fichier.flush()
+
+    def flush(self) -> None:
+        self.terminal.flush()
+        self.fichier.flush()
 
 
 class Paires(Dataset):
@@ -169,19 +195,43 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
         max_length=min(longueur, 128),
         return_tensors="pt",
     )
-    torch.onnx.export(
-        AvecPooling(modele).cpu(),
-        (exemple["input_ids"].cpu(), exemple["attention_mask"].cpu()),
-        str(sortie / "model.onnx"),
-        input_names=["input_ids", "attention_mask"],
-        output_names=["embedding"],
-        dynamic_axes={
-            "input_ids": {0: "lot", 1: "tokens"},
-            "attention_mask": {0: "lot", 1: "tokens"},
-            "embedding": {0: "lot"},
-        },
-        opset_version=14,
-    )
+    enveloppe = AvecPooling(modele).cpu()
+    entrees = (exemple["input_ids"].cpu(), exemple["attention_mask"].cpu())
+    axes = {
+        "input_ids": {0: "lot", 1: "tokens"},
+        "attention_mask": {0: "lot", 1: "tokens"},
+        "embedding": {0: "lot"},
+    }
+
+    # Deux exportateurs, essayes dans cet ordre. Le recent (dynamo) comprend
+    # mieux le Python moderne ; l'ancien (TorchScript) trace l'execution et se
+    # moque de la facon dont le modele est ecrit — ce qui compte face a une
+    # implementation d'attention apportee par le modele lui-meme, que personne
+    # n'a ecrite en pensant a l'export.
+    #
+    # Les deux echouent parfois pour des raisons opposees, d'ou la cascade
+    # plutot qu'un choix. Et les erreurs sont reunies : une seule des deux ne
+    # dirait pas si le probleme vient du modele ou de l'exportateur.
+    echecs: list[str] = []
+    for nom, options in (("dynamo", {"dynamo": True}), ("torchscript", {"dynamo": False})):
+        try:
+            torch.onnx.export(
+                enveloppe,
+                entrees,
+                str(sortie / "model.onnx"),
+                input_names=["input_ids", "attention_mask"],
+                output_names=["embedding"],
+                dynamic_axes=axes,
+                opset_version=14,
+                **options,
+            )
+            print(f"export ONNX reussi ({nom})")
+            break
+        except Exception as exc:  # noqa: BLE001 — on veut la cause, quelle qu'elle soit
+            echecs.append(f"{nom} : {type(exc).__name__} — {exc}")
+    else:
+        raise RuntimeError("aucun exportateur ONNX n'a abouti.\n  " + "\n  ".join(echecs))
+
     tokenizer.save_pretrained(sortie)
 
 
@@ -283,7 +333,14 @@ def main() -> None:
         "--reprise", type=Path, default=Path("reprise.pt"), help="Fichier d'état pour reprendre."
     )
     parseur.add_argument("--tous-les", type=int, default=200, help="Sauver l'état tous les N lots.")
+    parseur.add_argument(
+        "--exporter-seulement",
+        action="store_true",
+        help="Relire la reprise et rejouer l'export, sans entraîner.",
+    )
     args = parseur.parse_args()
+
+    sys.stdout = Journal(args.sortie.parent / "journal.txt")
 
     if args.fils > 0:
         torch.set_num_threads(args.fils)
@@ -305,6 +362,26 @@ def main() -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(ELEVE, trust_remote_code=True)
     modele = AutoModel.from_pretrained(ELEVE, trust_remote_code=True).to(appareil)
+
+    # L'export seul. Il existe pour une raison precise : un entrainement de
+    # vingt heures dont l'ECRITURE echoue laisse ses poids dans la reprise —
+    # ils ne sont pas perdus, seulement pas encore sortis. Refaire les vingt
+    # heures pour rejouer trente secondes d'export serait absurde, et l'erreur
+    # redevient visible en quelques secondes au lieu d'une nuit.
+    if args.exporter_seulement:
+        if not args.reprise.exists():
+            print(f"ERREUR : {args.reprise} introuvable — rien a exporter.")
+            return
+        etat = torch.load(args.reprise, map_location="cpu", weights_only=False)
+        poids = etat.get("meilleurs_poids") or etat["modele"]
+        quels = "meilleurs" if etat.get("meilleurs_poids") else "derniers (aucun meilleur retenu)"
+        modele.load_state_dict(poids)
+        print(f"poids {quels}, cosinus {etat.get('meilleur', float('nan')):.4f} — export…")
+        exporter_onnx(modele, tokenizer, args.sortie, args.longueur)
+        taille = (args.sortie / "model.onnx").stat().st_size / 1e6
+        print(f"ecrit dans {args.sortie} ({taille:.0f} Mo)")
+        return
+
     if args.geler > 0:
         figes, entrainables = geler(modele, args.geler)
         print(f"{figes / 1e6:.1f} M de paramètres gelés, {entrainables / 1e6:.1f} M entraînables")
