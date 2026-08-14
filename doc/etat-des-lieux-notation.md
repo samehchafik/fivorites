@@ -310,6 +310,49 @@ Même panne que la réflexion de House, et que l'axe `humour` de l'ancien barèm
 resté bloqué à 1,25 malgré volume, encodeur et visuels. **Trois confirmations
 indépendantes que le ton n'est pas dans le texte encodé.**
 
+*Résolution, 2026-08-13 :* avec `text-embedding-3-large@512` en production, la
+joie de Lucifer n'est plus l'axe le plus faux. Ses dix voisins passent des
+policiers sombres (Supernatural, Criminal Minds, SVU) à un mélange qui inclut
+Only Murders in the Building et Wednesday — l'encodeur savait ce que « Lucifer »
+désigne. L'erreur résiduelle est du même genre en plus petit : tristesse jugée
+4,0, prédite 6,1, et la moyenne des voisins est 6,0. Le modèle rend toujours la
+moyenne de son voisinage — le voisinage est simplement devenu meilleur. Et les
+cosinus entre voisins tombent de 0,90 à 0,72 : le nuage s'est déplié, la
+similarité entre œuvres redevient discriminante.
+
+### La distillation : mesurée, et rangée
+
+L'idée : apprendre à jina à reproduire les vecteurs du professeur, pour garder
+le gain sans dépendre d'une API. Le corpus n'a besoin d'aucune note du juge —
+25 001 paires `dossier → vecteur` constituées pour ~4 $, la seule donnée du
+projet qui ne soit pas bornée par les œuvres notées.
+
+Entraîné sur le serveur, sans GPU : 22 485 paires, 256 tokens, une couche
+gelée, ~20 h. Cosinus de distillation 0,7505. Mesuré le 2026-08-14 sur 937
+œuvres notées :
+
+| encodeur | MAE cv | joie | tristesse |
+|---|---|---|---|
+| professeur `text-embedding-3-large@512` | **0,834** | 0,90 | 0,85 |
+| élève distillé | 0,937 | 1,03 | 1,04 |
+| jina d'origine | 1,017 | 1,11 | 1,06 |
+
+L'élève récupère **44 % de l'écart** — pronostic annoncé avant la mesure :
+0,90–0,95. Il bat jina sur les six axes et égale le professeur sur `rêve`,
+mais `joie` et `tristesse`, les axes du ton, restent au niveau de jina :
+**il a appris la géométrie générale, pas les nuances qui manquaient.**
+
+Verdict : l'API reste en production. Le catalogue entier coûte ~43 $ une
+fois, ~0,0002 $ par œuvre nouvelle ensuite ; déployer l'élève économiserait
+ça au prix de la moitié du gain. L'élève et son corpus restent sur disque
+(`export/`, projet `distillation/`) — une heure de GPU louée avec 1 024
+tokens ferait sans doute mieux, le jour où la dépendance API deviendra un
+vrai problème.
+
+Au passage, le professeur confirme que **le volume paie enfin** : 0,853 sur
+502 œuvres, 0,834 sur 937. Le levier qui plafonnait dans l'espace de jina
+fonctionne dans le nouvel espace.
+
 ---
 
 ## 8. Ce qui reste ouvert
