@@ -36,7 +36,8 @@ RUN pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cpu \
         "torch>=2.4" \
  && pip install --no-cache-dir \
-        "transformers>=4.40,<4.49" "einops>=0.8" "onnx>=1.16" "numpy>=1.26,<3"
+        "transformers>=4.40,<4.49" "einops>=0.8" "onnx>=1.16" "numpy>=1.26,<3" \
+        "onnxscript>=0.1"
 
 # Le poids de départ, figé dans l'image. `trust_remote_code` parce que jina v2
 # apporte sa propre implémentation d'attention (ALiBi), que transformers ne

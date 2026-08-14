@@ -41,6 +41,7 @@ jina lit « Lucifer » sans savoir ce que le mot désigne.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -127,9 +128,11 @@ def _model(cache_dir: str | None, name: str) -> Any:
 MAX_CHARS = 12_000
 LOT = 4
 
-# La borne en tokens du chemin local, alignée sur la longueur d'entraînement de
-# l'élève distillé. Encoder plus long qu'il n'a appris rendrait des vecteurs
-# hors de la distribution qu'il connaît — sans erreur, mais faux.
+# La borne en tokens par défaut du chemin local, quand le modèle ne dit pas la
+# sienne. Un élève distillé, lui, la porte dans son `fivorites.json` : le
+# graphe ONNX fige le biais ALiBi à la longueur d'export, donc lui donner plus
+# de tokens qu'il n'en connaît est une erreur — et une erreur **muette**, le
+# modèle rendant un vecteur sur un texte silencieusement tronqué.
 MAX_TOKENS = 1024
 
 
@@ -177,8 +180,14 @@ def _session_locale(dossier: str) -> Any:
             f"{graphe} introuvable — le dossier doit contenir model.onnx et tokenizer.json,"
             " tels que distillation/distiller.py les écrit."
         )
+    # La borne vient du modèle quand il la donne. La deviner serait le genre
+    # d'erreur qui ne se voit pas : le graphe accepterait la séquence trop
+    # longue ou la tronquerait, et rendrait un vecteur plausible sur un texte
+    # amputé.
+    marque = chemin / "fivorites.json"
+    bornes = json.loads(marque.read_text(encoding="utf-8")) if marque.exists() else {}
     tokenizer = Tokenizer.from_file(str(chemin / "tokenizer.json"))
-    tokenizer.enable_truncation(max_length=MAX_TOKENS)
+    tokenizer.enable_truncation(max_length=int(bornes.get("maxTokens", MAX_TOKENS)))
     tokenizer.enable_padding()
     return onnxruntime.InferenceSession(str(graphe)), tokenizer
 

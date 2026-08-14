@@ -19,6 +19,7 @@ dependencies = [
     "transformers>=4.40,<4.49",
     "einops>=0.8",          # exigé par le code distant de jina v2
     "onnx>=1.16",
+    "onnxscript>=0.1",   # requis par l'exportateur dynamo
     "numpy>=1.26,<3",
 ]
 

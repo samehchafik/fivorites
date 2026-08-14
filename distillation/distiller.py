@@ -188,6 +188,31 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
 
     sortie.mkdir(parents=True, exist_ok=True)
     modele.eval()
+
+    # Retailler le biais ALiBi AVANT de tracer, sans quoi l'export echoue sur
+    # « larger than the 2GiB limit imposed by protobuf » — pour un modele de
+    # 33 M de parametres, ce qui a de quoi surprendre.
+    #
+    # L'explication : jina v2 n'a pas de plongements de position, il ajoute un
+    # biais d'attention precalcule pour ses 8 192 positions maximales. Le
+    # tenseur fait 8 tetes x 8 192 x 8 192 x 4 octets, soit 2,1 Go, et le trace
+    # le fige en constante dans le graphe. A 256 tokens il tombe a 2 Mo.
+    #
+    # Consequence a ne pas perdre de vue : le graphe exporte n'accepte plus que
+    # `longueur` tokens. C'est pour ca que la borne part avec lui dans
+    # `fivorites.json` — la deviner cote production serait une erreur muette,
+    # le modele rendrait des vecteurs sur un texte tronque sans le dire.
+    encodeur = getattr(modele, "encoder", None)
+    rebatir = getattr(encodeur, "rebuild_alibi_tensor", None)
+    if callable(rebatir):
+        try:
+            rebatir(size=longueur)
+        except TypeError:
+            rebatir(longueur)
+        print(f"biais ALiBi retaille a {longueur} positions")
+    else:
+        print("⚠ biais ALiBi non retaille — si l'export depasse 2 Go, c'est lui.")
+
     exemple = tokenizer(
         ["texte d'exemple pour figer les axes"],
         padding="max_length",
@@ -233,6 +258,11 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
         raise RuntimeError("aucun exportateur ONNX n'a abouti.\n  " + "\n  ".join(echecs))
 
     tokenizer.save_pretrained(sortie)
+    # La borne en tokens voyage avec le modele : le graphe la porte en dur
+    # depuis le retaillage d'ALiBi, et la production doit la respecter.
+    (sortie / "fivorites.json").write_text(
+        json.dumps({"maxTokens": longueur, "dimensions": 512}, indent=2), encoding="utf-8"
+    )
 
 
 def geler(modele, couches: int) -> tuple[int, int]:
