@@ -220,7 +220,12 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
         max_length=min(longueur, 128),
         return_tensors="pt",
     )
-    enveloppe = AvecPooling(modele).cpu()
+    # `.eval()` sur l'ENVELOPPE, pas seulement sur le corps. Un module qu'on
+    # vient de construire naît en mode entraînement, et `torch.onnx.export`
+    # regarde le module du dessus : sans ça il avertit « exporting a model
+    # while it is in training mode », ce qui est vrai et trompeur à la fois —
+    # le corps, lui, était bien en eval.
+    enveloppe = AvecPooling(modele).cpu().eval()
     entrees = (exemple["input_ids"].cpu(), exemple["attention_mask"].cpu())
     axes = {
         "input_ids": {0: "lot", 1: "tokens"},
@@ -247,7 +252,12 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
                 input_names=["input_ids", "attention_mask"],
                 output_names=["embedding"],
                 dynamic_axes=axes,
-                opset_version=14,
+                # 18 et non 14 : l'exportateur récent produit du 18 puis tente
+                # de redescendre, échoue sur `axes_input_to_attribute`, et
+                # garde le 18 de toute façon. Autant le demander et se passer
+                # d'une conversion qui ne sert à rien. `onnxruntime` le lit
+                # depuis sa version 1.15.
+                opset_version=18,
                 **options,
             )
             print(f"export ONNX reussi ({nom})")
