@@ -30,6 +30,7 @@ gratuit à l'usage et sans dépendance réseau.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -164,6 +165,53 @@ def surveiller(modele, chargeur, appareil: str) -> float:
     return total / max(vus, 1)
 
 
+def _retailler_alibi(modele, longueur: int) -> tuple[int, int]:
+    """Ramene le biais ALiBi a `longueur` positions, et verifie que c'est fait.
+
+    Appeler `rebuild_alibi_tensor` ne suffit pas : la premiere version de ce
+    code l'appelait, annoncait fierement « retaille a 256 positions », et
+    produisait quand meme un fichier de 2,27 Go. Le compte tombait juste — 8
+    tetes x 8 192 x 8 192 flottants font 537 M de valeurs, plus les 33 M de
+    parametres du modele — donc le tenseur n'avait pas bouge.
+
+    D'ou cette version, qui ne fait pas confiance a l'appel : elle parcourt les
+    tampons et les attributs, decoupe tout ce qui porte « alibi » et depasse la
+    longueur voulue, et **rend les tailles avant et apres** pour qu'on puisse
+    le lire au lieu de l'esperer. Un retaillage qu'on annonce sans le mesurer
+    ne vaut rien — celui-la a coute un export de 2,27 Go et une comparaison
+    perdue.
+    """
+    encodeur = getattr(modele, "encoder", None)
+    rebatir = getattr(encodeur, "rebuild_alibi_tensor", None)
+    if callable(rebatir):
+        try:
+            rebatir(size=longueur)
+        except TypeError:
+            with contextlib.suppress(Exception):
+                rebatir(longueur)
+
+    avant = apres = 0
+    for module in modele.modules():
+        candidats = list(module._buffers.items()) + [
+            (nom, valeur)
+            for nom, valeur in vars(module).items()
+            if isinstance(valeur, torch.Tensor)
+        ]
+        for nom, valeur in candidats:
+            if valeur is None or "alibi" not in nom.lower() or valeur.dim() < 2:
+                continue
+            avant += valeur.numel() * valeur.element_size()
+            if valeur.shape[-1] > longueur:
+                petit = valeur[..., :longueur, :longueur].contiguous()
+                if nom in module._buffers:
+                    module._buffers[nom] = petit
+                else:
+                    setattr(module, nom, petit)
+                valeur = petit
+            apres += valeur.numel() * valeur.element_size()
+    return avant, apres
+
+
 def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
     """Écrit le modèle en ONNX, format que la production sait déjà servir.
 
@@ -202,16 +250,12 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
     # `longueur` tokens. C'est pour ca que la borne part avec lui dans
     # `fivorites.json` — la deviner cote production serait une erreur muette,
     # le modele rendrait des vecteurs sur un texte tronque sans le dire.
-    encodeur = getattr(modele, "encoder", None)
-    rebatir = getattr(encodeur, "rebuild_alibi_tensor", None)
-    if callable(rebatir):
-        try:
-            rebatir(size=longueur)
-        except TypeError:
-            rebatir(longueur)
-        print(f"biais ALiBi retaille a {longueur} positions")
-    else:
-        print("⚠ biais ALiBi non retaille — si l'export depasse 2 Go, c'est lui.")
+    avant_octets, apres_octets = _retailler_alibi(modele, longueur)
+    if avant_octets:
+        print(
+            f"biais ALiBi : {avant_octets / 1e6:.0f} Mo -> {apres_octets / 1e6:.1f} Mo"
+            f" ({longueur} positions)"
+        )
 
     exemple = tokenizer(
         ["texte d'exemple pour figer les axes"],
@@ -230,7 +274,7 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
     axes = {
         "input_ids": {0: "lot", 1: "tokens"},
         "attention_mask": {0: "lot", 1: "tokens"},
-        "embedding": {0: "lot"},
+        "vecteur": {0: "lot"},
     }
 
     # Deux exportateurs, essayes dans cet ordre. Le recent (dynamo) comprend
@@ -250,7 +294,7 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
                 entrees,
                 str(sortie / "model.onnx"),
                 input_names=["input_ids", "attention_mask"],
-                output_names=["embedding"],
+                output_names=["vecteur"],
                 dynamic_axes=axes,
                 # 18 et non 14 : l'exportateur récent produit du 18 puis tente
                 # de redescendre, échoue sur `axes_input_to_attribute`, et
@@ -266,6 +310,18 @@ def exporter_onnx(modele, tokenizer, sortie: Path, longueur: int) -> None:
             echecs.append(f"{nom} : {type(exc).__name__} — {exc}")
     else:
         raise RuntimeError("aucun exportateur ONNX n'a abouti.\n  " + "\n  ".join(echecs))
+
+    # Un elève de 33 M de parametres pese ~130 Mo. Bien au-dela, c'est qu'une
+    # constante geante a suivi dans le graphe — et l'export precedent l'a
+    # prouve : 2,27 Go, dont 2,1 de biais ALiBi non retaille. Le dire ici evite
+    # de le decouvrir au chargement, par un message d'onnxruntime qui ne
+    # nommera pas la cause.
+    poids = sum(f.stat().st_size for f in sortie.glob("model.onnx*"))
+    if poids > 500e6:
+        print(
+            f"⚠ {poids / 1e6:.0f} Mo exportes pour un modele qui en pese ~130."
+            " Une constante geante a suivi — verifier le retaillage d'ALiBi."
+        )
 
     tokenizer.save_pretrained(sortie)
     # La borne en tokens voyage avec le modele : le graphe la porte en dur
