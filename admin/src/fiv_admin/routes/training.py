@@ -1039,6 +1039,49 @@ def cout_encodeurs(modeles: tuple[str, ...], textes: list[str]) -> float:
     return total
 
 
+async def _notes_du_bareme(
+    conn: Any, rubric_version: str
+) -> tuple[dict[int, dict[str, float]], dict[int, tuple[int, str]]]:
+    """Les notes courantes du barème, par ŒUVRE — jamais par identifiant TMDB.
+
+    La nuance est devenue une nécessité avec les films : les deux catalogues
+    TMDB se chevauchent, et agréger par `id_tmdb` fusionnerait le film 550 et
+    la série 550 en une seule « œuvre » dont les notes se mélangeraient — sans
+    erreur, sans avertissement, juste des poids entraînés sur des paires
+    dossier/note dépareillées.
+
+    Rend aussi `{oeuvre_id: (id_tmdb, univers)}` : c'est ce qu'il faut pour
+    reconstruire le BON dossier, celui du bon catalogue.
+
+    Partagée entre l'entraînement, les comparaisons et les diagnostics : cinq
+    copies de cette requête ont existé, et c'est la cinquième qui a gardé le
+    bug quand les quatre autres étaient corrigées.
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select distinct on (s.oeuvre_id, s.axe)
+                   s.oeuvre_id, o.id_tmdb, o.univers, s.axe, s.valeur
+            from notation.score s
+            join sourcing.oeuvre o on o.id = s.oeuvre_id
+            where s.rubric_version = %s and s.modele <> %s and s.modele not like 'claude%%'
+              and s.valeur is not null
+            order by s.oeuvre_id, s.axe, s.scored_at desc
+            """,
+            (rubric_version, INTERNAL_MODEL),
+        )
+        rows = await cur.fetchall()
+
+    by_work: dict[int, dict[str, float]] = {}
+    infos: dict[int, tuple[int, str]] = {}
+    for row in rows:
+        by_work.setdefault(row["oeuvre_id"], {})[row["axe"]] = float(row["valeur"])
+        infos[row["oeuvre_id"]] = (row["id_tmdb"], row["univers"])
+    if len(by_work) < MIN_TRAINING_WORKS:
+        raise PasAssezDOeuvres(len(by_work))
+    return by_work, infos
+
+
 async def _notes_et_dossiers(
     conn: Any, rubric: dict[str, Any]
 ) -> tuple[dict[int, dict[str, float]], dict[int, dict[str, Any]]]:
@@ -1052,33 +1095,15 @@ async def _notes_et_dossiers(
     cache aux vecteurs payants, et le recalculer ailleurs serait la meilleure
     façon de payer deux fois le même encodage.
     """
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            """
-            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
-            from notation.score s
-            join sourcing.oeuvre o on o.id = s.oeuvre_id
-            where s.rubric_version = %s and s.modele <> %s and s.modele not like 'claude%%'
-              and s.valeur is not null
-            order by o.id_tmdb, s.axe, s.scored_at desc
-            """,
-            (rubric["version"], INTERNAL_MODEL),
-        )
-        rows = await cur.fetchall()
-
-    by_work: dict[int, dict[str, float]] = {}
-    for row in rows:
-        by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
-    if len(by_work) < MIN_TRAINING_WORKS:
-        raise PasAssezDOeuvres(len(by_work))
+    by_work, infos = await _notes_du_bareme(conn, rubric["version"])
 
     # Les dossiers, assemblés une seule fois : c'est la partie lente, et elle
     # ne dépend pas de l'encodeur qu'on évalue.
     dossiers: dict[int, dict[str, Any]] = {}
-    for id_tmdb in by_work:
-        built = await build_dossier(conn, id_tmdb)
+    for oeuvre_id, (id_tmdb, univers) in infos.items():
+        built = await build_dossier(conn, id_tmdb, oeuvre_id=oeuvre_id, univers=univers)
         if built is not None:
-            dossiers[id_tmdb] = built
+            dossiers[oeuvre_id] = built
     return by_work, dossiers
 
 
@@ -1274,35 +1299,17 @@ async def comparer_visuels(conn: Any, settings: Any, rubric: dict[str, Any]) -> 
     production et n'a qu'une clé par œuvre et par empreinte.
     """
     axes: list[str] = rubric["axes"]
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            """
-            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
-            from notation.score s
-            join sourcing.oeuvre o on o.id = s.oeuvre_id
-            where s.rubric_version = %s and s.modele <> %s and s.modele not like 'claude%%'
-              and s.valeur is not null
-            order by o.id_tmdb, s.axe, s.scored_at desc
-            """,
-            (rubric["version"], INTERNAL_MODEL),
-        )
-        rows = await cur.fetchall()
-
-    by_work: dict[int, dict[str, float]] = {}
-    for row in rows:
-        by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
-    if len(by_work) < MIN_TRAINING_WORKS:
-        raise PasAssezDOeuvres(len(by_work))
+    by_work, infos = await _notes_du_bareme(conn, rubric["version"])
 
     avec: dict[int, str] = {}
     sans: dict[int, str] = {}
     legendees = 0
-    for id_tmdb in by_work:
-        a = await build_dossier(conn, id_tmdb)
-        b = await build_dossier(conn, id_tmdb, medias=False)
+    for oeuvre_id, (id_tmdb, univers) in infos.items():
+        a = await build_dossier(conn, id_tmdb, oeuvre_id=oeuvre_id, univers=univers)
+        b = await build_dossier(conn, id_tmdb, oeuvre_id=oeuvre_id, univers=univers, medias=False)
         if a is None or b is None:
             continue
-        avec[id_tmdb], sans[id_tmdb] = a["text"], b["text"]
+        avec[oeuvre_id], sans[oeuvre_id] = a["text"], b["text"]
         if a["sections"]["mediaLines"] > 0:
             legendees += 1
 
@@ -1356,25 +1363,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
 
     # La note courante de chaque œuvre : la plus récente par (œuvre, axe),
     # modèle OpenAI seulement — le contre-juge n'entraîne pas.
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            """
-            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
-            from notation.score s
-            join sourcing.oeuvre o on o.id = s.oeuvre_id
-            where s.rubric_version = %s and s.modele not in (%s) and s.modele not like 'claude%%'
-              and s.valeur is not null
-            order by o.id_tmdb, s.axe, s.scored_at desc
-            """,
-            (rubric_version, INTERNAL_MODEL),
-        )
-        rows = await cur.fetchall()
-
-    by_work: dict[int, dict[str, float]] = {}
-    for row in rows:
-        by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
-    if len(by_work) < MIN_TRAINING_WORKS:
-        raise PasAssezDOeuvres(len(by_work))
+    by_work, infos = await _notes_du_bareme(conn, rubric_version)
 
     # Les embeddings de chaque œuvre notée, dossier reconstruit à l'identique.
     # Les dossiers sont gardés : la régénération plus bas en a besoin, et les
@@ -1389,16 +1378,16 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
     # veulent rien dire. On l'écarte, elle reviendra au prochain entraînement.
     label_production = etiquette(settings.embedder)
     degradees: list[int] = []
-    for id_tmdb in by_work:
-        built = await build_dossier(conn, id_tmdb)
+    for oeuvre_id, (id_tmdb, univers) in infos.items():
+        built = await build_dossier(conn, id_tmdb, oeuvre_id=oeuvre_id, univers=univers)
         if built is None:
             continue
         vecteur, label = await encoder_dossier(conn, settings, built)
         if label != label_production:
-            degradees.append(id_tmdb)
+            degradees.append(oeuvre_id)
             continue
-        dossiers[id_tmdb] = built
-        vectors[id_tmdb] = vecteur
+        dossiers[oeuvre_id] = built
+        vectors[oeuvre_id] = vecteur
     if degradees:
         log.warning(
             "%d œuvre(s) écartée(s) de l'entraînement : encodées par le secours, pas par %s",
@@ -1506,7 +1495,7 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """
-                select distinct on (t.oeuvre_id) t.oeuvre_id, o.id_tmdb, t.prompt
+                select distinct on (t.oeuvre_id) t.oeuvre_id, o.id_tmdb, o.univers, t.prompt
                 from notation.training_run t
                 join sourcing.oeuvre o on o.id = t.oeuvre_id
                 where t.rubric_version = %s and t.openai is not null
@@ -1517,14 +1506,16 @@ async def entrainer_poids(conn: Any, settings: Any, rubric: dict[str, Any]) -> d
             journaux = await cur.fetchall()
 
         for entry in journaux:
-            id_tmdb = entry["id_tmdb"]
+            oeuvre_id = entry["oeuvre_id"]
             # Le dossier vient du tour précédent quand l'œuvre y était : c'est
             # le cas de la quasi-totalité d'entre elles, puisqu'on régénère
             # justement celles qui ont servi à entraîner.
-            built = dossiers.get(id_tmdb) or await build_dossier(conn, id_tmdb)
+            built = dossiers.get(oeuvre_id) or await build_dossier(
+                conn, entry["id_tmdb"], oeuvre_id=oeuvre_id, univers=entry["univers"]
+            )
             if built is None:
                 continue
-            vector = vectors.get(id_tmdb) or await _embedding(conn, settings, built)
+            vector = vectors.get(oeuvre_id) or await _embedding(conn, settings, built)
             await _store_internal(
                 conn,
                 oeuvre_id=entry["oeuvre_id"],
@@ -1759,31 +1750,13 @@ async def comparer_modeles(conn: Any, settings: Any, rubric: dict[str, Any]) -> 
     déjà en cache.
     """
     axes: list[str] = rubric["axes"]
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            """
-            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
-            from notation.score s
-            join sourcing.oeuvre o on o.id = s.oeuvre_id
-            where s.rubric_version = %s and s.modele <> %s and s.modele not like 'claude%%'
-              and s.valeur is not null
-            order by o.id_tmdb, s.axe, s.scored_at desc
-            """,
-            (rubric["version"], INTERNAL_MODEL),
-        )
-        rows = await cur.fetchall()
-
-    by_work: dict[int, dict[str, float]] = {}
-    for row in rows:
-        by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
-    if len(by_work) < MIN_TRAINING_WORKS:
-        raise PasAssezDOeuvres(len(by_work))
+    by_work, infos = await _notes_du_bareme(conn, rubric["version"])
 
     vectors: dict[int, list[float]] = {}
-    for id_tmdb in by_work:
-        built = await build_dossier(conn, id_tmdb)
+    for oeuvre_id, (id_tmdb, univers) in infos.items():
+        built = await build_dossier(conn, id_tmdb, oeuvre_id=oeuvre_id, univers=univers)
         if built is not None:
-            vectors[id_tmdb] = await _embedding(conn, settings, built)
+            vectors[oeuvre_id] = await _embedding(conn, settings, built)
 
     resultats = []
     for axe in axes:
@@ -1831,33 +1804,25 @@ async def diagnostic_matiere(
     N'écrit rien et n'appelle aucune API payante : les vecteurs sont en cache.
     """
     axes: list[str] = rubric["axes"]
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            """
-            select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
-            from notation.score s
-            join sourcing.oeuvre o on o.id = s.oeuvre_id
-            where s.rubric_version = %s and s.modele <> %s and s.modele not like 'claude%%'
-              and s.valeur is not null
-            order by o.id_tmdb, s.axe, s.scored_at desc
-            """,
-            (rubric["version"], INTERNAL_MODEL),
-        )
-        rows = await cur.fetchall()
+    by_work, infos = await _notes_du_bareme(conn, rubric["version"])
 
-    by_work: dict[int, dict[str, float]] = {}
-    for row in rows:
-        by_work.setdefault(row["id_tmdb"], {})[row["axe"]] = float(row["valeur"])
-    if len(by_work) < MIN_TRAINING_WORKS:
-        raise PasAssezDOeuvres(len(by_work))
+    # `focus` arrive en identifiant TMDB — c'est ce que l'utilisateur connaît —
+    # mais tout ici est indexé par œuvre. Série d'abord en cas de chevauchement.
+    focus_oeuvre = None
+    if focus is not None:
+        candidats = sorted(
+            (o for o, (i, _) in infos.items() if i == focus),
+            key=lambda o: infos[o][1] != "series",
+        )
+        focus_oeuvre = candidats[0] if candidats else None
 
     dossiers: dict[int, dict[str, Any]] = {}
     vectors: dict[int, list[float]] = {}
-    for id_tmdb in by_work:
-        built = await build_dossier(conn, id_tmdb)
+    for oeuvre_id, (id_tmdb, univers) in infos.items():
+        built = await build_dossier(conn, id_tmdb, oeuvre_id=oeuvre_id, univers=univers)
         if built is not None:
-            dossiers[id_tmdb] = built
-            vectors[id_tmdb] = await _embedding(conn, settings, built)
+            dossiers[oeuvre_id] = built
+            vectors[oeuvre_id] = await _embedding(conn, settings, built)
 
     # L'erreur hors-pli, moyennée sur les axes que le juge a bien voulu noter.
     # Une œuvre qu'il a laissée en null sur deux axes compte sur les quatre
@@ -1877,7 +1842,7 @@ async def diagnostic_matiere(
             if math.isnan(valeur):
                 continue
             erreurs.setdefault(id_tmdb, []).append(abs(valeur - juge))
-            if id_tmdb == focus:
+            if id_tmdb == focus_oeuvre:
                 predit_focus[axe] = round(valeur, 1)
 
     fiches: list[dict[str, Any]] = []
@@ -1895,7 +1860,7 @@ async def diagnostic_matiere(
         mesures = erreurs.get(id_tmdb, [])
         fiches.append(
             {
-                "idTmdb": id_tmdb,
+                "idTmdb": infos[id_tmdb][0],
                 "titre": built["title"],
                 "chars": len(texte),
                 "coupe": max(0, len(texte) - MAX_CHARS),
@@ -1947,10 +1912,10 @@ async def diagnostic_matiere(
             correlation = round(cov / (el * ev), 2)
 
     voisinage: dict[str, Any] | None = None
-    if focus is not None and focus in vectors:
+    if focus_oeuvre is not None and focus_oeuvre in vectors:
         ordre = list(vectors)
         matrice = [vectors[i] for i in ordre]
-        juges = by_work.get(focus, {})
+        juges = by_work.get(focus_oeuvre, {})
         pire = max(
             (a for a in axes if a in juges and a in predit_focus),
             key=lambda a: abs(juges[a] - predit_focus[a]),
@@ -1958,18 +1923,18 @@ async def diagnostic_matiere(
         )
         voisinage = {
             "idTmdb": focus,
-            "titre": dossiers[focus]["title"] if focus in dossiers else str(focus),
+            "titre": dossiers[focus_oeuvre]["title"] if focus_oeuvre in dossiers else str(focus),
             "axePireEcart": pire,
             "juge": {a: juges.get(a) for a in axes},
             "modele": {a: predit_focus.get(a) for a in axes},
             "voisins": [
                 {
-                    "idTmdb": ordre[i],
+                    "idTmdb": infos[ordre[i]][0],
                     "titre": dossiers[ordre[i]]["title"],
                     "cosinus": round(sim, 3),
                     "juge": by_work.get(ordre[i], {}).get(pire) if pire else None,
                 }
-                for i, sim in voisins_cosinus(matrice, ordre.index(focus), 10)
+                for i, sim in voisins_cosinus(matrice, ordre.index(focus_oeuvre), 10)
             ],
         }
 

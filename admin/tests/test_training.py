@@ -1462,3 +1462,39 @@ async def test_la_liste_a_noter_ne_melange_pas_les_univers(
     assert series[0]["oeuvre_id"] != films[0]["oeuvre_id"], (
         "meme pivot pour deux univers : le journal marquerait la mauvaise oeuvre"
     )
+
+
+async def test_les_notes_ne_fusionnent_pas_le_film_et_la_serie_de_meme_id(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Deux oeuvres, meme id_tmdb, notees differemment : deux entrees, pas une.
+
+    L'agregation historique par `id_tmdb` aurait fusionne le film 550 et la
+    serie 550 en une seule « oeuvre » : la note la plus recente aurait ecrase
+    l'autre, et les poids se seraient entraines sur des paires dossier/note
+    depareillees — sans erreur, sans avertissement.
+    """
+    from fiv_admin.routes.training import MIN_TRAINING_WORKS, _notes_du_bareme
+
+    async def noter(oeuvre: int, valeur: float) -> None:
+        await conn.execute(
+            "insert into notation.score (oeuvre_id, axe, valeur, confiance, rubric_version,"
+            " modele, input_sha256, prompt_sha256)"
+            " values (%s, 'joie', %s, 0.9, 'v1', 'gpt-test', 'a', 'b')",
+            (oeuvre, valeur),
+        )
+
+    oeuvre_serie = await seed_series(conn, 550)
+    oeuvre_film = await seed_film(conn, 550)
+    await noter(oeuvre_serie, 8.0)
+    await noter(oeuvre_film, 2.0)
+    # De quoi passer le seuil : le sujet du test est la fusion, pas le seuil.
+    for n in range(MIN_TRAINING_WORKS):
+        await noter(await seed_series(conn, 9000 + n), 5.0)
+
+    by_work, infos = await _notes_du_bareme(conn, "v1")
+
+    assert by_work[oeuvre_serie]["joie"] == 8.0
+    assert by_work[oeuvre_film]["joie"] == 2.0
+    assert infos[oeuvre_serie] == (550, "series")
+    assert infos[oeuvre_film] == (550, "movies")
