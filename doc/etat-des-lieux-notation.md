@@ -355,6 +355,100 @@ fonctionne dans le nouvel espace.
 
 ---
 
+## 7 bis. La validité : « action 5,5 », est-ce vrai ?
+
+Mesuré le 2026-08-15 sur 3 979 œuvres, par `training validite`. C'est la
+première fois que le projet mesure autre chose que sa propre cohérence.
+
+**La distinction qui manquait.** Tout ce qui précède mesure la **fidélité** :
+le juge d'accord avec lui-même (0,37), la régression d'accord avec le juge
+(0,84). Ça établit qu'on rend toujours la même valeur, pas qu'elle soit la
+bonne — un thermomètre déréglé de trois degrés est parfaitement fidèle.
+
+| axe | ancres (écart) | genre (écart) | plancher réel |
+|---|---|---|---|
+| rêve | **0,50** | **+4,41** | **1,61** |
+| action | 0,50 | +3,31 | 3,78 |
+| joie | 1,00 | +2,85 | 3,88 |
+| tristesse | 1,00 | +2,09 | 3,41 |
+| peur | 1,50 | +2,78 | 3,28 |
+| réflexion | **1,67** | **+1,86** | **4,78** |
+
+### Ce qui est validé
+
+**Le critère extérieur passe sur les six axes.** Les genres TMDB sont produits
+par des éditeurs qui n'ont jamais vu ce barème, et pourtant les œuvres du genre
+attendu scorent de +1,86 à +4,41 plus haut que les autres. Les axes mesurent
+quelque chose que quelqu'un d'autre reconnaît.
+
+**Et ce n'est pas une copie du genre.** Les moyennes « avec » valent 5,5 à 7,1,
+pas 9 : une œuvre d'action moyenne fait 7,08 en action, et il reste de la
+dispersion *à l'intérieur* du genre — ce qui est tout l'objet de l'exercice.
+Le barème l'exige explicitement (« Score the emotion, never its genre label »)
+et il est suivi.
+
+### Ce qui est réfuté : le bas de l'échelle
+
+Le juge s'écarte de **ses propres ancres** de 1,0 en moyenne, soit près de
+trois fois son bruit propre. Et la direction est nette :
+
+| ancre | déclaré | rendu |
+|---|---|---|
+| NCIS (réflexion) | 1 | **4,0** |
+| Downton Abbey (peur) | 1 | **3,0** |
+| Chernobyl (joie) | 1 | **2,0** |
+| Breaking Bad (tristesse) | 6 | **8,0** |
+| The Crown (rêve) | 2 | 1,0 |
+
+Un seul contre-exemple. **Le bas de l'échelle est comprimé** : ce que le barème
+définit comme 1 ressort entre 2 et 4. La colonne « plancher réel » — la moyenne
+des œuvres hors du genre attendu — le confirme indépendamment : la plupart des
+axes ne descendent jamais sous 3,3 à 4,8.
+
+Cause probable : le prompt lui-même. Il insiste lourdement contre les notes
+basses (« Scoring a work 1 or 2 on every dimension… is a serious error »), pour
+corriger un défaut réel de la v1, et il a sur-corrigé.
+
+**Conséquence pratique.** Le RANG est fiable — l'ordre entre deux œuvres tient,
+et c'est ce dont la recommandation a besoin. La VALEUR absolue est gonflée
+d'environ un point et demi dans la moitié basse : « action 5,5 » se lit « plutôt
+4 dans les termes du barème ». Le zéro n'est pas au bon endroit, la règle est
+bonne.
+
+### Le meilleur et le pire axe
+
+`rêve` est premier sur les trois mesures — meilleure fidélité aux ancres,
+meilleure séparation par genre, seul axe qui utilise vraiment son bas (1,61).
+C'est aussi le plus objectif à définir : « la distance au réel ».
+
+`réflexion` est dernier sur les trois, avec un plancher à 4,78 : **il ne dit
+presque jamais qu'une œuvre ne fait pas réfléchir.** Son test de genre ne repose
+en outre que sur 81 documentaires. À ne pas afficher tel quel.
+
+### Le point aveugle
+
+**Zéro contre-note en base.** Le code appelle Haiku quand sa clé est présente,
+mais aucune campagne ne l'a jamais rempli. Sans second juge d'une autre lignée,
+rien ne distingue une mesure d'une convention propre à GPT. C'est le trou le
+moins cher à combler du projet.
+
+### Ce que ça ouvre
+
+Pour la première fois, **un barème se juge sur autre chose que sa cohérence
+interne**. Les itérations v1→v2→v3 se réglaient sur des corrélations entre
+axes ; il existe maintenant un critère externe et un test de reproduction des
+définitions. Un `empreinte-v4` qui exigerait d'utiliser le bas de l'échelle
+serait *vérifiable* : les ancres à 1 doivent ressortir à 1. Coût du cycle
+complet ~4 $ pour renoter 3 979 œuvres — et le gain se mesure au lieu de
+s'espérer.
+
+Note sur les genres non revendiqués (crime 561, familial 529, romance 318…) :
+c'est délibéré. Aucun ne correspond à une émotion du barème — le crime n'est pas
+la peur, la romance n'est pas la tristesse — et les rattacher affaiblirait le
+critère au lieu de l'élargir.
+
+---
+
 ## 8. Ce qui reste ouvert
 
 **1. L'asymétrie entre ce que lit le juge et ce que lit l'encodeur.** C'est
