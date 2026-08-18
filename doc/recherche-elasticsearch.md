@@ -161,9 +161,19 @@ ES_JAVA_OPTS=-Xms2g -Xmx2g
 ES_MEM_LIMIT=3g
 ```
 
-Le tas se dimensionne au volume indexé, pas à la RAM de la machine : ~1,5 M
-de documents minimaux par univers tiennent largement dans 2 Go. Garder
-`mem_limit` au-dessus du tas — la JVM a besoin de place hors tas.
+**Le tas se dimensionne au volume indexé, pas à la RAM de la machine**, et
+c'est contre-intuitif : sur un serveur à 125 Go, la tentation est d'en donner
+beaucoup. Ce serait contre-productif. L'index mesuré fait 159 octets par
+document — 35 Mo pour 228 000 séries, soit ~230 Mo pour le catalogue complet
+(1,46 M d'œuvres). Deux gigaoctets de tas sont déjà confortables ; au-delà,
+on n'accélère rien et on allonge les pauses du ramasse-miettes. Ce qui rend
+la recherche rapide sur un gros index, c'est le cache de fichiers du système,
+donc la mémoire laissée LIBRE — pas celle donnée à la JVM.
+
+Deux garde-fous pour mémoire : ne jamais dépasser ~31 Go de tas (au-delà, la
+JVM perd la compression des pointeurs et l'on dispose de *moins* de mémoire
+utile), et garder `mem_limit` au-dessus du tas, la JVM ayant besoin de place
+hors tas.
 
 ### Regarder ce qui se passe
 

@@ -100,10 +100,20 @@ services:
       # Aucune fonction de machine learning utilisée : autant ne pas réserver
       # la mémoire qu'elle prend.
       xpack.ml.enabled: "false"
-      # Le tas. Deux gigaoctets pour ~1,5 M de documents minimaux par univers ;
-      # le conteneur est plafonné à un peu plus bas (`mem_limit`), car la JVM
-      # a besoin de place hors tas.
+      # Le tas. Deux gigaoctets pour ~1,5 M de documents minimaux par univers,
+      # et **ce n'est pas à dimensionner sur la RAM de la machine** : un index
+      # de quelques centaines de mégaoctets n'ira pas plus vite avec trente
+      # gigaoctets de tas, il collectera juste plus longtemps ses ordures. Ce
+      # qui accélère vraiment la recherche, c'est le cache de fichiers du
+      # système — gratuit, automatique, et d'autant plus efficace qu'on laisse
+      # de la mémoire DEHORS du tas.
       ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms2g -Xmx2g}
+      # Interdit à Linux de mettre le tas en swap. Un ramasse-miettes qui
+      # swappe fait des pauses de plusieurs secondes, et la recherche s'en
+      # ressent bien avant qu'on comprenne pourquoi. Va de pair avec
+      # `ulimits.memlock` ci-dessous : sans les deux, ni l'un ni l'autre ne
+      # sert à rien.
+      bootstrap.memory_lock: "true"
       # Les seuils d'allocation d'ES sont en POURCENTAGE par défaut
       # (85/90/95 %), et un disque déjà bien rempli fait alors un cluster
       # « red » sans qu'aucun index soit en cause — vécu sur le poste de dev.
@@ -113,8 +123,9 @@ services:
       cluster.routing.allocation.disk.watermark.flood_stage: 4gb
     mem_limit: ${ES_MEM_LIMIT:-3g}
     ulimits:
-      # ES verrouille sa mémoire pour ne jamais être mis en swap — un GC qui
-      # swappe est pire qu'un GC lent.
+      # La permission de verrouiller, que `bootstrap.memory_lock` ci-dessus
+      # demande effectivement. Le défaut de Docker (64 Ko) ferait refuser le
+      # démarrage avec « memory locking requested but not available ».
       memlock: -1
     volumes:
       - es-data:/usr/share/elasticsearch/data
