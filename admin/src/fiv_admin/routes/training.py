@@ -2168,3 +2168,236 @@ async def exporter_corpus(
         "perimees": perimees,
         "introuvables": introuvables,
     }
+
+
+# Les genres TMDB qu'on s'attend à voir peser sur chaque axe. La liste couvre
+# les deux catalogues, qui ne nomment pas pareil : « Action & Adventure » côté
+# série, « Action » et « Adventure » côté film.
+#
+# C'est un critère VOLONTAIREMENT imparfait, et c'est ce qui le rend
+# informatif. Le barème interdit explicitement de recopier le genre — « Score
+# the emotion the work delivers, never its genre label » — donc un axe qui
+# collerait parfaitement au genre aurait échoué, et un axe sans aucun lien
+# mesurerait quelque chose que personne ne reconnaîtrait. C'est l'entre-deux
+# qu'on cherche : un écart net, pas un écart total.
+GENRES_ATTENDUS = {
+    "joie": {"Comedy"},
+    "reve": {"Sci-Fi & Fantasy", "Fantasy", "Science Fiction", "Animation"},
+    "tristesse": {"Drama"},
+    "peur": {"Horror", "Thriller", "Mystery"},
+    "reflexion": {"Documentary"},
+    "action": {"Action & Adventure", "Action", "Adventure", "War & Politics", "War"},
+}
+
+
+def _ancres_du_bareme(prompt: str) -> dict[str, dict[str, float]]:
+    """Les œuvres de référence déclarées par le barème, axe par axe.
+
+    Elles vivent dans le texte du prompt (`Anchors: Chernobyl = 1, …`) parce
+    que c'est le juge qui les lit. Les relire ici permet de poser au système la
+    question la plus élémentaire qu'on ne lui avait jamais posée : **reproduit-il
+    ses propres définitions ?**
+    """
+    import re
+
+    resultat: dict[str, dict[str, float]] = {}
+    axe_courant: str | None = None
+    for ligne in prompt.splitlines():
+        entete = re.match(r"\s*\d+\.\s+(\w+)\s+—", ligne)
+        if entete:
+            axe_courant = entete.group(1)
+            continue
+        declaration = re.match(r"\s*Anchors:\s*(.+)", ligne)
+        if declaration and axe_courant:
+            paires: dict[str, float] = {}
+            for morceau in declaration.group(1).rstrip(".").split(","):
+                if "=" not in morceau:
+                    continue
+                titre, valeur = morceau.rsplit("=", 1)
+                with contextlib.suppress(ValueError):
+                    paires[_normaliser(titre)] = float(valeur.strip())
+            resultat[axe_courant] = paires
+            axe_courant = None
+    return resultat
+
+
+def _normaliser(titre: str) -> str:
+    """Un titre comparable : minuscules, sans ponctuation ni article initial."""
+    import re
+
+    net = re.sub(r"[^a-z0-9 ]+", "", titre.strip().lower())
+    return re.sub(r"^(the|a|an|le|la|les|un|une) ", "", net).strip()
+
+
+async def mesurer_validite(conn: Any, rubric: dict[str, Any]) -> dict[str, Any]:
+    """La validité des notes, pas leur fidélité — la question jamais posée.
+
+    Tout ce que le projet a mesuré jusqu'ici est de la **fidélité** : le juge
+    d'accord avec lui-même (0,37), la régression d'accord avec le juge (0,84).
+    Ça établit qu'un thermomètre rend toujours la même valeur, pas qu'elle soit
+    la bonne. Un thermomètre déréglé de trois degrés est parfaitement fidèle.
+
+    Trois angles, tous gratuits, tous imparfaits séparément :
+
+    * **les ancres** — le barème déclare 24 œuvres de référence avec leur note.
+      Le juge les reproduit-il ? C'est la validité interne : un système qui ne
+      retrouve pas ses propres définitions ne mesure rien de défini ;
+    * **les genres TMDB** — critère extérieur, produit par d'autres, sans
+      rapport avec ce barème. Les œuvres d'action doivent scorer plus haut en
+      `action` que les autres. Écart nul = l'axe ne mesure rien de
+      reconnaissable ; écart total = il recopie le genre au lieu du ton, ce que
+      le barème interdit ;
+    * **le contre-juge** — Haiku, autre famille de modèle, sur le même dossier.
+      Un accord entre deux lignées est le seul indice qu'on ne mesure pas la
+      lubie d'un modèle.
+
+    Aucun des trois ne prouve la validité. Un désaccord franc sur l'un des
+    trois, en revanche, la réfute — et c'est ce qu'on cherche : de quoi savoir
+    si « action 5,5 » est une mesure ou une décoration.
+    """
+    axes: list[str] = rubric["axes"]
+    by_work, infos = await _notes_du_bareme(conn, rubric["version"])
+    oeuvres = list(by_work)
+
+    # --- 1. Les ancres -------------------------------------------------------
+    ancres = _ancres_du_bareme(rubric["prompt"])
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            -- Deux titres par œuvre, et il en faut deux : les ancres du
+            -- barème sont en anglais (« The Haunting of Hill House »), le
+            -- pivot garde souvent le titre d'affichage francisé.
+            select o.id as oeuvre_id, c.original_name, o.titre
+            from sourcing.oeuvre o
+            join sourcing.tmdb_catalog c on c.univers = o.univers and c.id = o.id_tmdb
+            where o.id = any(%s)
+            """,
+            (oeuvres,),
+        )
+        titres = await cur.fetchall()
+    par_titre: dict[str, int] = {}
+    for row in titres:
+        for brut in (row["original_name"], row["titre"]):
+            if brut:
+                par_titre.setdefault(_normaliser(brut), row["oeuvre_id"])
+
+    bilan_ancres: list[dict[str, Any]] = []
+    for axe in axes:
+        ecarts: list[tuple[str, float, float]] = []
+        for titre, attendu in ancres.get(axe, {}).items():
+            oeuvre = par_titre.get(titre)
+            rendu = by_work.get(oeuvre, {}).get(axe) if oeuvre else None
+            if rendu is not None:
+                ecarts.append((titre, attendu, rendu))
+        bilan_ancres.append(
+            {
+                "axe": axe,
+                "declarees": len(ancres.get(axe, {})),
+                "trouvees": len(ecarts),
+                "ecartMoyen": (
+                    round(sum(abs(a - r) for _, a, r in ecarts) / len(ecarts), 2)
+                    if ecarts
+                    else None
+                ),
+                "pire": (
+                    max(
+                        ({"titre": t, "declare": a, "rendu": r} for t, a, r in ecarts),
+                        key=lambda e: abs(float(e["declare"]) - float(e["rendu"])),
+                    )
+                    if ecarts
+                    else None
+                ),
+            }
+        )
+
+    # --- 2. Le critère extérieur : les genres --------------------------------
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            with fiche as (
+                select distinct on (o.id) o.id as oeuvre_id, r.payload
+                from sourcing.oeuvre o
+                join sourcing.raw_source r
+                  on r.source = 'tmdb'
+                 and r.source_id = o.id_tmdb::text
+                 and r.kind = case o.univers when 'movies' then 'movie' else 'tv' end
+                 and r.http_status between 200 and 299
+                 and r.payload is not null
+                where o.id = any(%s)
+                order by o.id, r.fetched_at desc
+            )
+            select oeuvre_id, g ->> 'name' as genre
+            from fiche, jsonb_array_elements(payload -> 'genres') g
+            """,
+            (oeuvres,),
+        )
+        lignes = await cur.fetchall()
+    genres: dict[int, set[str]] = {}
+    for row in lignes:
+        if row["genre"]:
+            genres.setdefault(row["oeuvre_id"], set()).add(row["genre"])
+
+    bilan_genres: list[dict[str, Any]] = []
+    for axe in axes:
+        attendus = GENRES_ATTENDUS.get(axe, set())
+        avec = [n[axe] for o, n in by_work.items() if axe in n and genres.get(o, set()) & attendus]
+        sans = [
+            n[axe]
+            for o, n in by_work.items()
+            if axe in n and o in genres and not (genres[o] & attendus)
+        ]
+        bilan_genres.append(
+            {
+                "axe": axe,
+                "genres": sorted(attendus),
+                "avec": len(avec),
+                "moyenneAvec": round(sum(avec) / len(avec), 2) if avec else None,
+                "moyenneSans": round(sum(sans) / len(sans), 2) if sans else None,
+                "ecart": (
+                    round(sum(avec) / len(avec) - sum(sans) / len(sans), 2)
+                    if avec and sans
+                    else None
+                ),
+            }
+        )
+
+    # --- 3. Le contre-juge ---------------------------------------------------
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select distinct on (t.oeuvre_id) t.oeuvre_id, t.claude
+            from notation.training_run t
+            where t.rubric_version = %s and t.claude is not null
+            order by t.oeuvre_id, t.created_at desc
+            """,
+            (rubric["version"],),
+        )
+        contre = await cur.fetchall()
+
+    ecarts_juges: dict[str, list[float]] = {axe: [] for axe in axes}
+    for row in contre:
+        verdicts = (row["claude"] or {}).get("scores") or row["claude"] or {}
+        for axe in axes:
+            entree = verdicts.get(axe)
+            autre = entree.get("score") if isinstance(entree, dict) else entree
+            propre = by_work.get(row["oeuvre_id"], {}).get(axe)
+            if isinstance(autre, int | float) and propre is not None:
+                ecarts_juges[axe].append(abs(float(autre) - propre))
+
+    bilan_juges = [
+        {
+            "axe": axe,
+            "oeuvres": len(valeurs),
+            "ecartMoyen": round(sum(valeurs) / len(valeurs), 2) if valeurs else None,
+        }
+        for axe, valeurs in ecarts_juges.items()
+    ]
+
+    return {
+        "rubricVersion": rubric["version"],
+        "oeuvres": len(by_work),
+        "ancres": bilan_ancres,
+        "genres": bilan_genres,
+        "contreJuge": bilan_juges,
+        "contreJugeOeuvres": len(contre),
+    }

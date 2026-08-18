@@ -1498,3 +1498,35 @@ async def test_les_notes_ne_fusionnent_pas_le_film_et_la_serie_de_meme_id(
     assert by_work[oeuvre_film]["joie"] == 2.0
     assert infos[oeuvre_serie] == (550, "series")
     assert infos[oeuvre_film] == (550, "movies")
+
+
+def test_les_ancres_du_bareme_se_relisent_depuis_le_prompt() -> None:
+    """Les 24 oeuvres de reference vivent dans le texte du prompt.
+
+    C'est le juge qui les lit ; les relire ici permet de poser au systeme la
+    question la plus elementaire qu'on ne lui avait jamais posee — reproduit-il
+    ses propres definitions ? Un parseur qui rendrait un dictionnaire vide
+    ferait passer la mesure pour reussie sans avoir rien compare.
+    """
+    from fiv_admin.routes.training import _ancres_du_bareme, _normaliser
+
+    prompt = (
+        "blabla\n"
+        "1. joie — Joy. How much lightness.\n"
+        "   Anchors: Chernobyl = 1, Mad Men = 4, Parks and Recreation = 10.\n"
+        "2. peur — Fear. How much dread.\n"
+        "   Anchors: Downton Abbey = 1, The Haunting of Hill House = 10.\n"
+    )
+    ancres = _ancres_du_bareme(prompt)
+
+    assert set(ancres) == {"joie", "peur"}
+    assert ancres["joie"]["chernobyl"] == 1.0
+    assert ancres["joie"]["mad men"] == 4.0
+    assert ancres["joie"]["parks and recreation"] == 10.0
+    # L'article initial saute : le catalogue ecrit « Haunting of Hill House »
+    # aussi souvent que « The Haunting of Hill House ».
+    assert ancres["peur"]["haunting of hill house"] == 10.0
+
+    assert _normaliser("The Good Place") == "good place"
+    assert _normaliser("Grey's Anatomy") == "greys anatomy"
+    assert _normaliser("  24  ") == "24"

@@ -726,6 +726,111 @@ def training_corpus_export(
     _run(run())
 
 
+@training_app.command("validite")
+def training_validite(
+    bareme: Annotated[
+        str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
+    ] = None,
+) -> None:
+    """Les notes mesurent-elles quelque chose ? — la validité, pas la fidélité.
+
+    Tout le reste du projet mesure la **fidélité** : le juge d'accord avec
+    lui-même (0,37), la régression d'accord avec le juge (0,84). Ça établit
+    qu'on rend toujours la même valeur, pas qu'elle soit la bonne — un
+    thermomètre déréglé de trois degrés est parfaitement fidèle.
+
+    Trois angles, gratuits, imparfaits séparément et convergents ensemble :
+    les ancres du barème (le système reproduit-il ses propres définitions ?),
+    les genres TMDB (critère extérieur, produit par d'autres), et le
+    contre-juge Haiku (autre famille de modèle sur le même dossier).
+
+    Aucun ne prouve la validité. Un désaccord franc sur l'un des trois la
+    réfute — et c'est ce qu'on cherche : savoir si « action 5,5 » est une
+    mesure ou une décoration.
+    """
+    from fiv_admin.routes.training import PasAssezDOeuvres, _rubric, mesurer_validite
+
+    settings = get_settings()
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            if bareme:
+                rubric = await _rubric(conn, bareme)
+            else:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric"
+                        " order by created_at desc limit 1"
+                    )
+                    rubric = await cur.fetchone()
+                if rubric is None:
+                    typer.echo("aucun barème en base.")
+                    raise typer.Exit(1)
+
+            typer.echo(f"barème {rubric['version']} — lecture des notes…")
+            try:
+                bilan = await mesurer_validite(conn, rubric)
+            except PasAssezDOeuvres as exc:
+                typer.echo(f"ERREUR : {exc}")
+                raise typer.Exit(1) from exc
+
+            typer.echo(f"\n{bilan['oeuvres']} œuvre(s) notée(s).\n")
+
+            typer.echo("1. LES ANCRES — le barème reproduit-il ses propres définitions ?\n")
+            typer.echo(f"  {'axe':<11}{'ancres':>8}{'écart':>8}   le plus loin")
+            for a in bilan["ancres"]:
+                ecart = f"{a['ecartMoyen']:.2f}" if a["ecartMoyen"] is not None else "—"
+                trouvees = f"{a['trouvees']}/{a['declarees']}"
+                pire = (
+                    f"{a['pire']['titre']} : {a['pire']['declare']:.0f} déclaré,"
+                    f" {a['pire']['rendu']:.1f} rendu"
+                    if a["pire"]
+                    else "—"
+                )
+                typer.echo(f"  {a['axe']:<11}{trouvees:>8}{ecart:>8}   {pire}")
+            typer.echo(
+                "\n  Au-delà de 1,5 d'écart, la définition n'est pas suivie :"
+                "\n  le juge note autre chose que ce que le barème décrit."
+            )
+
+            typer.echo("\n2. LES GENRES TMDB — critère extérieur, produit par d'autres\n")
+            typer.echo(f"  {'axe':<11}{'œuvres':>8}{'avec':>7}{'sans':>7}{'écart':>8}   genres")
+            for g in bilan["genres"]:
+                avec = f"{g['moyenneAvec']:.2f}" if g["moyenneAvec"] is not None else "—"
+                sans = f"{g['moyenneSans']:.2f}" if g["moyenneSans"] is not None else "—"
+                ecart = f"{g['ecart']:+.2f}" if g["ecart"] is not None else "—"
+                typer.echo(
+                    f"  {g['axe']:<11}{g['avec']:>8}{avec:>7}{sans:>7}{ecart:>8}"
+                    f"   {', '.join(g['genres'])[:38]}"
+                )
+            typer.echo(
+                "\n  Un écart proche de zéro dirait que l'axe ne mesure rien que"
+                "\n  quelqu'un d'autre reconnaîtrait. Un écart énorme dirait qu'il"
+                "\n  recopie le genre, ce que le barème interdit explicitement."
+            )
+
+            typer.echo(
+                f"\n3. LE CONTRE-JUGE — Haiku, autre famille, même dossier"
+                f"  ({bilan['contreJugeOeuvres']} œuvre(s))\n"
+            )
+            if not bilan["contreJugeOeuvres"]:
+                typer.echo(
+                    "  Aucune contre-note en base. C'est le point aveugle le plus"
+                    "\n  coûteux : sans second juge, rien ne distingue une mesure"
+                    "\n  d'une lubie propre à une lignée de modèles."
+                )
+            else:
+                for j in bilan["contreJuge"]:
+                    ecart = f"{j['ecartMoyen']:.2f}" if j["ecartMoyen"] is not None else "—"
+                    typer.echo(f"  {j['axe']:<11}{j['oeuvres']:>6} œuvres   écart moyen {ecart}")
+                typer.echo(
+                    "\n  À comparer au bruit propre du juge (0,37) : un écart du même"
+                    "\n  ordre dit que les deux familles voient la même chose."
+                )
+
+    _run(run())
+
+
 @training_app.command("diagnostic")
 def training_diagnostic(
     bareme: Annotated[
