@@ -2197,6 +2197,10 @@ GENRES_ATTENDUS = {
         "Fantastique",
         "Science Fiction",
         "Science-Fiction",
+        # Le nom TV francais, que la premiere table manquait : 356 oeuvres
+        # figuraient parmi les orphelins alors qu'elles appartiennent a `reve`.
+        # La ligne des orphelins a servi des son premier passage.
+        "Science-Fiction & Fantastique",
         "Animation",
     },
     "tristesse": {"Drama", "Drame"},
