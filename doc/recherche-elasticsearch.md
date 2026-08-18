@@ -27,7 +27,7 @@ panne), chaque route retombe sur son `ILIKE` historique, et un disjoncteur de
 la réponse de l'API porte `searchEngine: "es" | "sql"` pour dire d'où vient la
 liste.
 
-## 2. L'architecture en cinq décisions
+## 2. L'architecture en six décisions
 
 **Un index par univers** (`catalog-series`, `catalog-movies`), pas un index
 commun : les ids TMDB se chevauchent entre univers (1399 = *Game of Thrones*
@@ -57,6 +57,15 @@ mêmes filtres, et le total arrive avec la page là où le SQL payait un
 au SQL, et c'est un choix : les filtres d'état (`fetch_state` bouge à chaque
 passe) et le tri « fraîcheur » du tableau (sa jointure interne ne liste que
 le déjà-regardé, une sémantique que l'index n'a pas).
+
+**Les facettes viennent de l'index, pas d'une constante.** Le filtre par
+genre de la grille se peuple par une agrégation `terms` (`/api/catalog/genres`)
+— donc des genres que le catalogue porte vraiment, avec leur compte. Une liste
+écrite en dur mentirait le jour où TMDB en ajoute un. Plusieurs genres cochés
+se lisent en **OU** : un ET viderait la liste dès le deuxième, la plupart des
+œuvres n'en portant que deux ou trois. Les libellés sont en français — les
+fiches sont collectées en `fr-FR`, et le filtre est exact, « Comedie » sans
+accent ne trouve rien.
 
 **Jamais `popularity` dans le classement.** Le dictionnaire de données la
 disqualifie (biais occidental, facteur 6 contre l'écriture arabe) ; le boost

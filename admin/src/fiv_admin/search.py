@@ -210,12 +210,18 @@ def _filtres(
     with_poster: bool = False,
     with_overview: bool = False,
     min_popularity: float | None = None,
+    genres: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Les filtres communs à la recherche et au parcours — les mêmes clauses
     que le `where` SQL qu'ils remplacent."""
     filtres: list[dict[str, Any]] = []
     if fiche is not None:
         filtres.append({"term": {"fiche": fiche}})
+    if genres:
+        # `terms` = un OU : « comédie OU drame ». C'est ce qu'on attend d'une
+        # liste à cocher — un ET vide la liste dès le deuxième genre coché,
+        # et la plupart des œuvres n'en portent que deux ou trois.
+        filtres.append({"terms": {"genres": list(genres)}})
     if with_poster:
         filtres.append({"term": {"has_poster": True}})
     if with_overview:
@@ -247,6 +253,7 @@ def corps_liste(
     with_poster: bool = False,
     with_overview: bool = False,
     min_popularity: float | None = None,
+    genres: Sequence[str] | None = None,
     taille: int,
     depuis: int = 0,
 ) -> dict[str, Any]:
@@ -276,6 +283,7 @@ def corps_liste(
                     with_poster=with_poster,
                     with_overview=with_overview,
                     min_popularity=min_popularity,
+                    genres=genres,
                 )
             }
         },
@@ -294,6 +302,7 @@ def corps_recherche(
     with_poster: bool = False,
     with_overview: bool = False,
     min_popularity: float | None = None,
+    genres: Sequence[str] | None = None,
     taille: int,
     depuis: int = 0,
 ) -> dict[str, Any]:
@@ -314,6 +323,7 @@ def corps_recherche(
         with_poster=with_poster,
         with_overview=with_overview,
         min_popularity=min_popularity,
+        genres=genres,
     )
 
     devrait: list[dict[str, Any]] = [
@@ -415,6 +425,7 @@ class Recherche:
         with_poster: bool = False,
         with_overview: bool = False,
         min_popularity: float | None = None,
+        genres: Sequence[str] | None = None,
         page: int,
         page_size: int,
     ) -> PageIds | None:
@@ -434,6 +445,7 @@ class Recherche:
                 with_poster=with_poster,
                 with_overview=with_overview,
                 min_popularity=min_popularity,
+                genres=genres,
                 taille=page_size,
                 depuis=depuis,
             ),
@@ -473,6 +485,7 @@ class Recherche:
         with_poster: bool = False,
         with_overview: bool = False,
         min_popularity: float | None = None,
+        genres: Sequence[str] | None = None,
         page: int,
         page_size: int,
     ) -> PageIds | None:
@@ -492,6 +505,7 @@ class Recherche:
                 with_poster=with_poster,
                 with_overview=with_overview,
                 min_popularity=min_popularity,
+                genres=genres,
                 taille=page_size,
                 depuis=depuis,
             ),
@@ -528,6 +542,42 @@ class Recherche:
                 depuis=depuis,
             ),
         )
+
+    async def genres(self, media: Media) -> list[dict[str, Any]] | None:
+        """Les genres présents dans l'univers, avec leur nombre d'œuvres.
+
+        Une agrégation `terms` sur un champ `keyword` : les doc values sont
+        déjà en mémoire, ça se compte en millisecondes même sur 1,2 M de
+        films. C'est la bonne source pour peupler une liste à cocher — elle
+        montre ce que le catalogue contient VRAIMENT, plutôt qu'une table de
+        genres figée dans le code qui divergerait le jour où TMDB en ajoute
+        un.
+
+        `fiche: true` : la grille ne montre que le collecté, la liste doit
+        compter pareil.
+        """
+        if self._client is None or not self.active:
+            return None
+        try:
+            reponse = await self._client.post(
+                f"/{alias_de(media)}/_search",
+                json={
+                    "size": 0,
+                    "query": {"bool": {"filter": [{"term": {"fiche": True}}]}},
+                    "aggs": {
+                        # 100 : très au-dessus des ~20 genres de TMDB, donc
+                        # aucun risque de troncature silencieuse.
+                        "genres": {"terms": {"field": "genres", "size": 100}}
+                    },
+                },
+            )
+            reponse.raise_for_status()
+        except httpx.HTTPError as exc:
+            self._coupe_jusqua = time.monotonic() + DISJONCTEUR_SECONDES
+            log.warning("Elasticsearch indisponible (%s) — genres lus en SQL.", exc)
+            return None
+        paniers = reponse.json()["aggregations"]["genres"]["buckets"]
+        return [{"name": p["key"], "count": p["doc_count"]} for p in paniers]
 
     async def synchroniser_tout(
         self, conn: psycopg.AsyncConnection

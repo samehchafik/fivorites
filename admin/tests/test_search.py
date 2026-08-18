@@ -207,6 +207,22 @@ class TestCorpsRecherche:
         assert {"range": {"popularity": {"gte": 2.5}}} in filtres
         assert corps["from"] == 48
 
+    def test_genres_en_ou(self) -> None:
+        """Plusieurs genres cochés = `terms`, donc un OU. Un ET viderait la
+        liste dès le deuxième : la plupart des œuvres n'en portent que deux."""
+        corps = corps_recherche("x", genres=["Comédie", "Drame"], taille=10, depuis=0)
+        filtres = corps["query"]["function_score"]["query"]["bool"]["filter"]
+        assert {"terms": {"genres": ["Comédie", "Drame"]}} in filtres
+
+    def test_genres_vides_ne_filtrent_pas(self) -> None:
+        """Aucun genre coché ne doit pas produire un `terms` vide, qui ne
+        matcherait rien du tout — la grille se viderait sans raison."""
+        for vide in (None, [], ()):
+            corps = corps_liste(
+                [("air_date", True)], tiebreak_descendant=True, genres=vide, taille=10
+            )
+            assert corps["query"]["bool"]["filter"] == []
+
     def test_le_classement_ignore_la_popularite(self) -> None:
         """Le biais occidental de `popularity` (dictionnaire de données, §4)
         ne doit pas entrer dans la pertinence — la note bayésienne, si."""
@@ -444,6 +460,51 @@ class TestExtraction:
             )
             await cur.execute(_IDS_CHANGES, params)
             assert sorted(row[0] for row in await cur.fetchall()) == [1399, 5000]
+
+    async def test_filtre_genres_sql_et_facettes(self, conn: psycopg.AsyncConnection) -> None:
+        """Le repli SQL du filtre par genre, et la liste qui peuple la case à
+        cocher. Les libellés sont ceux du payload, donc en français."""
+        from fiv_admin.catalog import CardQuery, fetch_cards, genres_disponibles, refresh_cards
+
+        for id_tmdb, nom, genres in (
+            (1, "Une comédie", ["Comédie"]),
+            (2, "Un drame", ["Drame"]),
+            (3, "Les deux", ["Comédie", "Drame"]),
+        ):
+            await conn.execute(
+                """
+                insert into raw_source (source, kind, source_id, lang, http_status,
+                                        payload, payload_sha256)
+                values ('tmdb', 'tv', %s, 'fr-FR', 200, %s::jsonb, %s)
+                """,
+                (
+                    str(id_tmdb),
+                    json.dumps(
+                        {
+                            "name": nom,
+                            "genres": [{"id": i, "name": g} for i, g in enumerate(genres)],
+                        }
+                    ),
+                    bytes([id_tmdb]),
+                ),
+            )
+        await refresh_cards(conn)
+
+        facettes = await genres_disponibles(conn, "tv")
+        assert {f["name"]: f["count"] for f in facettes} == {"Comédie": 2, "Drame": 2}
+
+        async def ids(*genres: str) -> list[int]:
+            rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR", genres=genres))
+            return sorted(row["id"] for row in rows)
+
+        assert await ids("Comédie") == [1, 3]
+        assert await ids("Drame") == [2, 3]
+        # Un OU, pas un ET : l'union, pas l'intersection.
+        assert await ids("Comédie", "Drame") == [1, 2, 3]
+        # Aucun genre = aucun filtre, et surtout pas une liste vide.
+        assert await ids() == [1, 2, 3]
+        # Le filtre est exact : pas de repli sans accent.
+        assert await ids("Comedie") == []
 
     async def test_fiche_hors_inventaire(self, conn: psycopg.AsyncConnection) -> None:
         """Une œuvre projetée sans ligne d'inventaire — import manuel, export

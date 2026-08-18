@@ -20,12 +20,19 @@ from fiv_admin.catalog import (
     fetch_rich,
     fetch_season,
     fetch_work,
+    genres_disponibles,
     refresh_cards,
 )
 from fiv_admin.deps import Conn, CurrentUser, Search
 from fiv_admin.media import DEFAULT_MEDIA, MEDIA
 
 router = APIRouter()
+
+# Le filtre par genre, en paramètre répété. Sorti en constante parce qu'un
+# `Query(...)` écrit dans un défaut d'argument est un appel évalué à l'import,
+# et qu'une liste mutable partagée entre requêtes est le genre de piège qui ne
+# se voit qu'en production.
+GENRES_QUERY = Query(default=[], description="Genres retenus, en OU. Répétable.")
 
 
 def _media(cle: str) -> str:
@@ -56,6 +63,11 @@ async def cards(
     order2: str = Query(default="desc", pattern="^(asc|desc)$"),
     withPoster: bool = Query(default=False),
     withOverview: bool = Query(default=False),
+    # Répété plutôt que séparé par des virgules : plusieurs genres de TMDB en
+    # contiennent des caractères qu'un découpage maison finirait par mal
+    # traiter (« Action & Adventure », « Sci-Fi & Fantasy »). `?genres=Comédie
+    # &genres=Drame` ne demande aucune analyse.
+    genres: list[str] = GENRES_QUERY,
     page: int = Query(default=1, ge=1),
     pageSize: int = Query(default=24, ge=1, le=96),
 ) -> dict[str, Any]:
@@ -74,6 +86,7 @@ async def cards(
         descending2=order2 == "desc",
         with_poster=withPoster,
         with_overview=withOverview,
+        genres=tuple(g for g in genres if g.strip()),
         page=page,
         page_size=pageSize,
     )
@@ -93,6 +106,7 @@ async def cards(
             with_poster=q.with_poster,
             with_overview=q.with_overview,
             min_popularity=q.min_popularity,
+            genres=q.genres,
             page=q.page,
             page_size=q.page_size,
         )
@@ -103,6 +117,7 @@ async def cards(
             with_poster=q.with_poster,
             with_overview=q.with_overview,
             min_popularity=q.min_popularity,
+            genres=q.genres,
             page=q.page,
             page_size=q.page_size,
         )
@@ -127,6 +142,28 @@ async def cards(
         # deux causes très différentes — rien de collecté, ou une projection
         # jamais rafraîchie — et le front doit pouvoir les distinguer.
         "projection": await cards_state(conn, media),
+    }
+
+
+@router.get("/catalog/genres")
+async def genres(
+    user: CurrentUser,
+    conn: Conn,
+    recherche: Search,
+    media: str = Query(default=DEFAULT_MEDIA, max_length=16),
+) -> dict[str, Any]:
+    """Les genres présents dans l'univers, du plus fourni au moins fourni.
+
+    Lus dans l'index quand il répond — une agrégation `terms`, quelques
+    millisecondes — et dans la projection sinon. Jamais une liste figée dans
+    le code : c'est TMDB qui décide de ses genres, et une constante finirait
+    par mentir. Les libellés sont ceux du payload, donc en français.
+    """
+    cle = _media(media)
+    depuis_es = await recherche.genres(MEDIA[cle])
+    return {
+        "items": depuis_es if depuis_es is not None else await genres_disponibles(conn, cle),
+        "source": "es" if depuis_es is not None else "sql",
     }
 
 

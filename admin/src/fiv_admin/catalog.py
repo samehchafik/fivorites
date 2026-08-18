@@ -148,6 +148,11 @@ class CardQuery:
     # une série sans texte ne servira à rien au lot 5, quelle que soit son
     # affiche.
     with_overview: bool = False
+    # Les genres retenus, en OU : « comédie ou drame ». Vide = tous. Les
+    # libellés sont ceux du payload, donc **en français** — les fiches sont
+    # collectées en `fr-FR` (voir 013_movie_card.sql et la table de genres de
+    # la notation, qui a appris la leçon dans l'autre sens).
+    genres: tuple[str, ...] = ()
     page: int = 1
     page_size: int = 24
 
@@ -287,6 +292,7 @@ async def fetch_cards(
         "like": f"%{q.search}%" if q.search else None,
         "search_id": int(q.search) if q.search and q.search.isdigit() else None,
         "min_popularity": q.min_popularity,
+        "genres": list(q.genres) or None,
     }
 
     if ids is not None:
@@ -323,6 +329,15 @@ async def fetch_cards(
                 sql.SQL("nullif(btrim(v.overview), '') is not null")
                 if q.with_overview
                 else sql.SQL("true"),
+                # Les genres vivent en jsonb dans la projection — `[{id, name}]`.
+                # Sans index dessus, c'est un parcours ; c'est justement ce
+                # qu'Elasticsearch évite, et ce repli n'est là que pour les
+                # moments où il ne répond pas.
+                sql.SQL(
+                    "(%(genres)s::text[] is null or exists ("
+                    " select 1 from jsonb_array_elements(coalesce(v.genres, '[]'::jsonb)) g"
+                    " where g ->> 'name' = any (%(genres)s)))"
+                ),
             ]
         )
 
@@ -990,6 +1005,33 @@ async def fetch_season(
             for episode in row["episodes"]
         ],
     }
+
+
+async def genres_disponibles(
+    conn: psycopg.AsyncConnection, media: str = DEFAULT_MEDIA
+) -> list[dict[str, Any]]:
+    """Les genres de l'univers et leur nombre d'œuvres, lus en SQL.
+
+    Le repli de l'agrégation Elasticsearch (voir `search.py`). Un parcours de
+    la projection entière : acceptable parce que la liste se charge une fois
+    par univers, pas à chaque page — et parce qu'ES fait le travail dès qu'il
+    répond.
+    """
+    univers = MEDIA[media]
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            sql.SQL(
+                """
+                select g ->> 'name' as name, count(*) as count
+                from admin.{vue} v,
+                     jsonb_array_elements(coalesce(v.genres, '[]'::jsonb)) g
+                where nullif(btrim(g ->> 'name'), '') is not null
+                group by 1
+                order by 2 desc, 1
+                """
+            ).format(vue=sql.Identifier(univers.card_view))
+        )
+        return [{"name": row["name"], "count": int(row["count"])} for row in await cur.fetchall()]
 
 
 async def refresh_cards(conn: psycopg.AsyncConnection) -> int:

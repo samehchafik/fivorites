@@ -4,6 +4,7 @@ import type {
   CardsResponse,
   Detail,
   Dossier,
+  GenresResponse,
   ItemsResponse,
   Meta,
   Phase1Result,
@@ -51,11 +52,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-type QueryValue = string | number | boolean | null | undefined
+type QueryValue = string | number | boolean | null | undefined | string[]
 
 function query(params: Record<string, QueryValue>): string {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
+    // Un tableau devient un paramètre RÉPÉTÉ (`?genres=A&genres=B`), jamais
+    // une chaîne jointe : plusieurs genres de TMDB portent des caractères
+    // qu'un découpage par virgule finirait par casser — « Action &
+    // Adventure », « Sci-Fi & Fantasy ».
+    if (Array.isArray(value)) {
+      for (const entry of value) if (entry !== '') search.append(key, entry)
+      continue
+    }
     if (value !== null && value !== undefined && value !== '') search.set(key, String(value))
   }
   return search.toString()
@@ -94,6 +103,11 @@ export const api = {
     request<Detail>(`/api/acquisition/items/${id}?${query({ media })}`),
 
   cards: (params: CardsParams) => request<CardsResponse>(`/api/catalog/cards?${query(params)}`),
+
+  /** Les genres présents dans l'univers, avec leur nombre d'œuvres. Vient
+   *  d'une agrégation Elasticsearch, donc du contenu réel du catalogue — pas
+   *  d'une liste figée qui divergerait le jour où TMDB en ajoute un. */
+  genres: (media: string) => request<GenresResponse>(`/api/catalog/genres?${query({ media })}`),
 
   work: (id: number, lang: string, media: string) =>
     request<Work>(`/api/catalog/works/${id}?${query({ lang, media })}`),
@@ -196,6 +210,8 @@ export interface CardsParams extends Record<string, QueryValue> {
   withPoster?: boolean
   /** Ne garder que les séries ayant un synopsis. */
   withOverview?: boolean
+  /** Genres retenus, en OU : « comédie ou drame ». Vide = tous. */
+  genres?: string[]
   page: number
   pageSize: number
 }

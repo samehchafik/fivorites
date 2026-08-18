@@ -535,3 +535,15 @@ export interface RichSources {
   } | null
   sources: RichGroup[]
 }
+
+/** Un genre du catalogue et le nombre d'œuvres qui le portent. */
+export interface GenreFacet {
+  name: string
+  count: number
+}
+
+export interface GenresResponse {
+  items: GenreFacet[]
+  /** `es` ou `sql` — d'où vient le décompte. */
+  source: string
+}

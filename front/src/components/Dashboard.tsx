@@ -21,7 +21,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { ApiError, api } from '../api'
 import { formatNumber } from '../display'
-import type { Account, CardsResponse, ItemsResponse, Meta, ModalTab, Summary } from '../types'
+import type {
+  Account,
+  CardsResponse,
+  GenresResponse,
+  ItemsResponse,
+  Meta,
+  ModalTab,
+  Summary,
+} from '../types'
 import { readUrl, writeUrl } from '../urlState'
 import { AcquisitionTable } from './AcquisitionTable'
 import { DetailDrawer } from './DetailDrawer'
@@ -56,6 +64,7 @@ const DEFAULT_GRID: GridState = {
   order2: 'desc',
   withPoster: false,
   withOverview: false,
+  genres: [],
   pageSize: 24,
 }
 
@@ -172,6 +181,16 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     enabled,
   })
 
+  // Les genres de l'univers, pour peupler la liste à cocher. Requête séparée
+  // et gardée cinq minutes : la liste ne bouge qu'au rythme des collectes,
+  // pas à celui de la navigation.
+  const genres = useQuery<GenresResponse>({
+    queryKey: ['genres', media],
+    queryFn: () => api.genres(media),
+    enabled,
+    staleTime: 5 * 60_000,
+  })
+
   const cards = useQuery<CardsResponse>({
     queryKey: [
       'cards',
@@ -184,6 +203,9 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       grid.order2,
       grid.withPoster,
       grid.withOverview,
+      // Joints : un tableau change d'identité à chaque rendu, et TanStack
+      // Query relancerait la requête en boucle si la clé n'était pas stable.
+      grid.genres.join('|'),
       gridPage,
       grid.pageSize,
     ],
@@ -198,6 +220,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
         order2: grid.order2,
         withPoster: grid.withPoster || undefined,
         withOverview: grid.withOverview || undefined,
+        genres: grid.genres,
         page: gridPage,
         pageSize: grid.pageSize,
       }),
@@ -457,6 +480,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
             <Tabs.Panel value="cards">
               <SeriesGrid
                 data={cards.data}
+                genres={genres.data?.items ?? []}
                 loading={cards.isLoading}
                 state={grid}
                 onState={setGrid}

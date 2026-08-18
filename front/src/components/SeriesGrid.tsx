@@ -4,6 +4,7 @@ import {
   Center,
   Checkbox,
   Group,
+  MultiSelect,
   Pagination,
   Paper,
   Select,
@@ -17,7 +18,7 @@ import {
 import { IconAlertTriangle, IconRefresh, IconSearch } from '@tabler/icons-react'
 
 import { formatDate, formatNumber } from '../display'
-import type { CardsResponse, Language } from '../types'
+import type { CardsResponse, GenreFacet, Language } from '../types'
 import { SeriesCard } from './SeriesCard'
 
 export const CARD_SORTS: { value: string; label: string }[] = [
@@ -114,11 +115,14 @@ export interface GridState {
   withPoster: boolean
   /** Ne lister que ce qui a un synopsis. */
   withOverview: boolean
+  /** Genres retenus, en OU. Vide = tous. */
+  genres: string[]
   pageSize: number
 }
 
 export function SeriesGrid({
   data,
+  genres,
   loading,
   state,
   onState,
@@ -132,6 +136,7 @@ export function SeriesGrid({
   refreshing,
 }: {
   data: CardsResponse | undefined
+  genres: GenreFacet[]
   loading: boolean
   state: GridState
   onState: (next: GridState) => void
@@ -149,7 +154,11 @@ export function SeriesGrid({
 
   // Un filtre est « en place » dès qu'il peut retirer des lignes, qu'il en
   // retire ou non.
-  const filtreActif = state.search.trim() !== '' || state.withPoster || state.withOverview
+  const filtreActif =
+    state.search.trim() !== '' ||
+    state.withPoster ||
+    state.withOverview ||
+    state.genres.length > 0
 
   return (
     <Stack gap="md">
@@ -221,6 +230,30 @@ export function SeriesGrid({
             onChange={(next) => next && onState({ ...state, pageSize: Number(next) })}
             allowDeselect={false}
             w={100}
+          />
+
+          {/* Les genres viennent d'une agrégation sur l'index : ce sont ceux
+              que le catalogue porte VRAIMENT, avec leur compte, plutôt qu'une
+              liste écrite en dur qui mentirait le jour où TMDB en ajoute un.
+              Plusieurs genres cochés se lisent en OU — « comédie ou drame » —
+              parce qu'un ET viderait la liste dès le deuxième, la plupart des
+              œuvres n'en portant que deux ou trois. */}
+          <MultiSelect
+            label="Genres"
+            placeholder={state.genres.length ? undefined : 'tous'}
+            description={state.genres.length > 1 ? "l'un OU l'autre" : undefined}
+            data={genres.map((genre) => ({
+              value: genre.name,
+              label: `${genre.name} (${formatNumber(genre.count)})`,
+            }))}
+            value={state.genres}
+            onChange={(next) => onState({ ...state, genres: next })}
+            searchable
+            clearable
+            // Au-delà, la barre de filtres se fait manger par les étiquettes ;
+            // le compte prend le relais pour dire ce qui est coché.
+            maxValues={6}
+            w={260}
           />
 
           {/* Une vignette sans visuel n'est pas un défaut de la grille : TMDB
