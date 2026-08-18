@@ -78,15 +78,14 @@ async def cards(
         page_size=pageSize,
     )
 
-    # Une frappe de recherche passe par Elasticsearch : il filtre, classe par
-    # pertinence — tous titres, toutes langues — et rend les ids de la page ;
-    # Postgres n'a plus qu'à hydrater ces vignettes-là. Le tri demandé est
-    # alors ignoré : chercher, c'est demander la pertinence. S'il ne répond
-    # pas (absent, index pas construit, panne), l'ILIKE historique reprend —
-    # plus lent et unilingue, mais toujours juste.
-    moteur = "sql"
-    rows: list[dict[str, Any]] = []
-    total = 0
+    # Toute liste vient d'Elasticsearch quand il répond — la frappe comme le
+    # parcours. Une frappe est classée par pertinence (tous titres, toutes
+    # langues ; le tri demandé est ignoré : chercher, c'est demander la
+    # pertinence). Un parcours garde les tris et filtres de la grille, servis
+    # par les doc values — et le total arrive avec la page, là où le SQL
+    # payait un `count(*)` complet à chaque affichage. Dans les deux cas ES ne
+    # rend que des ids : Postgres hydrate les vignettes, comme toujours. ES
+    # muet = tout en SQL, comme avant.
     if q.search:
         page_es = await recherche.page_cards(
             MEDIA[q.media],
@@ -97,12 +96,23 @@ async def cards(
             page=q.page,
             page_size=q.page_size,
         )
-        if page_es is not None:
-            rows, _ = await fetch_cards(conn, q, ids=page_es.ids)
-            total = page_es.total
-            moteur = "es"
-    if moteur == "sql":
+    else:
+        page_es = await recherche.liste_cards(
+            MEDIA[q.media],
+            q.criteria,
+            with_poster=q.with_poster,
+            with_overview=q.with_overview,
+            min_popularity=q.min_popularity,
+            page=q.page,
+            page_size=q.page_size,
+        )
+    if page_es is not None:
+        rows, _ = await fetch_cards(conn, q, ids=page_es.ids)
+        total = page_es.total
+        moteur = "es"
+    else:
         rows, total = await fetch_cards(conn, q)
+        moteur = "sql"
 
     return {
         "items": rows,
@@ -111,8 +121,8 @@ async def cards(
         "pageSize": pageSize,
         "lang": lang,
         # D'où vient la liste — utile pour comprendre un classement, et pour
-        # voir d'un coup d'œil qu'un serveur cherche sans son ES.
-        "searchEngine": moteur if q.search else None,
+        # voir d'un coup d'œil qu'un serveur navigue sans son ES.
+        "searchEngine": moteur,
         # L'état de la projection accompagne chaque page : une grille vide a
         # deux causes très différentes — rien de collecté, ou une projection
         # jamais rafraîchie — et le front doit pouvoir les distinguer.
@@ -176,7 +186,19 @@ async def work_sources(
 
 
 @router.post("/catalog/refresh")
-async def refresh(user: CurrentUser, conn: Conn) -> dict[str, Any]:
-    """Recalcule la projection des vignettes depuis le brut."""
+async def refresh(user: CurrentUser, conn: Conn, recherche: Search) -> dict[str, Any]:
+    """Recalcule la projection des vignettes depuis le brut — puis rattrape
+    l'index de recherche dans la foulée.
+
+    L'enchaînement n'est pas décoratif : la synchronisation relit les
+    métadonnées de vignette DANS la projection, elle doit donc passer après
+    son recalcul. Best-effort — un refresh ne doit jamais échouer parce
+    qu'Elasticsearch tousse ; le bilan dit ce qui s'est passé, univers par
+    univers.
+    """
     total = await refresh_cards(conn)
-    return {"projected": total, **await cards_state(conn, DEFAULT_MEDIA)}
+    return {
+        "projected": total,
+        "search": await recherche.synchroniser_tout(conn),
+        **await cards_state(conn, DEFAULT_MEDIA),
+    }

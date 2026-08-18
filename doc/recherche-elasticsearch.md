@@ -38,12 +38,25 @@ s'ajouteront sans mapping fourre-tout.
 **Des index horodatés derrière un alias** : la réindexation construit
 `catalog-series-<horodatage>` à côté, bascule l'alias, supprime l'ancien —
 zéro coupure, le même contrat que `refresh materialized view concurrently`.
+Au quotidien l'index en place est **rattrapé par upsert** (`search sync`) :
+chaque œuvre collectée ou nouvellement exportée y entre sans reconstruction,
+grâce à un marqueur de reprise rangé dans l'index lui-même (`_meta`), qui
+meurt et renaît avec lui.
 
 **ES classe, Postgres hydrate.** Le document est minimal — titres, filtres
 (affiche, synopsis, popularité), note bayésienne — et la recherche ne rend que
 des ids ordonnés ; la page est hydratée par les requêtes SQL existantes
 (`array_position` préserve l'ordre). Une seule source de vérité pour
 l'affichage, pas de `nested`, pas de synchronisation de contenu.
+
+**Et pas seulement la recherche : le parcours aussi.** Sans texte tapé, les
+listes (grille et tableau, `status=all`) sont elles aussi servies par ES —
+mêmes tris que le SQL (`missing: _last` = `nulls last`, départage sur l'id),
+mêmes filtres, et le total arrive avec la page là où le SQL payait un
+`count(*)` complet du catalogue à chaque affichage. Deux exceptions restent
+au SQL, et c'est un choix : les filtres d'état (`fetch_state` bouge à chaque
+passe) et le tri « fraîcheur » du tableau (sa jointure interne ne liste que
+le déjà-regardé, une sémantique que l'index n'a pas).
 
 **Jamais `popularity` dans le classement.** Le dictionnaire de données la
 disqualifie (biais occidental, facteur 6 contre l'écriture arabe) ; le boost
@@ -119,20 +132,29 @@ sudo docker compose run --rm admin search reindex
 
 ## 5. Au quotidien
 
-* **Après une passe de collecte ou un `catalog refresh`** : `search reindex`.
-  L'index ne se met jamais à jour au fil de l'eau — il se reconstruit en
-  entier, comme la projection de vignettes. Jusque-là il est simplement en
-  retard, exactement comme la projection avant son refresh. Le gros du temps
-  part dans la relecture des payloads (les titres traduits ne vivent que dans
-  le brut) : comptez long sur le catalogue complet, c'est un traitement par
-  lots, pas une commande interactive.
+* **Les imports entrent seuls dans ES.** La passe nocturne enchaîne
+  `catalog refresh` puis `search sync`, et le bouton de rafraîchissement de
+  l'admin fait de même : tout ce qu'une passe de collecte ou un export a
+  touché est réextrait et upserté dans l'index en place — quelques secondes
+  pour un lendemain ordinaire. L'ordre compte : la synchronisation relit les
+  métadonnées de vignette dans la projection, donc **toujours après le
+  refresh**.
+* **`search reindex` reste la voie lourde**, pour trois cas seulement : la
+  première mise en service, un changement de mapping, et la purge des œuvres
+  disparues du catalogue (la synchronisation ajoute et met à jour, elle ne
+  retire pas). Le gros du temps part dans la relecture des payloads : comptez
+  long sur le catalogue complet, c'est un traitement par lots.
 * **`fiv-admin search status`** : santé, index en place, nombre de documents,
   taille. `docker compose run --rm admin search status` en production.
-* **La recherche « marche mais bizarrement »** : vérifier `searchEngine` dans
-  la réponse de `/api/catalog/cards`. `"sql"` = ES injoignable ou index
-  absent, le journal de l'API dit lequel (`Elasticsearch indisponible…`).
-* **Une œuvre collectée ne sort pas dans la recherche** : l'index date d'avant
-  sa collecte — `search reindex`.
+* **Les listes « marchent mais bizarrement »** : vérifier `searchEngine` dans
+  la réponse de `/api/catalog/cards` ou `/api/acquisition/items`. `"sql"` =
+  ES injoignable ou index absent, le journal de l'API dit lequel
+  (`Elasticsearch indisponible…`).
+* **Une œuvre importée ne sort pas** : `search sync` n'a pas encore tourné
+  depuis son import — le relancer, ou attendre la passe nocturne. Si la
+  commande répond « index sans marqueur », l'index date d'avant les
+  marqueurs : `search reindex` une fois, et la synchronisation prend le
+  relais.
 
 ## 6. Ce qui n'est pas couvert (encore)
 

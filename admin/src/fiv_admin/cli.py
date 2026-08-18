@@ -1054,6 +1054,74 @@ def search_reindex(
     _run(run())
 
 
+@search_app.command("sync")
+def search_sync(
+    univers: Annotated[
+        str,
+        typer.Option("--univers", help="series, movies, ou all (défaut)."),
+    ] = "all",
+    lot: Annotated[
+        int, typer.Option("--lot", min=50, max=5000, help="Documents par envoi bulk.")
+    ] = 500,
+) -> None:
+    """Rattrape l'index vivant : ce qui a été importé depuis le dernier passage.
+
+    C'est la commande du quotidien — la passe nocturne l'enchaîne après
+    `catalog refresh`, et le bouton de rafraîchissement de l'admin fait de
+    même. Chaque œuvre collectée, recollectée ou nouvellement exportée est
+    réextraite et upsertée dans l'index en place : pas de reconstruction, pas
+    de bascule, quelques secondes pour une passe ordinaire.
+
+    Ses limites sont celles d'un rattrapage : une œuvre disparue du catalogue
+    reste dans l'index, et un changement de mapping ne se rattrape pas —
+    `search reindex` pour les deux. À lancer APRÈS `catalog refresh` : les
+    métadonnées de vignette sont relues dans la projection.
+    """
+    import httpx
+
+    from fiv_admin.media import MEDIA
+    from fiv_admin.search import synchroniser
+
+    settings = get_settings()
+    if not settings.es_url:
+        typer.echo("ERREUR : ES_URL est vide — la recherche est désactivée.")
+        raise typer.Exit(1)
+
+    cibles = [m for m in MEDIA.values() if m.catalog_table is not None]
+    if univers != "all":
+        cibles = [m for m in cibles if m.univers == univers]
+        if not cibles:
+            typer.echo(f"ERREUR : univers inconnu ou sans catalogue : {univers}")
+            raise typer.Exit(1)
+
+    async def run() -> bool:
+        echec = False
+        async with httpx.AsyncClient(
+            base_url=settings.es_url, timeout=httpx.Timeout(600.0, connect=5.0)
+        ) as http:
+            try:
+                await http.get("/")
+            except httpx.HTTPError as exc:
+                typer.echo(f"ERREUR : Elasticsearch injoignable sur {settings.es_url} : {exc}")
+                raise typer.Exit(1) from exc
+
+            async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+                for media in cibles:
+                    bilan = await synchroniser(conn, http, media, lot=lot)
+                    if "erreur" in bilan:
+                        typer.echo(f"{media.univers} : ✗ {bilan['erreur']}")
+                        echec = True
+                    else:
+                        typer.echo(
+                            f"{media.univers} : {bilan['changees']} œuvre(s) changée(s), "
+                            f"{bilan['documents']} document(s) mis à jour → {bilan['index']}"
+                        )
+        return echec
+
+    if _run(run()):
+        raise typer.Exit(1)
+
+
 @search_app.command("status")
 def search_status() -> None:
     """La santé du service et les index de recherche en place."""

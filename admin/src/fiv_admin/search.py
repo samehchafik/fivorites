@@ -46,7 +46,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
+import unicodedata
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -166,6 +167,11 @@ def definition_index(univers: str) -> dict[str, Any]:
                 },
                 "name": {"type": "keyword", "index": False, "doc_values": False},
                 "original_name": {"type": "keyword", "index": False, "doc_values": False},
+                # Le tri alphabétique du parcours : `coalesce(name, original)`
+                # plié (minuscules, sans accents) à l'indexation — un keyword
+                # trié par ES l'est en points de code, le pliage rapproche
+                # l'ordre de celui d'une collation SQL.
+                "nom_tri": {"type": "keyword", "index": False},
                 "annee": {"type": "short"},
                 "first_air_date": {"type": "date", "format": "strict_date"},
                 "fetched_at": {"type": "date"},
@@ -198,6 +204,89 @@ def definition_index(univers: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _filtres(
+    *,
+    fiche: bool | None = None,
+    with_poster: bool = False,
+    with_overview: bool = False,
+    min_popularity: float | None = None,
+) -> list[dict[str, Any]]:
+    """Les filtres communs à la recherche et au parcours — les mêmes clauses
+    que le `where` SQL qu'ils remplacent."""
+    filtres: list[dict[str, Any]] = []
+    if fiche is not None:
+        filtres.append({"term": {"fiche": fiche}})
+    if with_poster:
+        filtres.append({"term": {"has_poster": True}})
+    if with_overview:
+        filtres.append({"term": {"has_overview": True}})
+    if min_popularity is not None:
+        filtres.append({"range": {"popularity": {"gte": min_popularity}}})
+    return filtres
+
+
+# Les tris que les routes connaissent → le champ ES qui les porte. Les clés
+# sont celles de `CARD_SORTS` (grille) et `SORTS` (acquisition) : la liste
+# reste fermée, comme côté SQL.
+TRIS: dict[str, str] = {
+    "air_date": "first_air_date",
+    "air_year": "annee",
+    "name": "nom_tri",
+    "popularity": "popularity",
+    "rating": "note_bayes",
+    "fetched": "fetched_at",
+    "id": "id_tmdb",
+}
+
+
+def corps_liste(
+    criteres: Sequence[tuple[str, bool]],
+    *,
+    tiebreak_descendant: bool,
+    fiche: bool | None = None,
+    with_poster: bool = False,
+    with_overview: bool = False,
+    min_popularity: float | None = None,
+    taille: int,
+    depuis: int = 0,
+) -> dict[str, Any]:
+    """Le corps `_search` d'un parcours sans texte : filtres, tri, pagination.
+
+    C'est ce qui fait d'ES le moteur de TOUTES les listes, pas seulement de la
+    recherche : les filtres et le tri sont servis par les doc values, et le
+    total — qui coûtait un `count(*)` complet à chaque page en SQL — est
+    rendu gratuitement avec la page.
+
+    `missing: _last` sur chaque critère : la traduction exacte du
+    `nulls last` du SQL — une œuvre sans note n'est pas « moyennement notée »,
+    elle va en fin de liste dans les deux sens. Le départage final sur l'id
+    est celui des requêtes SQL, même sens : sans lui, deux œuvres égales
+    pourraient changer de place entre deux pages.
+    """
+    tri: list[dict[str, Any]] = [
+        {TRIS[cle]: {"order": "desc" if descendant else "asc", "missing": "_last"}}
+        for cle, descendant in criteres
+    ]
+    tri.append({"id_tmdb": {"order": "desc" if tiebreak_descendant else "asc"}})
+    return {
+        "query": {
+            "bool": {
+                "filter": _filtres(
+                    fiche=fiche,
+                    with_poster=with_poster,
+                    with_overview=with_overview,
+                    min_popularity=min_popularity,
+                )
+            }
+        },
+        "sort": tri,
+        "from": depuis,
+        "size": taille,
+        "_source": False,
+        "track_total_hits": True,
+    }
+
+
 def corps_recherche(
     texte: str,
     *,
@@ -220,15 +309,12 @@ def corps_recherche(
     Un texte entièrement numérique cherche aussi l'id TMDB : c'est le contrat
     du champ de recherche depuis toujours (« titre ou id TMDB »).
     """
-    filtres: list[dict[str, Any]] = []
-    if fiche is not None:
-        filtres.append({"term": {"fiche": fiche}})
-    if with_poster:
-        filtres.append({"term": {"has_poster": True}})
-    if with_overview:
-        filtres.append({"term": {"has_overview": True}})
-    if min_popularity is not None:
-        filtres.append({"range": {"popularity": {"gte": min_popularity}}})
+    filtres = _filtres(
+        fiche=fiche,
+        with_poster=with_poster,
+        with_overview=with_overview,
+        min_popularity=min_popularity,
+    )
 
     devrait: list[dict[str, Any]] = [
         {"match": {"titres": {"query": texte, "operator": "and"}}},
@@ -379,6 +465,92 @@ class Recherche:
         # pagination promettrait des pages que les ids ne couvrent pas.
         return PageIds(ids=page.ids, total=min(page.total, len(page.ids)))
 
+    async def liste_cards(
+        self,
+        media: Media,
+        criteres: Sequence[tuple[str, bool]],
+        *,
+        with_poster: bool = False,
+        with_overview: bool = False,
+        min_popularity: float | None = None,
+        page: int,
+        page_size: int,
+    ) -> PageIds | None:
+        """Une page de la grille SANS texte : mêmes filtres et mêmes tris que
+        le SQL, servis par les doc values — et le total rendu avec la page,
+        là où le SQL payait un `count(*)` complet à chaque affichage."""
+        depuis = (page - 1) * page_size
+        if depuis + page_size > FENETRE_MAX:
+            return None
+        return await self._search(
+            alias_de(media),
+            corps_liste(
+                criteres,
+                # Le même départage que `fetch_cards` : id décroissant.
+                tiebreak_descendant=True,
+                fiche=True,
+                with_poster=with_poster,
+                with_overview=with_overview,
+                min_popularity=min_popularity,
+                taille=page_size,
+                depuis=depuis,
+            ),
+        )
+
+    async def liste_acquisition(
+        self,
+        media: Media,
+        *,
+        sort: str,
+        descending: bool,
+        min_popularity: float | None = None,
+        page: int,
+        page_size: int,
+    ) -> PageIds | None:
+        """Une page du tableau d'acquisition sans texte ni filtre d'état.
+
+        Réservée à `status=all` : les autres états vivent dans `fetch_state`
+        et restent au SQL. Le tri `fetched` aussi — côté SQL c'est une
+        jointure interne qui ne liste que le déjà-regardé, une sémantique
+        qu'un `missing: _last` ne reproduit pas.
+        """
+        depuis = (page - 1) * page_size
+        if depuis + page_size > FENETRE_MAX:
+            return None
+        return await self._search(
+            alias_de(media),
+            corps_liste(
+                [(sort, descending)],
+                # Le même départage que `fetch_items` : id croissant.
+                tiebreak_descendant=False,
+                min_popularity=min_popularity,
+                taille=page_size,
+                depuis=depuis,
+            ),
+        )
+
+    async def synchroniser_tout(
+        self, conn: psycopg.AsyncConnection
+    ) -> dict[str, dict[str, Any]] | None:
+        """La synchronisation best-effort des routes : chaque univers rattrapé,
+        aucune exception ne sort — un refresh de projection ne doit jamais
+        échouer parce qu'ES tousse."""
+        from fiv_admin.media import MEDIA
+
+        if self._client is None or not self.active:
+            return None
+        bilan: dict[str, dict[str, Any]] = {}
+        for media in MEDIA.values():
+            if media.catalog_table is None:
+                continue
+            try:
+                bilan[media.univers] = await synchroniser(conn, self._client, media)
+            except (httpx.HTTPError, RuntimeError) as exc:
+                self._coupe_jusqua = time.monotonic() + DISJONCTEUR_SECONDES
+                log.warning("synchronisation %s en échec : %s", media.univers, exc)
+                bilan[media.univers] = {"alias": alias_de(media), "erreur": str(exc)}
+        return bilan
+
 
 # ---------------------------------------------------------------------------
 # L'indexation
@@ -402,6 +574,9 @@ _EXTRACTION = sql.SQL(
         select c.id, c.original_name, c.popularity, c.adult
         from tmdb_catalog c
         where c.univers = %(univers)s
+          -- `ids` nul = tout l'univers (réindexation) ; sinon, les seules
+          -- œuvres listées (synchronisation incrémentale).
+          and (%(ids)s::int[] is null or c.id = any (%(ids)s))
         union all
         -- Les œuvres projetées SANS ligne d'inventaire. Le cas est marginal —
         -- import manuel, fixture, export partiel — mais la grille les montre,
@@ -409,7 +584,8 @@ _EXTRACTION = sql.SQL(
         -- ferait « disparaître » une vignette pourtant affichable.
         select v.id, null, null, null
         from {vue} v
-        where not exists (
+        where (%(ids)s::int[] is null or v.id = any (%(ids)s))
+          and not exists (
             select 1 from tmdb_catalog c where c.univers = %(univers)s and c.id = v.id
         )
     )
@@ -492,8 +668,23 @@ def requete_extraction(media: Media) -> sql.Composed:
     )
 
 
-def parametres_extraction(media: Media) -> dict[str, Any]:
-    return {"source": SOURCE, "kind": media.kind, "univers": media.univers}
+def parametres_extraction(media: Media, ids: Sequence[int] | None = None) -> dict[str, Any]:
+    return {
+        "source": SOURCE,
+        "kind": media.kind,
+        "univers": media.univers,
+        "ids": list(ids) if ids is not None else None,
+    }
+
+
+def _plier(texte: str) -> str:
+    """Minuscules, sans accents : le tri d'un keyword ES se fait en points de
+    code, le pliage le rapproche d'une collation SQL."""
+    return "".join(
+        caractere
+        for caractere in unicodedata.normalize("NFKD", texte.casefold())
+        if not unicodedata.combining(caractere)
+    )
 
 
 def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
@@ -503,6 +694,7 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
     for titre in (row.get("name"), row.get("original_name"), row.get("nom_inventaire")):
         if titre and titre not in titres:
             titres.append(titre)
+    nom_tri = row.get("name") or row.get("original_name") or row.get("nom_inventaire")
 
     first_air_date = row.get("first_air_date")
     fetched_at = row.get("fetched_at")
@@ -516,6 +708,7 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
         "titres": titres or None,
         "name": row.get("name"),
         "original_name": row.get("original_name") or row.get("nom_inventaire"),
+        "nom_tri": _plier(nom_tri) if nom_tri else None,
         "annee": row.get("annee"),
         "first_air_date": first_air_date.isoformat() if first_air_date else None,
         "fetched_at": fetched_at.isoformat() if fetched_at else None,
@@ -544,6 +737,9 @@ async def _bulk(http: httpx.AsyncClient, index: str, docs: list[dict[str, Any]])
         "/_bulk",
         content=("\n".join(lignes) + "\n").encode(),
         headers={"content-type": "application/x-ndjson"},
+        # Par requête, parce que la synchronisation peut passer par le client
+        # des routes, réglé court pour la frappe : un bulk n'est pas une frappe.
+        timeout=120.0,
     )
     reponse.raise_for_status()
     corps = reponse.json()
@@ -570,6 +766,60 @@ async def _indices_du_prefixe(http: httpx.AsyncClient, alias: str) -> list[str]:
     return [ligne["index"] for ligne in reponse.json()]
 
 
+async def _horloge_base(conn: psycopg.AsyncConnection) -> str:
+    """L'heure de la BASE, en ISO : c'est contre elle que `fetch_state` et le
+    catalogue sont horodatés — celle du poste peut en diverger."""
+    async with conn.cursor() as cur:
+        await cur.execute("select now()")
+        row = await cur.fetchone()
+    return row[0].isoformat()
+
+
+async def _indexer_extraction(
+    conn: psycopg.AsyncConnection,
+    http: httpx.AsyncClient,
+    index: str,
+    media: Media,
+    *,
+    lot: int,
+    ids: Sequence[int] | None = None,
+    avancement: Callable[[int], None] | None = None,
+) -> int:
+    """Extrait (tout l'univers, ou les seuls `ids`) et envoie par lots."""
+    total = 0
+    # Curseur serveur : le catalogue entier ne tient pas en mémoire, et le
+    # bloc de transaction évite qu'un `with hold` matérialise le résultat.
+    async with (
+        conn.transaction(),
+        conn.cursor(name="es_extraction", row_factory=dict_row) as cur,
+    ):
+        cur.itersize = lot
+        await cur.execute(requete_extraction(media), parametres_extraction(media, ids))
+        paquet: list[dict[str, Any]] = []
+        async for row in cur:
+            paquet.append(construire_doc(row, media.univers))
+            if len(paquet) >= lot:
+                await _bulk(http, index, paquet)
+                total += len(paquet)
+                paquet = []
+                if avancement is not None:
+                    avancement(total)
+        if paquet:
+            await _bulk(http, index, paquet)
+            total += len(paquet)
+    return total
+
+
+async def _poser_marqueur(http: httpx.AsyncClient, index: str, horodatage: str) -> None:
+    """Le point de reprise de la synchronisation, rangé DANS l'index : il
+    meurt avec lui, et un index reconstruit repart donc de son propre début —
+    aucun état à tenir ailleurs."""
+    reponse = await http.put(
+        f"/{index}/_mapping", json={"_meta": {"synced_at": horodatage}}, timeout=30.0
+    )
+    reponse.raise_for_status()
+
+
 async def reindexer(
     conn: psycopg.AsyncConnection,
     http: httpx.AsyncClient,
@@ -580,10 +830,9 @@ async def reindexer(
 ) -> dict[str, Any]:
     """Reconstruit l'index d'un univers et bascule son alias, sans coupure.
 
-    L'index n'est jamais mis à jour au fil de l'eau : il se reconstruit en
-    entier, comme la projection de vignettes — après une passe de collecte, ou
-    quand le mapping change. C'est ce qui autorise `force_merge` en un seul
-    segment : l'index est en lecture seule de fait, autant le compacter.
+    C'est la voie lourde — mapping neuf, catalogue entier — pour la première
+    mise en service et les changements de schéma. Au quotidien, `synchroniser`
+    rattrape l'index en place sans rien reconstruire.
     """
     alias = alias_de(media)
     nom = f"{alias}-{time.strftime('%Y%m%d%H%M%S')}"
@@ -591,36 +840,21 @@ async def reindexer(
     reponse = await http.put(f"/{nom}", json=definition_index(media.univers))
     reponse.raise_for_status()
 
-    total = 0
-    # Curseur serveur : le catalogue entier ne tient pas en mémoire, et le
-    # bloc de transaction évite qu'un `with hold` matérialise le résultat.
-    async with (
-        conn.transaction(),
-        conn.cursor(name="es_extraction", row_factory=dict_row) as cur,
-    ):
-        cur.itersize = lot
-        await cur.execute(requete_extraction(media), parametres_extraction(media))
-        paquet: list[dict[str, Any]] = []
-        async for row in cur:
-            paquet.append(construire_doc(row, media.univers))
-            if len(paquet) >= lot:
-                await _bulk(http, nom, paquet)
-                total += len(paquet)
-                paquet = []
-                if avancement is not None:
-                    avancement(total)
-        if paquet:
-            await _bulk(http, nom, paquet)
-            total += len(paquet)
+    # L'heure de départ, AVANT l'extraction : tout ce qui bouge pendant la
+    # construction sera revu par la première synchronisation — un recouvrement
+    # plutôt qu'un trou.
+    depart = await _horloge_base(conn)
+    total = await _indexer_extraction(conn, http, nom, media, lot=lot, avancement=avancement)
 
-    # Un seul segment : l'index ne recevra plus une écriture avant d'être
-    # remplacé, et le compactage rend la recherche plus rapide et le disque
-    # plus petit — ce qui compte à 1,5 M de documents par univers.
+    # Un seul segment : quotidiennement l'index ne reçoit que le filet de la
+    # synchronisation, et le compactage rend la recherche plus rapide et le
+    # disque plus petit — ce qui compte à 1,5 M de documents par univers.
     await http.post(f"/{nom}/_refresh")
     reponse = await http.post(f"/{nom}/_forcemerge?max_num_segments=1")
     reponse.raise_for_status()
     reponse = await http.put(f"/{nom}/_settings", json={"index": {"refresh_interval": "30s"}})
     reponse.raise_for_status()
+    await _poser_marqueur(http, nom, depart)
 
     servis = await _indices_de(http, alias)
     actions = [{"remove": {"index": ancien, "alias": alias}} for ancien in servis]
@@ -635,6 +869,88 @@ async def reindexer(
         await http.delete(f"/{ancien}")
 
     return {"index": nom, "alias": alias, "documents": total, "remplaces": anciens}
+
+
+# Ce qui a bougé depuis le marqueur : les fiches (re)collectées — une passe de
+# `backfill` les horodate dans `fetch_state` — et les entrées d'inventaire
+# nouvelles ou signalées changées par `tmdb export` / `tmdb changes`.
+#
+# Volontairement PAS `last_seen_at` : l'export quotidien retouche cette
+# colonne sur tout le catalogue, et la prendre reviendrait à tout réextraire
+# chaque nuit — la synchronisation redeviendrait la réindexation qu'elle
+# remplace.
+_IDS_CHANGES = """
+    select distinct x.id from (
+        select s.source_id::int as id
+        from fetch_state s
+        where s.source = %(source)s and s.kind = %(kind)s
+          and s.source_id ~ '^[0-9]+$'
+          and s.last_fetched_at > %(depuis)s::timestamptz
+        union all
+        select c.id
+        from tmdb_catalog c
+        where c.univers = %(univers)s
+          and (c.first_seen_at > %(depuis)s::timestamptz
+               or coalesce(c.changed_at, '-infinity') > %(depuis)s::timestamptz)
+    ) x
+"""
+
+
+async def synchroniser(
+    conn: psycopg.AsyncConnection,
+    http: httpx.AsyncClient,
+    media: Media,
+    *,
+    lot: int = 500,
+) -> dict[str, Any]:
+    """Rattrape l'index vivant : upsert de ce qui a bougé depuis le marqueur.
+
+    C'est la voie du quotidien — « les données importées des sources arrivent
+    directement dans ES » : après une passe de collecte (et le refresh des
+    projections, qui porte les métadonnées des vignettes), on rejoue
+    l'extraction sur les seules œuvres changées, et le `_id` fait de chaque
+    envoi une création ou une mise à jour, indifféremment.
+
+    Ce qu'elle ne fait pas : retirer une œuvre disparue du catalogue (rare —
+    la réindexation purge), ni rattraper un changement de mapping (la
+    réindexation, again). Sans marqueur, elle refuse et le dit.
+    """
+    alias = alias_de(media)
+    vivants = await _indices_de(http, alias)
+    if not vivants:
+        return {"alias": alias, "erreur": "aucun index — lancer `search reindex`"}
+    nom = vivants[0]
+
+    reponse = await http.get(f"/{nom}/_mapping", timeout=30.0)
+    reponse.raise_for_status()
+    meta = reponse.json()[nom]["mappings"].get("_meta") or {}
+    depuis = meta.get("synced_at")
+    if not depuis:
+        # Un index d'avant les marqueurs : impossible de savoir ce qui manque.
+        return {"alias": alias, "erreur": "index sans marqueur — lancer `search reindex`"}
+
+    # L'heure AVANT la lecture des ids : ce qui bouge pendant l'envoi sera
+    # revu au prochain passage — recouvrement, jamais de trou.
+    maintenant = await _horloge_base(conn)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            _IDS_CHANGES,
+            {
+                "source": SOURCE,
+                "kind": media.kind,
+                "univers": media.univers,
+                "depuis": depuis,
+            },
+        )
+        ids = [row[0] for row in await cur.fetchall()]
+
+    total = 0
+    if ids:
+        total = await _indexer_extraction(conn, http, nom, media, lot=lot, ids=ids)
+        await http.post(f"/{nom}/_refresh", timeout=60.0)
+    await _poser_marqueur(http, nom, maintenant)
+
+    return {"alias": alias, "index": nom, "changees": len(ids), "documents": total}
 
 
 async def etat(http: httpx.AsyncClient) -> dict[str, Any]:

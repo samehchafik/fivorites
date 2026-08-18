@@ -5,6 +5,7 @@ Toutes les routes exigent une session. Toutes sont en lecture seule.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -139,12 +140,22 @@ async def items(
         page_size=pageSize,
     )
 
-    # Une recherche passe par Elasticsearch : il classe les meilleurs ids —
-    # tous titres, toutes langues, catalogue entier — et le SQL applique
-    # ensuite le filtre d'état, trop mouvant pour être indexé, puis pagine
-    # dans l'ordre de pertinence. Le total est donc borné par le plafond
-    # d'ids (voir `ACQUISITION_MAX_IDS`) : une recherche n'est pas une liste
-    # à parcourir, elle se précise. ES absent = l'ILIKE historique.
+    # Elasticsearch sert le tableau chaque fois qu'il le peut, et le SQL fait
+    # le reste :
+    #
+    # * **une recherche** — ES classe les meilleurs ids (tous titres, toutes
+    #   langues, catalogue entier), le SQL applique le filtre d'état — trop
+    #   mouvant pour être indexé — et pagine dans l'ordre de pertinence. Le
+    #   total est borné par `ACQUISITION_MAX_IDS` : une recherche se précise,
+    #   elle ne se parcourt pas ;
+    # * **un parcours sans état** (`status=all`) — ES trie, filtre et pagine ;
+    #   les ids rendus SONT la page (d'où le `page=1` de l'hydratation), et le
+    #   total — un `count(*)` d'1,2 M de lignes à chaque page en SQL — arrive
+    #   avec. Le tri `fetched` reste au SQL : sa jointure interne ne liste que
+    #   le déjà-regardé, une sémantique que l'index n'a pas ;
+    # * **un filtre d'état** — tout en SQL, comme avant.
+    #
+    # ES muet = tout en SQL, dans tous les cas.
     moteur = "sql"
     rows: list[dict[str, Any]] = []
     total = 0
@@ -155,6 +166,19 @@ async def items(
         if page_es is not None:
             rows, total = await fetch_items(conn, query, ids=page_es.ids)
             moteur = "es"
+    elif query.status == "all" and query.sort != "fetched":
+        page_es = await recherche.liste_acquisition(
+            target,
+            sort=query.sort,
+            descending=query.descending,
+            min_popularity=query.min_popularity,
+            page=query.page,
+            page_size=query.page_size,
+        )
+        if page_es is not None:
+            rows, _ = await fetch_items(conn, replace(query, page=1), ids=page_es.ids)
+            total = page_es.total
+            moteur = "es"
     if moteur == "sql":
         rows, total = await fetch_items(conn, query)
 
@@ -164,7 +188,7 @@ async def items(
         "page": page,
         "pageSize": pageSize,
         "lang": lang,
-        "searchEngine": moteur if query.search else None,
+        "searchEngine": moteur,
         # Les colonnes de langue du tableau : les langues configurées d'abord,
         # dans leur ordre, puis celles qui n'existent qu'en base.
         "languages": list(settings.languages),

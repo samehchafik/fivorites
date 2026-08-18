@@ -26,5 +26,10 @@ run tmdb backfill          # collecte les nouvelles + recollecte les modifiées
 run tmdb dates             # les dates des fraîchement collectées
 run enrich --order recent  # leur enrichissement (les autres sont déjà vues)
 docker compose run --rm admin catalog refresh   # la grille de l'admin
+# L'index de recherche rattrape ce que la passe vient d'importer — APRÈS le
+# refresh : la synchronisation relit les métadonnées dans la projection.
+# `|| true` : ES absent ou jamais réindexé ne doit pas faire échouer la passe,
+# l'admin retombe sur le SQL et la réponse d'API le dit (searchEngine).
+docker compose run --rm admin search sync || true
 
 echo "=== fin $(date -Is) ==="

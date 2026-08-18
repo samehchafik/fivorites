@@ -20,11 +20,15 @@ from psycopg.rows import dict_row
 from conftest import requires_db
 from fiv_admin.media import MEDIA
 from fiv_admin.search import (
+    _IDS_CHANGES,
     FENETRE_MAX,
+    TRIS,
     PageIds,
     Recherche,
+    _plier,
     alias_de,
     construire_doc,
+    corps_liste,
     corps_recherche,
     definition_index,
     parametres_extraction,
@@ -72,6 +76,7 @@ class TestConstruireDoc:
             "id_tmdb": 42,
             "titres": ["Camp Lazlo"],
             "original_name": "Camp Lazlo",
+            "nom_tri": "camp lazlo",
             "adult": False,
             "fiche": False,
             "has_poster": False,
@@ -133,6 +138,42 @@ class TestConstruireDoc:
             "series",
         )
         assert set(doc) <= connus
+
+
+class TestCorpsListe:
+    def test_tri_filtres_et_departage(self) -> None:
+        corps = corps_liste(
+            [("air_date", True), ("popularity", False)],
+            tiebreak_descendant=True,
+            fiche=True,
+            taille=24,
+            depuis=24,
+        )
+        # `missing: _last` = le `nulls last` du SQL ; le départage final sur
+        # l'id est celui de `fetch_cards`, même sens.
+        assert corps["sort"] == [
+            {"first_air_date": {"order": "desc", "missing": "_last"}},
+            {"popularity": {"order": "asc", "missing": "_last"}},
+            {"id_tmdb": {"order": "desc"}},
+        ]
+        assert corps["query"] == {"bool": {"filter": [{"term": {"fiche": True}}]}}
+        assert corps["from"] == 24
+        assert corps["_source"] is False
+
+    def test_tous_les_tris_des_routes_sont_couverts(self) -> None:
+        """Chaque tri que les routes acceptent doit avoir son champ ES — et ce
+        champ doit exister au mapping, sinon le parcours casse en vol."""
+        from fiv_admin.catalog import CARD_SORTS
+        from fiv_admin.queries import SORTS
+
+        assert set(CARD_SORTS) <= set(TRIS)
+        assert set(SORTS) <= set(TRIS)
+        connus = set(definition_index("series")["mappings"]["properties"])
+        assert set(TRIS.values()) <= connus
+
+    def test_plier(self) -> None:
+        assert _plier("Père Noël") == "pere noel"
+        assert _plier("GAME of Thrones") == "game of thrones"
 
 
 class TestCorpsRecherche:
@@ -347,6 +388,62 @@ class TestExtraction:
         assert jamais["fiche"] is False
         doc = construire_doc(jamais, "series")
         assert doc["titres"] == ["Jamais collectée"]
+
+    async def test_extraction_restreinte_aux_ids(self, conn: psycopg.AsyncConnection) -> None:
+        """`ids` non nul = la synchronisation : seules les œuvres listées
+        sortent, le reste de l'univers n'est pas relu."""
+        await conn.execute(
+            """
+            insert into tmdb_catalog (id, original_name, popularity, exported_on) values
+                (1399, 'Game of Thrones', 400.0, date '2026-08-05'),
+                (4000, 'Jamais collectée',  0.1, date '2026-08-05')
+            """
+        )
+        media = MEDIA["tv"]
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(requete_extraction(media), parametres_extraction(media, [1399]))
+            lignes = await cur.fetchall()
+        assert [ligne["id"] for ligne in lignes] == [1399]
+
+    async def test_ids_changes_depuis_le_marqueur(self, conn: psycopg.AsyncConnection) -> None:
+        """Le filet de la synchronisation : une collecte (`fetch_state`) ou une
+        entrée d'inventaire nouvelle réapparaissent, le reste dort."""
+        await conn.execute(
+            """
+            insert into tmdb_catalog (id, original_name, popularity, exported_on) values
+                (1399, 'Game of Thrones', 400.0, date '2026-08-05')
+            """
+        )
+        async with conn.cursor() as cur:
+            await cur.execute("select now()")
+            depuis = (await cur.fetchone())[0].isoformat()
+
+            params = {
+                "source": "tmdb",
+                "kind": "tv",
+                "univers": "series",
+                "depuis": depuis,
+            }
+            await cur.execute(_IDS_CHANGES, params)
+            assert await cur.fetchall() == [], "rien n'a bougé depuis le marqueur"
+
+            # Une passe de collecte touche la fiche…
+            await cur.execute(
+                """
+                insert into fetch_state (source, kind, source_id, last_fetched_at,
+                                         last_success_at, last_status)
+                values ('tmdb', 'tv', '1399', now(), now(), 200)
+                """
+            )
+            # …et l'export du jour apporte une nouveauté.
+            await cur.execute(
+                """
+                insert into tmdb_catalog (id, original_name, popularity, exported_on)
+                values (5000, 'Toute nouvelle', 1.0, current_date)
+                """
+            )
+            await cur.execute(_IDS_CHANGES, params)
+            assert sorted(row[0] for row in await cur.fetchall()) == [1399, 5000]
 
     async def test_fiche_hors_inventaire(self, conn: psycopg.AsyncConnection) -> None:
         """Une œuvre projetée sans ligne d'inventaire — import manuel, export
