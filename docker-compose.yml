@@ -1,8 +1,11 @@
 # Déploiement serveur.
 #
 # Postgres n'est PAS conteneurisé : il tourne sur l'hôte, installé par apt (voir
-# doc/serveur-debian11.md). Seule l'application est en conteneur, et elle joint
-# la base par la passerelle du réseau Docker.
+# doc/serveur-debian11.md), et les conteneurs le joignent par la passerelle du
+# réseau Docker. Il porte les données de la collecte — ce qui ne se reconstruit
+# pas — et cette frontière est la raison du partage : tout le reste est en
+# conteneur, y compris Elasticsearch, dont le contenu se REFABRIQUE depuis
+# Postgres (`search reindex`).
 #
 # Le sous-réseau est figé volontairement. Sans ça, Docker en choisit un au
 # hasard à la création du réseau, l'adresse de la passerelle change, et il faut
@@ -69,6 +72,65 @@ services:
     # laisser le temps d'écrire la reprise avant le SIGKILL.
     stop_grace_period: 120s
 
+  # --- Recherche -------------------------------------------------------------
+  #
+  # Elasticsearch, service permanent comme l'administration. Contrairement à
+  # Postgres — qui reste sur l'hôte parce qu'il porte les données de la
+  # collecte — celui-ci est conteneurisé : son contenu est **dérivé**, il se
+  # reconstruit entièrement depuis Postgres par `search reindex`. Le perdre ne
+  # coûte qu'une réindexation, jamais une donnée.
+  #
+  # Image officielle, version figée : la même que celle vendorisée sur le
+  # poste (admin/.es-version). Les deux doivent avancer ensemble — un index
+  # construit par une version ne se relit pas forcément par une plus ancienne.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.1
+    restart: unless-stopped
+    environment:
+      cluster.name: fivorites
+      node.name: serveur
+      discovery.type: single-node
+      # Pas de TLS ni de comptes : le service n'a AUCUN port publié (voir
+      # l'absence de `ports:` ci-dessous), il n'est joignable que par les
+      # autres conteneurs du réseau compose. L'activer imposerait une
+      # cérémonie de certificats pour une liaison qui ne sort jamais de la
+      # machine. Corollaire : ne jamais ajouter de `ports:` ici sans activer
+      # xpack.security en même temps.
+      xpack.security.enabled: "false"
+      # Aucune fonction de machine learning utilisée : autant ne pas réserver
+      # la mémoire qu'elle prend.
+      xpack.ml.enabled: "false"
+      # Le tas. Deux gigaoctets pour ~1,5 M de documents minimaux par univers ;
+      # le conteneur est plafonné à un peu plus bas (`mem_limit`), car la JVM
+      # a besoin de place hors tas.
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms2g -Xmx2g}
+      # Les seuils d'allocation d'ES sont en POURCENTAGE par défaut
+      # (85/90/95 %), et un disque déjà bien rempli fait alors un cluster
+      # « red » sans qu'aucun index soit en cause — vécu sur le poste de dev.
+      # En absolu, il travaille tant qu'il reste de la place.
+      cluster.routing.allocation.disk.watermark.low: 10gb
+      cluster.routing.allocation.disk.watermark.high: 6gb
+      cluster.routing.allocation.disk.watermark.flood_stage: 4gb
+    mem_limit: ${ES_MEM_LIMIT:-3g}
+    ulimits:
+      # ES verrouille sa mémoire pour ne jamais être mis en swap — un GC qui
+      # swappe est pire qu'un GC lent.
+      memlock: -1
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    # Pas de `ports:` — volontairement. Seul le conteneur `admin` le joint, par
+    # le réseau interne du compose. Pour regarder depuis la machine :
+    #   docker compose exec elasticsearch curl -s localhost:9200/_cat/indices
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # Le démarrage d'une JVM plus l'ouverture des index : large, parce qu'un
+      # `admin` qui démarrerait trop tôt tomberait sur un service muet et
+      # passerait en repli SQL pour rien.
+      start_period: 90s
+
   # --- Administration --------------------------------------------------------
   #
   # Service permanent, contrairement à `sourcing` : il répond en HTTP.
@@ -91,6 +153,17 @@ services:
       context: ./admin
     image: fivorites-v2/admin:latest
     restart: unless-stopped
+    # `service_started`, PAS `service_healthy` — et c'est un choix.
+    #
+    # La condition de santé ferait attendre le démarrage complet d'ES à
+    # CHAQUE `docker compose run --rm admin …`, y compris `db migrate`, qui
+    # n'a rien à voir avec la recherche. Pire : un ES en panne rendrait ces
+    # commandes impossibles, alors que l'administration est justement conçue
+    # pour fonctionner sans lui (repli SQL). On le démarre donc avec, sans
+    # lui confier le sort du reste.
+    depends_on:
+      elasticsearch:
+        condition: service_started
     ports:
       # Adresse d'écoute réglable, ouverte par défaut — choix explicite pour
       # pouvoir joindre l'administration directement pendant la mise en route.
@@ -121,7 +194,7 @@ services:
       # l'HÔTE (apt, voir doc/recherche-elasticsearch.md), joint par la
       # passerelle — pas un conteneur de plus à orchestrer. Facultatif : tant
       # qu'il ne répond pas, la recherche retombe sur l'ILIKE historique.
-      ES_URL: ${ES_URL:-http://172.28.0.1:9200}
+      ES_URL: ${ES_URL:-http://elasticsearch:9200}
       # L'atelier d'entraînement (pages Training 1 et 2). Facultatives : sans
       # elles, tout le reste de l'admin fonctionne et les routes /training
       # répondent par un message clair.
@@ -161,6 +234,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  # Les index de recherche. Contenu dérivé : `search reindex` le reconstruit
+  # depuis Postgres, donc ce volume se supprime sans perte — à la différence
+  # des données de Postgres, qui vivent sur l'hôte.
+  es-data:
 
 networks:
   default:

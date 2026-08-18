@@ -27,7 +27,7 @@ panne), chaque route retombe sur son `ILIKE` historique, et un disjoncteur de
 la réponse de l'API porte `searchEngine: "es" | "sql"` pour dire d'où vient la
 liste.
 
-## 2. L'architecture en quatre décisions
+## 2. L'architecture en cinq décisions
 
 **Un index par univers** (`catalog-series`, `catalog-movies`), pas un index
 commun : les ids TMDB se chevauchent entre univers (1399 = *Game of Thrones*
@@ -95,39 +95,88 @@ en pourcentage (85/90/95 %) et le cluster reste `red` à vide. La configuration
 
 ## 4. Serveur
 
-Même logique que Postgres : **sur l'hôte, par apt** — pas un conteneur de
-plus. Le conteneur admin le joint par la passerelle (`ES_URL`, défaut
-`http://172.28.0.1:9200`, voir `.env.example`).
+**Un service du compose**, comme l'administration — rien à installer sur
+l'hôte, rien à `systemctl`. C'est la différence avec Postgres, et elle tient
+à une seule question : qu'est-ce qui se reconstruit ? Postgres porte la
+collecte, qui ne se refabrique pas, donc il reste sur l'hôte. Un index de
+recherche se refabrique intégralement depuis Postgres — le perdre ne coûte
+qu'une réindexation, jamais une donnée. Il est donc conteneurisé, avec son
+volume nommé `es-data`.
+
+Le service n'a **aucun port publié** : seul le conteneur `admin` le joint,
+par le réseau interne du compose (`ES_URL` vaut `http://elasticsearch:9200`,
+et n'a pas à être renseigné dans le `.env`). C'est ce qui rend
+`xpack.security.enabled: false` acceptable — la liaison ne sort jamais de la
+machine. Corollaire à ne pas oublier : **ne jamais ajouter de `ports:` sans
+activer la sécurité en même temps.**
+
+### Le seul prérequis hôte
+
+Elasticsearch 9 exige `vm.max_map_count = 1048576`, un réglage du noyau que
+Docker ne peut pas poser depuis un conteneur (il n'est pas « namespacé »).
+C'est la seule commande de cette page qui ne soit pas du `docker compose` —
+une fois pour la vie de la machine :
 
 ```bash
-wget -qO- https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo gpg --dearmor -o /usr/share/keyrings/elasticsearch-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/elasticsearch-keyring.gpg] https://artifacts.elastic.co/packages/9.x/apt stable main" | sudo tee /etc/apt/sources.list.d/elastic-9.x.list
-sudo apt update && sudo apt install elasticsearch
+echo 'vm.max_map_count=1048576' | sudo tee /etc/sysctl.d/99-elasticsearch.conf && sudo sysctl --system
 ```
 
-Dans `/etc/elasticsearch/elasticsearch.yml`, reprendre les réglages du poste
-en ouvrant l'écoute à la passerelle Docker :
+Sans lui, le conteneur démarre puis s'arrête, avec dans ses journaux
+`max virtual memory areas vm.max_map_count [65530] is too low`. C'est le
+premier endroit à regarder si `search status` répond « injoignable » après
+un déploiement.
 
-```yaml
-cluster.name: fivorites
-discovery.type: single-node
-xpack.security.enabled: false     # port fermé au monde : pare-feu + écoute locale
-xpack.ml.enabled: false
-network.host: ["127.0.0.1", "172.28.0.1"]
-```
-
-et dans `/etc/elasticsearch/jvm.options.d/fivorites.options` : `-Xms2g` /
-`-Xmx2g` (le catalogue complet, 1,5 M de documents par univers à terme).
-`xpack.security.enabled: false` n'est acceptable que parce que le port
-n'écoute que sur l'hôte et la passerelle interne — il ne doit jamais être
-exposé ; sinon, activer la sécurité et passer l'URL avec identifiants dans
-`ES_URL`.
-
-Puis :
+### La mise en service
 
 ```bash
-sudo systemctl enable --now elasticsearch
+git pull && sudo docker compose build admin
+```
+
+```bash
+sudo docker compose up -d elasticsearch
+```
+
+```bash
 sudo docker compose run --rm admin search reindex
+```
+
+```bash
+sudo docker compose up -d admin
+```
+
+La réindexation avant le redémarrage de l'admin, pour qu'il ne serve pas des
+listes en repli SQL pendant que l'index se construit. `up -d admin` démarre
+de toute façon `elasticsearch` avec lui (`depends_on`), mais sans attendre sa
+santé : l'administration est conçue pour tourner sans recherche, on ne lui
+attache pas son sort — un ES en panne ne doit jamais empêcher un
+`db migrate`.
+
+### Régler la mémoire
+
+Deux variables dans le `.env`, si les valeurs par défaut ne conviennent pas
+(2 Go de tas, conteneur plafonné à 3 Go) :
+
+```bash
+ES_JAVA_OPTS=-Xms2g -Xmx2g
+ES_MEM_LIMIT=3g
+```
+
+Le tas se dimensionne au volume indexé, pas à la RAM de la machine : ~1,5 M
+de documents minimaux par univers tiennent largement dans 2 Go. Garder
+`mem_limit` au-dessus du tas — la JVM a besoin de place hors tas.
+
+### Regarder ce qui se passe
+
+Sans port publié, on passe par le conteneur :
+
+```bash
+sudo docker compose exec elasticsearch curl -s localhost:9200/_cat/indices
+```
+
+ou, plus simplement, par la commande qui met déjà en forme :
+
+```bash
+sudo docker compose run --rm admin search status
 ```
 
 ## 5. Au quotidien
