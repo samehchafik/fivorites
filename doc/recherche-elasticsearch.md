@@ -110,21 +110,38 @@ et n'a pas à être renseigné dans le `.env`). C'est ce qui rend
 machine. Corollaire à ne pas oublier : **ne jamais ajouter de `ports:` sans
 activer la sécurité en même temps.**
 
-### Le seul prérequis hôte
+### Le seul réglage hôte
 
-Elasticsearch 9 exige `vm.max_map_count = 1048576`, un réglage du noyau que
-Docker ne peut pas poser depuis un conteneur (il n'est pas « namespacé »).
-C'est la seule commande de cette page qui ne soit pas du `docker compose` —
-une fois pour la vie de la machine :
+`vm.max_map_count = 1048576` — un réglage du noyau que Docker ne peut pas
+poser depuis un conteneur (il n'est pas « namespacé »), donc la seule
+commande de cette page qui ne soit pas du `docker compose`. Une fois pour la
+vie de la machine :
 
 ```bash
 echo 'vm.max_map_count=1048576' | sudo tee /etc/sysctl.d/99-elasticsearch.conf && sudo sysctl --system
 ```
 
-Sans lui, le conteneur démarre puis s'arrête, avec dans ses journaux
-`max virtual memory areas vm.max_map_count [65530] is too low`. C'est le
-premier endroit à regarder si `search status` répond « injoignable » après
-un déploiement.
+⚠️ **Ce n'est pas un prérequis de démarrage, contrairement à ce que dit la
+documentation d'Elastic.** `discovery.type: single-node` supprime les
+contrôles d'amorçage, et la mise en service du 2026-08-18 l'a vérifié à ses
+dépens : le cluster a démarré et indexé 1,46 M de documents avec la valeur
+Debian par défaut (65530), le `sysctl` n'ayant été appliqué qu'après coup.
+
+Il reste à poser malgré tout, pour ce qu'il protège vraiment : Lucene projette
+ses fichiers en mémoire, et le nombre de projections croît avec le nombre de
+segments. Un index fraîchement réindexé n'en a qu'un ; les synchronisations
+quotidiennes en ajoutent. Le plafond se heurte donc **plus tard**, en
+exploitation, pas au démarrage — un mode de panne bien plus désagréable que
+le refus net qu'annonçait cette page.
+
+Le réglage ne prend effet qu'au prochain démarrage du conteneur :
+
+```bash
+sudo docker compose up -d --force-recreate elasticsearch
+```
+
+Sans risque pour les index — ils vivent dans le volume `es-data`, que
+recréer un conteneur ne touche pas.
 
 ### La mise en service
 
@@ -163,10 +180,17 @@ ES_MEM_LIMIT=3g
 
 **Le tas se dimensionne au volume indexé, pas à la RAM de la machine**, et
 c'est contre-intuitif : sur un serveur à 125 Go, la tentation est d'en donner
-beaucoup. Ce serait contre-productif. L'index mesuré fait 159 octets par
-document — 35 Mo pour 228 000 séries, soit ~230 Mo pour le catalogue complet
-(1,46 M d'œuvres). Deux gigaoctets de tas sont déjà confortables ; au-delà,
-on n'accélère rien et on allonge les pauses du ramasse-miettes. Ce qui rend
+beaucoup. Ce serait contre-productif. Mesuré en production le 2026-08-18 sur
+le catalogue complet : **602 Mo pour 1 460 781 œuvres** — 462 octets par
+série, 426 par film. Deux gigaoctets de tas sont donc déjà confortables ;
+au-delà, on n'accélère rien et on allonge les pauses du ramasse-miettes.
+
+(Une estimation antérieure annonçait 230 Mo. Elle était tirée du poste de
+dev, dont le catalogue est presque entièrement non collecté : des lignes
+d'inventaire à un seul titre, là où une œuvre réellement collectée porte ses
+titres alternatifs et ses quarante-cinq traductions. L'écart est un facteur
+2,6 — et il ne change rien à la conclusion, 602 Mo restant deux millièmes du
+disque.) Ce qui rend
 la recherche rapide sur un gros index, c'est le cache de fichiers du système,
 donc la mémoire laissée LIBRE — pas celle donnée à la JVM.
 
