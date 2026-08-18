@@ -1249,6 +1249,29 @@ def doctor() -> None:
             "catalogue", state["catalog"] > 0, f"{state['catalog']:,} séries".replace(",", " ")
         )
 
+    # La recherche : facultative par construction, donc jamais un échec du
+    # diagnostic — mais son absence explique des listes lentes et une frappe
+    # qui ne trouve que les titres originaux. C'est exactement ce qu'on veut
+    # lire ici plutôt que découvrir en s'en servant.
+    if not settings.es_url:
+        _line("recherche", True, "désactivée (ES_URL vide) — les listes passent par le SQL")
+    else:
+        try:
+            bilan = _run(_etat_recherche(settings.es_url))
+        except Exception as exc:  # noqa: BLE001 — on veut le message brut
+            _line("recherche", False, f"injoignable sur {settings.es_url} : {exc}")
+            typer.echo("        → sur le poste : make -C admin es-start")
+            typer.echo("        → les listes passent par le SQL en attendant, rien n'est cassé.")
+        else:
+            documents = sum(index["documents"] for index in bilan["indices"].values())
+            _line(
+                "recherche",
+                documents > 0,
+                f"{bilan['sante']} · {documents:,} documents".replace(",", " ")
+                if documents
+                else "aucun index — `fiv-admin search reindex`",
+            )
+
     _line(
         "front construit",
         settings.has_front,
@@ -1413,6 +1436,17 @@ def user_list() -> None:
         state = "désactivé" if disabled else "actif"
         seen = last.strftime("%Y-%m-%d %H:%M") if last else "jamais connecté"
         typer.echo(f"{username:<20} {state:<10} {name or '':<24} créé {created:%Y-%m-%d}  {seen}")
+
+
+async def _etat_recherche(url: str) -> dict[str, Any]:
+    """L'état d'Elasticsearch pour `doctor`, avec un délai court : un
+    diagnostic ne doit pas rester pendu sur un service muet."""
+    import httpx
+
+    from fiv_admin.search import etat
+
+    async with httpx.AsyncClient(base_url=url, timeout=3.0) as http:
+        return await etat(http)
 
 
 async def _status() -> dict[str, Any]:
