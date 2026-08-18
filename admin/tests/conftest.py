@@ -66,6 +66,11 @@ def settings() -> Settings:
         web_dist=Path("/inexistant"),
         cors_origins="",
         summary_cache_seconds=0,
+        # Recherche désactivée : l'ES du poste indexe la base de TRAVAIL, pas
+        # celle-ci — une route de test qui l'interrogerait mêlerait les deux
+        # mondes. Les routes prennent donc leur chemin SQL, déterministe ; le
+        # client ES, lui, se teste avec un transport simulé (test_search.py).
+        es_url="",
         # Encodeur local pour la suite : la production appelle une API, et un
         # test qui en dependrait mesurerait le reseau. Sans cle le secours
         # prendrait le relais, mais l'entrainement ecarte les vecteurs de

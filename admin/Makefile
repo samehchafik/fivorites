@@ -48,14 +48,28 @@ NODE_SUMS := https://nodejs.org/dist/v$(NODE_VERSION)/SHASUMS256.txt
 
 NPM := PATH="$(NODE_BIN):$$PATH" $(NODE_BIN)/npm
 
+# --- Elasticsearch, la troisième toolchain vendorisée ------------------------
+#
+# Même régime que Node : version figée dans .es-version, archive vérifiée
+# contre la somme publiée avant d'être ouverte, rien d'installé dans le
+# système. L'archive embarque son JDK — aucun Java à installer. Sur le
+# serveur, il vient d'apt (voir doc/recherche-elasticsearch.md) : ce bloc ne
+# sert que le poste.
+ES_VERSION := $(shell cat .es-version)
+ES_DIR     := $(VENDOR)/elasticsearch
+# Elastic nomme les architectures autrement que Node : aarch64 et x86_64.
+ES_ARCH    := $(if $(filter arm64,$(NODE_ARCH)),aarch64,x86_64)
+ES_PKG     := elasticsearch-$(ES_VERSION)-$(NODE_OS)-$(ES_ARCH)
+ES_DL      := https://artifacts.elastic.co/downloads/elasticsearch/$(ES_PKG).tar.gz
+
 DB_TEST ?= fivorites_v2_admin_test
 PSQL    := psql -h localhost -p 5432 -U postgres -d postgres
 
-.PHONY: bootstrap bootstrap-python bootstrap-node sync guard doctor test lint fmt \
-        db-create migrate serve api web web-build dev clean
+.PHONY: bootstrap bootstrap-python bootstrap-node bootstrap-es sync guard doctor test lint fmt \
+        db-create migrate serve api web web-build dev es-start es-stop clean
 
-## Installe les deux toolchains et les dépendances.
-bootstrap: bootstrap-python bootstrap-node
+## Installe les trois toolchains et les dépendances.
+bootstrap: bootstrap-python bootstrap-node bootstrap-es
 	@$(MAKE) --no-print-directory guard
 	@$(MAKE) --no-print-directory doctor || true
 
@@ -81,6 +95,60 @@ bootstrap-node:
 	  echo "node $$($(NODE_BIN)/node -v) installé dans vendor/node"; \
 	fi
 	cd $(FRONT) && $(NPM) install --no-audit --no-fund
+
+## Elasticsearch dans vendor/, vérifié contre la somme sha512 publiée.
+## La configuration est réécrite à chaque passage : c'est elle qui fait de
+## l'archive générique un mono-nœud local sans sécurité — la source de vérité
+## est ici, pas dans vendor/.
+bootstrap-es:
+	@if [ -f "$(ES_DIR)/.version" ] && [ "$(ES_VERSION)" = "$$(cat $(ES_DIR)/.version)" ]; then \
+	  echo "elasticsearch $(ES_VERSION) déjà présent dans vendor/"; \
+	else \
+	  set -e; \
+	  echo "téléchargement de $(ES_PKG) (~650 Mo)"; \
+	  tmp=$$(mktemp -d); \
+	  curl -fsSL "$(ES_DL)" -o "$$tmp/$(ES_PKG).tar.gz"; \
+	  curl -fsSL "$(ES_DL).sha512" -o "$$tmp/$(ES_PKG).tar.gz.sha512"; \
+	  (cd "$$tmp" && shasum -a 512 -c "$(ES_PKG).tar.gz.sha512"); \
+	  rm -rf "$(ES_DIR)"; mkdir -p "$(ES_DIR)"; \
+	  tar -xzf "$$tmp/$(ES_PKG).tar.gz" -C "$(ES_DIR)" --strip-components=1; \
+	  rm -rf "$$tmp"; \
+	  echo "$(ES_VERSION)" > "$(ES_DIR)/.version"; \
+	  echo "elasticsearch $(ES_VERSION) installé dans vendor/elasticsearch"; \
+	fi
+	@printf '%s\n' \
+	  "# Écrit par \`make bootstrap-es\` — modifier le Makefile, pas ce fichier." \
+	  "cluster.name: fivorites" \
+	  "node.name: poste" \
+	  "discovery.type: single-node" \
+	  "# Pas de TLS ni de comptes : le port n'écoute que sur 127.0.0.1, et la" \
+	  "# sécurité d'ES 9 exigerait sinon une cérémonie de certificats sans objet." \
+	  "xpack.security.enabled: false" \
+	  "# Le machine learning d'ES réserve de la mémoire pour rien ici." \
+	  "xpack.ml.enabled: false" \
+	  "http.host: 127.0.0.1" \
+	  "transport.host: 127.0.0.1" \
+	  "# Les données restent dans vendor/ : reconstruites par \`search reindex\`," \
+	  "# donc jetables avec le reste de la toolchain." \
+	  "path.data: $(ES_DIR)/data" \
+	  "path.logs: $(ES_DIR)/logs" \
+	  "# Les seuils de disque d'ES sont en POURCENTAGE par défaut (85/90/95 %)," \
+	  "# et un poste plein à 99 % refuse alors d'allouer le moindre shard — vécu" \
+	  "# ici, cluster « red » à vide. En absolu, ES travaille tant qu'il reste de" \
+	  "# la place, et s'arrête net avant de remplir le disque." \
+	  "cluster.routing.allocation.disk.watermark.low: 10gb" \
+	  "cluster.routing.allocation.disk.watermark.high: 6gb" \
+	  "cluster.routing.allocation.disk.watermark.flood_stage: 4gb" \
+	  > "$(ES_DIR)/config/elasticsearch.yml"
+	@mkdir -p "$(ES_DIR)/config/jvm.options.d"
+	@printf '%s\n' \
+	  "# Écrit par \`make bootstrap-es\`. Un gigaoctet suffit : ~1,5 M de documents" \
+	  "# minimaux par univers, et la machine porte aussi Postgres et les" \
+	  "# entraînements — ES n'a pas à prendre la moitié de la RAM comme il le" \
+	  "# fait par défaut." \
+	  "-Xms1g" \
+	  "-Xmx1g" \
+	  > "$(ES_DIR)/config/jvm.options.d/fivorites.options"
 
 ## Met à jour les dépendances Python depuis uv.lock.
 sync:
@@ -151,6 +219,30 @@ web-build: guard
 
 serve: guard
 	$(BIN)/fiv-admin serve
+
+## Elasticsearch en arrière-plan. Idempotent : ne relance pas s'il répond déjà.
+## L'API s'en passe (repli ILIKE), donc il n'est pas accroché à `dev` : on le
+## démarre une fois, il reste là.
+es-start:
+	@if curl -fsS http://127.0.0.1:9200/ >/dev/null 2>&1; then \
+	  echo "elasticsearch répond déjà sur 127.0.0.1:9200"; \
+	else \
+	  test -x "$(ES_DIR)/bin/elasticsearch" || { echo "absent — \`make bootstrap-es\`"; exit 1; }; \
+	  "$(ES_DIR)/bin/elasticsearch" -d -p "$(ES_DIR)/es.pid"; \
+	  printf "démarrage"; \
+	  for i in $$(seq 1 60); do \
+	    curl -fsS http://127.0.0.1:9200/_cluster/health >/dev/null 2>&1 && break; \
+	    printf "."; sleep 1; \
+	  done; echo; \
+	  curl -fsS http://127.0.0.1:9200/ >/dev/null 2>&1 \
+	    && echo "elasticsearch prêt — pid $$(cat $(ES_DIR)/es.pid)" \
+	    || { echo "ERREUR : pas de réponse — voir $(ES_DIR)/logs/fivorites.log"; exit 1; }; \
+	fi
+
+es-stop:
+	@test -f "$(ES_DIR)/es.pid" \
+	  && { kill "$$(cat $(ES_DIR)/es.pid)" && echo "arrêté"; rm -f "$(ES_DIR)/es.pid"; } \
+	  || echo "pas de fichier pid — déjà arrêté ?"
 
 clean:
 	rm -rf .venv .pytest_cache .ruff_cache $(FRONT)/node_modules

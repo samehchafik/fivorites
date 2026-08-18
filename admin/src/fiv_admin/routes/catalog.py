@@ -22,7 +22,7 @@ from fiv_admin.catalog import (
     fetch_work,
     refresh_cards,
 )
-from fiv_admin.deps import Conn, CurrentUser
+from fiv_admin.deps import Conn, CurrentUser, Search
 from fiv_admin.media import DEFAULT_MEDIA, MEDIA
 
 router = APIRouter()
@@ -45,6 +45,7 @@ def _media(cle: str) -> str:
 async def cards(
     user: CurrentUser,
     conn: Conn,
+    recherche: Search,
     lang: str = Query(default="fr-FR", max_length=16),
     media: str = Query(default=DEFAULT_MEDIA, max_length=16),
     search: str | None = Query(default=None, max_length=120),
@@ -62,29 +63,56 @@ async def cards(
         if key is not None and key not in CARD_SORTS:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"tri inconnu : {key}")
 
-    rows, total = await fetch_cards(
-        conn,
-        CardQuery(
-            lang=lang,
-            media=_media(media),
-            search=(search or "").strip() or None,
-            min_popularity=minPopularity,
-            sort=sort,
-            descending=order == "desc",
-            sort2=sort2 or None,
-            descending2=order2 == "desc",
-            with_poster=withPoster,
-            with_overview=withOverview,
-            page=page,
-            page_size=pageSize,
-        ),
+    q = CardQuery(
+        lang=lang,
+        media=_media(media),
+        search=(search or "").strip() or None,
+        min_popularity=minPopularity,
+        sort=sort,
+        descending=order == "desc",
+        sort2=sort2 or None,
+        descending2=order2 == "desc",
+        with_poster=withPoster,
+        with_overview=withOverview,
+        page=page,
+        page_size=pageSize,
     )
+
+    # Une frappe de recherche passe par Elasticsearch : il filtre, classe par
+    # pertinence — tous titres, toutes langues — et rend les ids de la page ;
+    # Postgres n'a plus qu'à hydrater ces vignettes-là. Le tri demandé est
+    # alors ignoré : chercher, c'est demander la pertinence. S'il ne répond
+    # pas (absent, index pas construit, panne), l'ILIKE historique reprend —
+    # plus lent et unilingue, mais toujours juste.
+    moteur = "sql"
+    rows: list[dict[str, Any]] = []
+    total = 0
+    if q.search:
+        page_es = await recherche.page_cards(
+            MEDIA[q.media],
+            q.search,
+            with_poster=q.with_poster,
+            with_overview=q.with_overview,
+            min_popularity=q.min_popularity,
+            page=q.page,
+            page_size=q.page_size,
+        )
+        if page_es is not None:
+            rows, _ = await fetch_cards(conn, q, ids=page_es.ids)
+            total = page_es.total
+            moteur = "es"
+    if moteur == "sql":
+        rows, total = await fetch_cards(conn, q)
+
     return {
         "items": rows,
         "total": total,
         "page": page,
         "pageSize": pageSize,
         "lang": lang,
+        # D'où vient la liste — utile pour comprendre un classement, et pour
+        # voir d'un coup d'œil qu'un serveur cherche sans son ES.
+        "searchEngine": moteur if q.search else None,
         # L'état de la projection accompagne chaque page : une grille vide a
         # deux causes très différentes — rien de collecté, ou une projection
         # jamais rafraîchie — et le front doit pouvoir les distinguer.

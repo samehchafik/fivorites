@@ -38,7 +38,7 @@ export function Filters({
       <Group gap="sm" align="flex-end" wrap="wrap">
         <TextInput
           label="Recherche"
-          placeholder="titre original ou id TMDB"
+          placeholder="titre (toutes langues) ou id TMDB"
           leftSection={<IconSearch size={16} />}
           value={value.search}
           onChange={(event) => set('search', event.currentTarget.value)}

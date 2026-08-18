@@ -157,7 +157,7 @@ export function SeriesGrid({
         <Group gap="sm" align="flex-end" wrap="wrap">
           <TextInput
             label="Recherche"
-            placeholder="titre, titre original ou id"
+            placeholder="titre (toutes langues) ou id TMDB"
             leftSection={<IconSearch size={16} />}
             value={state.search}
             onChange={(event) => onState({ ...state, search: event.currentTarget.value })}

@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from fiv_admin.deps import Config, Conn, CurrentUser, get_summary_cache
+from fiv_admin.deps import Config, Conn, CurrentUser, Search, get_summary_cache
 from fiv_admin.media import DEFAULT_MEDIA, MEDIA, Media, language_label
 from fiv_admin.queries import (
     SORTS,
@@ -106,6 +106,7 @@ async def items(
     user: CurrentUser,
     conn: Conn,
     settings: Config,
+    recherche: Search,
     lang: str = Query(default="fr-FR", max_length=16),
     media: MediaKey = DEFAULT_MEDIA,
     status_filter: str = Query(default="all", alias="status"),
@@ -137,7 +138,25 @@ async def items(
         page=page,
         page_size=pageSize,
     )
-    rows, total = await fetch_items(conn, query)
+
+    # Une recherche passe par Elasticsearch : il classe les meilleurs ids —
+    # tous titres, toutes langues, catalogue entier — et le SQL applique
+    # ensuite le filtre d'état, trop mouvant pour être indexé, puis pagine
+    # dans l'ordre de pertinence. Le total est donc borné par le plafond
+    # d'ids (voir `ACQUISITION_MAX_IDS`) : une recherche n'est pas une liste
+    # à parcourir, elle se précise. ES absent = l'ILIKE historique.
+    moteur = "sql"
+    rows: list[dict[str, Any]] = []
+    total = 0
+    if query.search:
+        page_es = await recherche.ids_acquisition(
+            target, query.search, min_popularity=query.min_popularity
+        )
+        if page_es is not None:
+            rows, total = await fetch_items(conn, query, ids=page_es.ids)
+            moteur = "es"
+    if moteur == "sql":
+        rows, total = await fetch_items(conn, query)
 
     return {
         "items": rows,
@@ -145,6 +164,7 @@ async def items(
         "page": page,
         "pageSize": pageSize,
         "lang": lang,
+        "searchEngine": moteur if query.search else None,
         # Les colonnes de langue du tableau : les langues configurées d'abord,
         # dans leur ordre, puis celles qui n'existent qu'en base.
         "languages": list(settings.languages),

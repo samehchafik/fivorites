@@ -27,10 +27,12 @@ db_app = typer.Typer(help="Base de données", no_args_is_help=True)
 user_app = typer.Typer(help="Comptes d'administration", no_args_is_help=True)
 catalog_app = typer.Typer(help="Projection d'affichage du catalogue", no_args_is_help=True)
 training_app = typer.Typer(help="Entraînement de la notation", no_args_is_help=True)
+search_app = typer.Typer(help="Recherche plein texte (Elasticsearch)", no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(training_app, name="training")
+app.add_typer(search_app, name="search")
 
 
 @training_app.command("note")
@@ -957,6 +959,125 @@ def catalog_refresh() -> None:
             return await refresh_cards(conn)
 
     typer.echo(f"{_run(run()):,} vignette(s) dans la projection".replace(",", " "))
+
+
+@search_app.command("reindex")
+def search_reindex(
+    univers: Annotated[
+        str,
+        typer.Option("--univers", help="series, movies, ou all (défaut)."),
+    ] = "all",
+    lot: Annotated[
+        int, typer.Option("--lot", min=50, max=5000, help="Documents par envoi bulk.")
+    ] = 500,
+) -> None:
+    """Reconstruit les index de recherche et bascule les alias, sans coupure.
+
+    À lancer après une passe de collecte ou un `catalog refresh` : l'index se
+    reconstruit en entier — il n'est jamais mis à jour au fil de l'eau, c'est
+    le même régime que la projection de vignettes, et c'est ce qui garde la
+    réindexation triviale à raisonner : un état, pas un delta.
+
+    Le gros du temps part dans la relecture des payloads : les titres traduits
+    ne vivent que dans le brut, et c'est précisément eux qui font que « Le
+    Trône de fer » se met à répondre.
+    """
+    import time
+
+    import httpx
+
+    from fiv_admin.media import MEDIA
+    from fiv_admin.search import etat, reindexer
+
+    settings = get_settings()
+    if not settings.es_url:
+        typer.echo("ERREUR : ES_URL est vide — la recherche est désactivée.")
+        raise typer.Exit(1)
+
+    cibles = [m for m in MEDIA.values() if m.catalog_table is not None]
+    if univers != "all":
+        cibles = [m for m in cibles if m.univers == univers]
+        if not cibles:
+            typer.echo(f"ERREUR : univers inconnu ou sans catalogue : {univers}")
+            raise typer.Exit(1)
+
+    async def run() -> None:
+        # Un client à part, sans le timeout court des routes : le
+        # `force_merge` final d'1,5 M de documents se compte en minutes.
+        async with httpx.AsyncClient(
+            base_url=settings.es_url, timeout=httpx.Timeout(600.0, connect=5.0)
+        ) as http:
+            try:
+                await http.get("/")
+            except httpx.HTTPError as exc:
+                typer.echo(f"ERREUR : Elasticsearch injoignable sur {settings.es_url} : {exc}")
+                typer.echo("→ sur le poste : make es-start (après make bootstrap-es)")
+                raise typer.Exit(1) from exc
+
+            async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+                for media in cibles:
+                    typer.echo(f"{media.univers} : extraction et indexation…")
+                    debut = time.monotonic()
+                    stats = await reindexer(
+                        conn,
+                        http,
+                        media,
+                        lot=lot,
+                        avancement=lambda n: print(f"\r  {n:,}".replace(",", " "), end=""),
+                    )
+                    print()
+                    compte = f"{stats['documents']:,}".replace(",", " ")
+                    duree = time.monotonic() - debut
+                    typer.echo(
+                        f"  {compte} documents → {stats['index']}"
+                        f" (alias {stats['alias']}, {duree:.0f} s)"
+                    )
+                    if stats["remplaces"]:
+                        typer.echo(f"  remplacé : {', '.join(stats['remplaces'])}")
+
+            bilan = await etat(http)
+            typer.echo(f"santé : {bilan['sante']}")
+            for nom, infos in sorted(bilan["indices"].items()):
+                typer.echo(
+                    f"  {nom:<32} {infos['documents']:>9,} docs  {infos['taille']}".replace(
+                        ",", " "
+                    )
+                )
+
+    _run(run())
+
+
+@search_app.command("status")
+def search_status() -> None:
+    """La santé du service et les index de recherche en place."""
+    import httpx
+
+    from fiv_admin.search import etat
+
+    settings = get_settings()
+    if not settings.es_url:
+        typer.echo("recherche désactivée (ES_URL vide) — les routes servent l'ILIKE.")
+        raise typer.Exit()
+
+    async def run() -> None:
+        async with httpx.AsyncClient(base_url=settings.es_url, timeout=5.0) as http:
+            try:
+                bilan = await etat(http)
+            except httpx.HTTPError as exc:
+                typer.echo(f"Elasticsearch injoignable sur {settings.es_url} : {exc}")
+                typer.echo("Les routes servent l'ILIKE en attendant — rien n'est cassé.")
+                raise typer.Exit(1) from exc
+            typer.echo(f"santé : {bilan['sante']}  ({settings.es_url})")
+            if not bilan["indices"]:
+                typer.echo("aucun index — lancer `fiv-admin search reindex`")
+            for nom, infos in sorted(bilan["indices"].items()):
+                typer.echo(
+                    f"  {nom:<32} {infos['documents']:>9,} docs  {infos['taille']}".replace(
+                        ",", " "
+                    )
+                )
+
+    _run(run())
 
 
 @app.callback()

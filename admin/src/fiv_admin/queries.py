@@ -25,6 +25,7 @@ brut en fera plusieurs millions de lignes :
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -75,9 +76,18 @@ class ItemsQuery:
 
 
 async def fetch_items(
-    conn: psycopg.AsyncConnection, q: ItemsQuery
+    conn: psycopg.AsyncConnection, q: ItemsQuery, ids: Sequence[int] | None = None
 ) -> tuple[list[dict[str, Any]], int]:
-    """Une page du tableau, et le nombre total de lignes du filtre."""
+    """Une page du tableau, et le nombre total de lignes du filtre.
+
+    `ids` vient d'Elasticsearch (voir `search.py`) : les meilleures œuvres pour
+    le texte tapé, déjà classées. Le SQL applique alors le filtre d'état — qui
+    vit dans `fetch_state`, trop mouvant pour être indexé — et pagine dans cet
+    ordre-là. Le tri demandé est ignoré : une recherche se classe par
+    pertinence, pas par popularité.
+    """
+    if ids is not None and not ids:
+        return [], 0
     catalog = sql.Identifier(q.media.catalog_table or "")
     order = sql.SQL("{} {} nulls last").format(
         SORTS[q.sort], sql.SQL("desc") if q.descending else sql.SQL("asc")
@@ -92,7 +102,7 @@ async def fetch_items(
               on f.source = %(source)s and f.kind = %(kind)s and f.source_id = c.id::text
             """
         )
-        if q.sort == "fetched"
+        if q.sort == "fetched" and ids is None
         else sql.SQL("")
     )
 
@@ -109,17 +119,25 @@ async def fetch_items(
         "min_popularity": q.min_popularity,
     }
 
-    where = sql.SQL(" and ").join(
-        [
-            sql.SQL(
-                "(%(search)s::text is null"
-                " or c.original_name ilike %(like)s"
-                " or c.id = %(search_id)s::int)"
-            ),
-            sql.SQL("(%(min_popularity)s::real is null or c.popularity >= %(min_popularity)s)"),
-            _status_predicate(q.status),
-        ]
-    )
+    if ids is not None:
+        # ES a déjà filtré le texte et la popularité ; ne restent que l'état —
+        # relu ici parce qu'il change à chaque passe de collecte — et l'ordre
+        # de pertinence, porté par la position dans le tableau d'ids.
+        params["ids"] = list(ids)
+        where = sql.SQL(" and ").join([sql.SQL("c.id = any(%(ids)s)"), _status_predicate(q.status)])
+        order = sql.SQL("array_position(%(ids)s, c.id)")
+    else:
+        where = sql.SQL(" and ").join(
+            [
+                sql.SQL(
+                    "(%(search)s::text is null"
+                    " or c.original_name ilike %(like)s"
+                    " or c.id = %(search_id)s::int)"
+                ),
+                sql.SQL("(%(min_popularity)s::real is null or c.popularity >= %(min_popularity)s)"),
+                _status_predicate(q.status),
+            ]
+        )
 
     count_sql = sql.SQL("select count(*) as total from {catalog} c {join} where {where}").format(
         catalog=catalog, join=join, where=where
@@ -209,7 +227,9 @@ async def fetch_items(
         where=where,
         order=order,
         # Dans le SELECT final les colonnes viennent de `page`, pas de `c`.
-        order_page=sql.SQL("{} {} nulls last").format(
+        order_page=sql.SQL("array_position(%(ids)s, p.id)")
+        if ids is not None
+        else sql.SQL("{} {} nulls last").format(
             sql.SQL("p.popularity")
             if q.sort == "popularity"
             else sql.SQL("p.id")

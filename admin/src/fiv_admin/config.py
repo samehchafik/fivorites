@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     # court instant plutôt que de les recalculer à chaque affichage.
     summary_cache_seconds: int = 60
 
+    # La recherche plein texte (voir `search.py`). Sur le poste, c'est l'ES
+    # vendorisé (`make bootstrap-es es-start`) ; sur le serveur, un paquet apt
+    # sur l'hôte, joint par la passerelle Docker comme Postgres. Vide =
+    # désactivée — et s'il ne répond pas, les routes retombent d'elles-mêmes
+    # sur leur ILIKE : ES accélère, il ne conditionne rien.
+    es_url: str = "http://127.0.0.1:9200"
+    # Une recherche qui met plus de temps que ça a déjà perdu contre le SQL.
+    es_timeout: float = 3.0
+
     @property
     def has_front(self) -> bool:
         """Y a-t-il quelque chose à servir — pas seulement un répertoire.

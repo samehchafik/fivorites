@@ -32,6 +32,7 @@ from fiv_admin.db import build_pool
 from fiv_admin.oeuvre import SansPivot
 from fiv_admin.queries import SummaryCache
 from fiv_admin.routes import acquisition, auth, catalog, training
+from fiv_admin.search import Recherche
 from fiv_admin.security import LoginThrottle
 
 log = logging.getLogger(__name__)
@@ -90,9 +91,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         await pool.open(wait=True, timeout=10)
         app.state.pool = pool
+        # Aucune vérification de santé ici : ES peut être absent au démarrage
+        # (il est facultatif), et c'est le disjoncteur du client qui gère les
+        # pannes en cours de route.
+        app.state.search = Recherche(settings.es_url, timeout=settings.es_timeout)
         try:
             yield
         finally:
+            await app.state.search.fermer()
             await pool.close()
 
     app = FastAPI(

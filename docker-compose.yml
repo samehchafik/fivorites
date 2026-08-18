@@ -117,6 +117,11 @@ services:
       CORS_ORIGINS: ""
       SEASON_LANGUAGES: ${TMDB_SEASON_LANGUAGES:-fr-FR,en-US,es-ES,ar-SA,tr-TR}
       WEB_DIST: /srv/www
+      # La recherche plein texte. Comme Postgres, Elasticsearch tourne sur
+      # l'HÔTE (apt, voir doc/recherche-elasticsearch.md), joint par la
+      # passerelle — pas un conteneur de plus à orchestrer. Facultatif : tant
+      # qu'il ne répond pas, la recherche retombe sur l'ILIKE historique.
+      ES_URL: ${ES_URL:-http://172.28.0.1:9200}
       # L'atelier d'entraînement (pages Training 1 et 2). Facultatives : sans
       # elles, tout le reste de l'admin fonctionne et les routes /training
       # répondent par un message clair.

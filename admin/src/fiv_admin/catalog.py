@@ -15,6 +15,7 @@ redemandé la saison entière dans cette langue.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -73,13 +74,17 @@ _NOTE_PONDEREE = """(case
     end)"""
 
 
-def _note(table: str) -> sql.Composable:
+def note_ponderee(table: str) -> sql.Composable:
     """La note pondérée, écrite sur l'alias de table demandé.
 
     Une série sans aucun vote vaut `null`, jamais la moyenne : elle n'est pas
     « moyennement notée », elle n'est pas notée. Le `nulls last` du tri la
     renvoie donc en fin de liste dans les deux sens, ce qui est la seule place
     honnête pour une absence de note.
+
+    Publique parce que la réindexation (`search.py`) fige la même formule dans
+    chaque document : le classement d'ES et le tri de la grille doivent rester
+    une seule et même règle.
     """
     return sql.SQL(_NOTE_PONDEREE).format(t=sql.SQL(table), c=NOTE_MOYENNE, m=NOTE_VOTES_FICTIFS)
 
@@ -97,7 +102,7 @@ CARD_SORTS: dict[str, sql.Composable] = {
     "air_year": sql.SQL("extract(year from v.first_air_date)"),
     "name": sql.SQL("coalesce(v.name, v.original_name)"),
     "popularity": sql.SQL("c.popularity"),
-    "rating": _note("v"),
+    "rating": note_ponderee("v"),
     "fetched": sql.SQL("v.fetched_at"),
 }
 
@@ -114,7 +119,7 @@ PAGE_SORTS: dict[str, sql.Composable] = {
     "air_year": sql.SQL("extract(year from p.first_air_date)"),
     "name": sql.SQL("coalesce(p.name, p.original_name)"),
     "popularity": sql.SQL("p.popularity"),
-    "rating": _note("p"),
+    "rating": note_ponderee("p"),
     "fetched": sql.SQL("p.fetched_at"),
 }
 
@@ -246,10 +251,22 @@ def _order_by(
 
 
 async def fetch_cards(
-    conn: psycopg.AsyncConnection, q: CardQuery
+    conn: psycopg.AsyncConnection, q: CardQuery, ids: Sequence[int] | None = None
 ) -> tuple[list[dict[str, Any]], int]:
-    """Une page de vignettes, et le total du filtre."""
+    """Une page de vignettes, et le total du filtre.
+
+    Deux régimes, même requête :
+
+    * `ids=None` — le filtrage, le tri et la pagination sont faits ici, en SQL.
+    * `ids=[…]` — Elasticsearch a déjà filtré, classé et paginé (voir
+      `search.py`) ; le SQL ne fait plus qu'hydrater ces vignettes-là, dans
+      l'ordre reçu (`array_position`). Le total rendu est alors le nombre de
+      lignes hydratées : c'est le total d'ES qui fait foi, et c'est l'appelant
+      qui le porte.
+    """
     univers = MEDIA[q.media]
+    if ids is not None and not ids:
+        return [], 0
     # Le français est déjà dans la projection : inutile de rouvrir vingt-quatre
     # payloads pour retrouver ce qu'on a sous la main. C'est aussi la langue par
     # défaut, donc le cas le plus fréquent — la page d'accueil reste aussi
@@ -272,45 +289,62 @@ async def fetch_cards(
         "min_popularity": q.min_popularity,
     }
 
-    where = sql.SQL(" and ").join(
-        [
-            sql.SQL(
-                "(%(search)s::text is null"
-                " or v.name ilike %(like)s"
-                " or v.original_name ilike %(like)s"
-                " or v.id = %(search_id)s::int)"
-            ),
-            sql.SQL("(%(min_popularity)s::real is null or c.popularity >= %(min_popularity)s)"),
-            # `nullif` parce que TMDB renvoie tantôt `null`, tantôt une chaîne
-            # vide : les deux veulent dire « pas d'affiche », et n'en traiter
-            # qu'un laisserait passer des vignettes trouées.
-            sql.SQL("nullif(v.poster_path, '') is not null") if q.with_poster else sql.SQL("true"),
-            # Même précaution que pour l'affiche, et elle sert plus souvent
-            # encore : un `overview` non traduit revient en chaîne vide, pas en
-            # `null`. Tester `is not null` seul ne filtrerait presque rien.
-            sql.SQL("nullif(btrim(v.overview), '') is not null")
-            if q.with_overview
-            else sql.SQL("true"),
-        ]
-    )
+    if ids is not None:
+        # La page est déjà décidée : ces ids-là, dans cet ordre-là. Les autres
+        # filtres ont été appliqués par ES, les rejouer ici pourrait seulement
+        # diverger — au pire une vignette disparue de la projection tombe de
+        # la page, ce que la jointure fait d'elle-même.
+        params["ids"] = list(ids)
+        params["limit"] = len(ids)
+        params["offset"] = 0
+        where = sql.SQL("v.id = any(%(ids)s)")
+        order = sql.SQL("array_position(%(ids)s, v.id)")
+        order_page = sql.SQL("array_position(%(ids)s, p.id)")
+    else:
+        where = sql.SQL(" and ").join(
+            [
+                sql.SQL(
+                    "(%(search)s::text is null"
+                    " or v.name ilike %(like)s"
+                    " or v.original_name ilike %(like)s"
+                    " or v.id = %(search_id)s::int)"
+                ),
+                sql.SQL("(%(min_popularity)s::real is null or c.popularity >= %(min_popularity)s)"),
+                # `nullif` parce que TMDB renvoie tantôt `null`, tantôt une
+                # chaîne vide : les deux veulent dire « pas d'affiche », et
+                # n'en traiter qu'un laisserait passer des vignettes trouées.
+                sql.SQL("nullif(v.poster_path, '') is not null")
+                if q.with_poster
+                else sql.SQL("true"),
+                # Même précaution que pour l'affiche, et elle sert plus souvent
+                # encore : un `overview` non traduit revient en chaîne vide,
+                # pas en `null`. Tester `is not null` seul ne filtrerait
+                # presque rien.
+                sql.SQL("nullif(btrim(v.overview), '') is not null")
+                if q.with_overview
+                else sql.SQL("true"),
+            ]
+        )
 
-    order = _order_by(q.criteria, CARD_SORTS, sql.SQL("v.id desc"))
-    order_page = _order_by(q.criteria, PAGE_SORTS, sql.SQL("p.id desc"))
+        order = _order_by(q.criteria, CARD_SORTS, sql.SQL("v.id desc"))
+        order_page = _order_by(q.criteria, PAGE_SORTS, sql.SQL("p.id desc"))
 
     async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            sql.SQL(
-                """
-                select count(*) as total
-                from admin.{vue} v
-                left join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
-                where {where}
-                """
-            ).format(where=where, vue=sql.Identifier(univers.card_view)),
-            params,
-        )
-        row = await cur.fetchone()
-        total = int(row["total"]) if row else 0
+        total = 0
+        if ids is None:
+            await cur.execute(
+                sql.SQL(
+                    """
+                    select count(*) as total
+                    from admin.{vue} v
+                    left join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
+                    where {where}
+                    """
+                ).format(where=where, vue=sql.Identifier(univers.card_view)),
+                params,
+            )
+            row = await cur.fetchone()
+            total = int(row["total"]) if row else 0
 
         await cur.execute(
             sql.SQL(
@@ -432,7 +466,7 @@ async def fetch_cards(
         )
         rows = await cur.fetchall()
 
-    return [_shape_card(row, q.lang) for row in rows], total
+    return [_shape_card(row, q.lang) for row in rows], (total if ids is None else len(rows))
 
 
 def _repli_titre(row: dict[str, Any], lang: str) -> str | None:

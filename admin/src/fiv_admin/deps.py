@@ -10,6 +10,7 @@ from fastapi import Depends, HTTPException, Request, status
 
 from fiv_admin.config import Settings
 from fiv_admin.queries import SummaryCache
+from fiv_admin.search import Recherche
 from fiv_admin.security import LoginThrottle, read_session
 
 
@@ -27,6 +28,10 @@ def get_throttle(request: Request) -> LoginThrottle:
 
 def get_summary_cache(request: Request) -> SummaryCache:
     return request.app.state.summary_cache
+
+
+def get_search(request: Request) -> Recherche:
+    return request.app.state.search
 
 
 async def get_conn(request: Request) -> AsyncIterator[psycopg.AsyncConnection]:
@@ -64,3 +69,4 @@ async def current_user(
 CurrentUser = Annotated[str, Depends(current_user)]
 Conn = Annotated[psycopg.AsyncConnection, Depends(get_conn)]
 Config = Annotated[Settings, Depends(get_config)]
+Search = Annotated[Recherche, Depends(get_search)]
