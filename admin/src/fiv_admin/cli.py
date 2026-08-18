@@ -805,10 +805,17 @@ def training_validite(
                     f"  {g['axe']:<11}{g['avec']:>8}{avec:>7}{sans:>7}{ecart:>8}"
                     f"   {', '.join(g['genres'])[:38]}"
                 )
+            if bilan["genresOrphelins"]:
+                orphelins = ", ".join(
+                    f"{g['genre']} ({g['oeuvres']})" for g in bilan["genresOrphelins"]
+                )
+                typer.echo(f"\n  genres qu'aucun axe ne revendique : {orphelins}")
             typer.echo(
                 "\n  Un écart proche de zéro dirait que l'axe ne mesure rien que"
                 "\n  quelqu'un d'autre reconnaîtrait. Un écart énorme dirait qu'il"
                 "\n  recopie le genre, ce que le barème interdit explicitement."
+                "\n  Un axe à 0 œuvre dit que la table de genres ne colle pas au"
+                "\n  catalogue — regarder la ligne des orphelins avant de conclure."
             )
 
             typer.echo(

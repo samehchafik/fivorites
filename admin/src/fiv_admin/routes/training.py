@@ -2180,14 +2180,46 @@ async def exporter_corpus(
 # collerait parfaitement au genre aurait échoué, et un axe sans aucun lien
 # mesurerait quelque chose que personne ne reconnaîtrait. C'est l'entre-deux
 # qu'on cherche : un écart net, pas un écart total.
+# ⚠ Les deux langues, et ce n'est pas de la prudence : **les fiches sont
+# collectées en `fr-FR`**, donc `payload->'genres'` porte « Comédie », « Drame »,
+# « Documentaire ». La première version de cette table était en anglais et
+# rendait « 0 œuvre » sur joie, tristesse et réflexion — les trois axes dont le
+# genre attendu se traduit. Les trois qui semblaient marcher (Action, Animation,
+# Thriller) étaient ceux qui s'écrivent pareil dans les deux langues.
+#
+# La comparaison passe par `_sans_accent`, pour que « Mystère » et « Mystery »
+# se rejoignent.
 GENRES_ATTENDUS = {
-    "joie": {"Comedy"},
-    "reve": {"Sci-Fi & Fantasy", "Fantasy", "Science Fiction", "Animation"},
-    "tristesse": {"Drama"},
-    "peur": {"Horror", "Thriller", "Mystery"},
-    "reflexion": {"Documentary"},
-    "action": {"Action & Adventure", "Action", "Adventure", "War & Politics", "War"},
+    "joie": {"Comedy", "Comédie"},
+    "reve": {
+        "Sci-Fi & Fantasy",
+        "Fantasy",
+        "Fantastique",
+        "Science Fiction",
+        "Science-Fiction",
+        "Animation",
+    },
+    "tristesse": {"Drama", "Drame"},
+    "peur": {"Horror", "Horreur", "Thriller", "Mystery", "Mystère"},
+    "reflexion": {"Documentary", "Documentaire"},
+    "action": {
+        "Action & Adventure",
+        "Action",
+        "Adventure",
+        "Aventure",
+        "War & Politics",
+        "War",
+        "Guerre",
+    },
 }
+
+
+def _sans_accent(texte: str) -> str:
+    """Un nom de genre comparable d'une langue à l'autre."""
+    import unicodedata
+
+    plat = unicodedata.normalize("NFKD", texte.strip().lower())
+    return "".join(c for c in plat if not unicodedata.combining(c))
 
 
 def _ancres_du_bareme(prompt: str) -> dict[str, dict[str, float]]:
@@ -2333,13 +2365,18 @@ async def mesurer_validite(conn: Any, rubric: dict[str, Any]) -> dict[str, Any]:
         )
         lignes = await cur.fetchall()
     genres: dict[int, set[str]] = {}
+    presents: dict[str, int] = {}
     for row in lignes:
         if row["genre"]:
-            genres.setdefault(row["oeuvre_id"], set()).add(row["genre"])
+            plat = _sans_accent(row["genre"])
+            genres.setdefault(row["oeuvre_id"], set()).add(plat)
+            presents[plat] = presents.get(plat, 0) + 1
 
     bilan_genres: list[dict[str, Any]] = []
+    revendiques: set[str] = set()
     for axe in axes:
-        attendus = GENRES_ATTENDUS.get(axe, set())
+        attendus = {_sans_accent(g) for g in GENRES_ATTENDUS.get(axe, set())}
+        revendiques |= attendus
         avec = [n[axe] for o, n in by_work.items() if axe in n and genres.get(o, set()) & attendus]
         sans = [
             n[axe]
@@ -2398,6 +2435,16 @@ async def mesurer_validite(conn: Any, rubric: dict[str, Any]) -> dict[str, Any]:
         "oeuvres": len(by_work),
         "ancres": bilan_ancres,
         "genres": bilan_genres,
+        # Les genres que le catalogue porte et qu'aucun axe ne revendique.
+        # Sans cette liste, une table écrite dans la mauvaise langue rend
+        # « 0 œuvre » et se lit comme un résultat — c'est exactement ce qui
+        # s'est produit au premier essai.
+        "genresOrphelins": [
+            {"genre": g, "oeuvres": n}
+            for n, g in sorted(
+                ((n, g) for g, n in presents.items() if g not in revendiques), reverse=True
+            )[:8]
+        ],
         "contreJuge": bilan_juges,
         "contreJugeOeuvres": len(contre),
     }
