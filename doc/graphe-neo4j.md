@@ -508,11 +508,16 @@ le réseau interne du compose, où le port reste 7474 quoi qu'il arrive. Seul le
 tunnel se décale :
 
 ```bash
-ssh -L 7474:127.0.0.1:7475 -L 7687:127.0.0.1:7688 serveur
+ssh -L 7475:127.0.0.1:7475 -L 7688:127.0.0.1:7688 serveur
 ```
 
-Le tunnel garde **7687 côté poste** : le navigateur Neo4j y ouvre sa session
-Bolt en dur.
+**Le même numéro des deux côtés, et c'est obligatoire.** Le navigateur Neo4j
+n'ouvre pas sa session Bolt sur un port de son choix : il utilise l'adresse que
+le serveur lui **annonce**, `server.bolt.advertised_address`, que le compose
+tient aligné sur `NEO4J_BOLT_PORT`. Tunneliser vers un autre numéro local
+donnerait une page qui tente 7688 sans que rien n'écoute — ou pire, sur une
+machine où un autre Neo4j occupe le port visé, une session ouverte **sur le
+mauvais graphe**, sans erreur ni avertissement.
 
 Ce que ça coûte : deux JVM et deux caches de pages sur la même machine, à côté
 d'Elasticsearch et de Postgres. `NEO4J_HEAP` et `NEO4J_PAGECACHE` (1 Go chacun

@@ -242,22 +242,41 @@ traduction d'adresse, donc `--dport` désigne le port **du conteneur**. Pour
 viser le port publié, il faut `conntrack` :
 
 ```bash
-IF=eth0                       # l'interface externe réelle — `ip route get 1.1.1.1`
-AUTORISEE=203.0.113.7         # l'IP fixe du poste
+IF=$(ip route get 1.1.1.1 | awk '{print $5; exit}')   # l'interface externe réelle
+AUTORISEE=203.0.113.7                                  # l'IP fixe du poste
+PORTS="9200 7475 7688"                                 # ceux PUBLIÉS, pas ceux des conteneurs
 
-sudo iptables -A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-for PORT in 9200 7474 7687; do
-  sudo iptables -A DOCKER-USER -i $IF -p tcp -m conntrack --ctorigdstport $PORT \
-       -s $AUTORISEE -j ACCEPT
-  sudo iptables -A DOCKER-USER -i $IF -p tcp -m conntrack --ctorigdstport $PORT -j DROP
+# `-I`, jamais `-A` : la chaîne DOCKER-USER se termine par un `RETURN`, et une
+# règle ajoutée après lui n'est jamais lue. C'est l'erreur qui donne un
+# pare-feu muet — les règles sont là, `iptables -S` les montre, elles ne
+# servent à rien.
+for PORT in $PORTS; do
+  sudo iptables -I DOCKER-USER 1 -i "$IF" -p tcp -m conntrack --ctorigdstport $PORT -j DROP
+  sudo iptables -I DOCKER-USER 1 -i "$IF" -p tcp -m conntrack --ctorigdstport $PORT \
+       -s "$AUTORISEE" -j ACCEPT
 done
+# En tête de chaîne, donc inséré en dernier : sans lui, les réponses aux
+# requêtes SORTANTES des conteneurs se font jeter.
+sudo iptables -I DOCKER-USER 1 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+sudo iptables -S DOCKER-USER     # relire l'ordre obtenu avant de sauver
 sudo netfilter-persistent save
 ```
 
-L'ordre compte : la ligne `ESTABLISHED,RELATED` doit venir en premier, sinon les
-réponses aux requêtes sortantes des conteneurs se font jeter. Pour plusieurs
-adresses, ajouter une ligne `ACCEPT` par adresse **avant** le `DROP` du port —
-`! -s` répété ne marche pas, chaque règle rejetterait ce que l'autre autorise.
+Les ports à lister sont ceux **publiés côté hôte**, pas ceux des conteneurs :
+si `NEO4J_HTTP_PORT`/`NEO4J_BOLT_PORT` ont été décalés (§ cohabitation dans
+[`graphe-neo4j.md`](graphe-neo4j.md)), ce sont les valeurs décalées qui comptent.
+
+L'ordre final doit être : `ESTABLISHED,RELATED` en premier, puis pour chaque
+port son `ACCEPT` **avant** son `DROP`. Pour plusieurs adresses, une ligne
+`ACCEPT` de plus par adresse — `! -s` répété ne marche pas, chaque règle
+rejetterait ce que l'autre autorise.
+
+⚠ **Ces règles ne protègent que les conteneurs.** Un service qui tourne
+directement sur l'hôte — c'est le cas du Neo4j installé sur cette machine, qui
+écoute sur `*:7474` et `*:7687` — passe par `INPUT`, pas par `FORWARD`, et
+n'est pas concerné par une seule ligne de ce qui précède. Le fermer demande une
+règle `INPUT` séparée, et de vérifier d'abord qui s'en sert.
 
 Contrôle, depuis une machine qui n'est pas dans la liste :
 

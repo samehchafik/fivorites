@@ -191,6 +191,16 @@ services:
       NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP:-1g}
       NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP:-1g}
       NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-1g}
+      # L'adresse Bolt que le serveur ANNONCE, et c'est un piège dès que le
+      # port publié n'est plus 7687.
+      #
+      # Le navigateur Neo4j est servi en HTTP, mais c'est le poste du client
+      # qui ouvre la session Bolt — vers l'adresse que le serveur lui annonce.
+      # Sans cette ligne, il annonce 7687 quel que soit le port publié : sur
+      # une machine où un AUTRE Neo4j occupe 7687 (le cas ici), le navigateur
+      # de notre graphe ouvrirait une session sur le graphe du voisin. Pas
+      # d'erreur, pas d'avertissement — juste une base qui n'est pas la bonne.
+      NEO4J_server_bolt_advertised__address: :${NEO4J_BOLT_PORT:-7687}
     mem_limit: ${NEO4J_MEM_LIMIT:-3g}
     volumes:
       - neo4j-data:/data
