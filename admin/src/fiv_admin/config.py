@@ -132,6 +132,29 @@ class Settings(BaseSettings):
     # Une recherche qui met plus de temps que ça a déjà perdu contre le SQL.
     es_timeout: float = 3.0
 
+    # Le graphe (voir `graphe.py` et doc/graphe-neo4j.md). Sur le poste, c'est
+    # le Neo4j vendorisé (`make bootstrap-neo4j neo4j-start`) ; sur le serveur,
+    # un service du compose, joint par le réseau interne.
+    #
+    # C'est le port HTTP (7474), pas Bolt (7687) : le client parle la Query
+    # API en httpx, sans pilote — même choix que pour Elasticsearch.
+    #
+    # Vide = pas de graphe. Rien n'en dépend encore : la projection est une
+    # commande, pas un service, et l'admin démarre sans.
+    neo4j_url: str = "http://127.0.0.1:7474"
+    neo4j_user: str = "neo4j"
+    # Neo4j refuse de démarrer avec le mot de passe initial `neo4j` : il en
+    # exige un autre au premier démarrage. Pas de défaut ici, donc — un défaut
+    # serait un mot de passe en dur qui finirait en production.
+    neo4j_password: str = ""
+    # Neo4j Community n'autorise qu'une base par instance, et elle s'appelle
+    # `neo4j`. Le réglage existe pour l'édition Enterprise et pour une base de
+    # test montée à côté.
+    neo4j_database: str = "neo4j"
+    # Large : une projection envoie des lots de plusieurs centaines d'œuvres,
+    # et un `MERGE` sur un lot n'est pas une frappe au clavier.
+    neo4j_timeout: float = 60.0
+
     @property
     def has_front(self) -> bool:
         """Y a-t-il quelque chose à servir — pas seulement un répertoire.

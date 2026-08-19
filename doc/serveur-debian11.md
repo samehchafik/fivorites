@@ -196,6 +196,85 @@ sudo ufw allow from 172.28.0.0/16 to any port 5432 proto tcp
 Dans les deux cas l'ouverture reste étroite : un sous-réseau privé, un port. La
 base n'est jamais jointe depuis l'extérieur.
 
+### Exposer ES et Neo4j à des IP fixes
+
+Les deux services publient leurs ports sur `127.0.0.1` par défaut. Ça suffit
+pour les joindre depuis un poste, **sans rien ouvrir** :
+
+```bash
+ssh -L 9200:127.0.0.1:9200 -L 7474:127.0.0.1:7474 -L 7687:127.0.0.1:7687 serveur
+```
+
+Le navigateur Neo4j répond alors sur `http://127.0.0.1:7474`. Les deux ports de
+Neo4j sont nécessaires : la page est servie en 7474, mais c'est le navigateur du
+poste qui ouvre la session Bolt en 7687.
+
+**C'est la solution recommandée**, et pas par prudence de principe : ES tourne
+ici **sans aucune authentification** (`xpack.security.enabled: false`), et Neo4j
+parle en clair. Le tunnel les laisse tels quels, chiffrés par SSH, sans une
+règle de pare-feu à écrire.
+
+Si l'ouverture directe est vraiment nécessaire, il faut **deux** choses, et la
+première seule ne protège rien :
+
+```bash
+# 1. L'interface d'écoute, dans .env à côté du compose
+ES_BIND=0.0.0.0
+NEO4J_BIND=0.0.0.0
+```
+
+```bash
+sudo docker compose up -d elasticsearch neo4j
+```
+
+**Ça ne filtre pas la source** — ça dit seulement sur quelle interface de
+l'hôte le port écoute. Et voici le piège, différent de celui de la chaîne INPUT
+plus haut :
+
+> **`ufw` et `iptables -A INPUT` ne protègent PAS un port publié par Docker.**
+> Docker fait la traduction d'adresse dans la table `nat`, en `PREROUTING` :
+> les paquets sont détournés **avant** d'atteindre `INPUT`. La règle est écrite,
+> `ufw status` la montre, et elle ne sert à rien.
+
+La chaîne qui mord est `DOCKER-USER`, que Docker place en tête de `FORWARD` et
+ne réécrit jamais. Un détail de plus : à ce point les paquets ont déjà subi la
+traduction d'adresse, donc `--dport` désigne le port **du conteneur**. Pour
+viser le port publié, il faut `conntrack` :
+
+```bash
+IF=eth0                       # l'interface externe réelle — `ip route get 1.1.1.1`
+AUTORISEE=203.0.113.7         # l'IP fixe du poste
+
+sudo iptables -A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+for PORT in 9200 7474 7687; do
+  sudo iptables -A DOCKER-USER -i $IF -p tcp -m conntrack --ctorigdstport $PORT \
+       -s $AUTORISEE -j ACCEPT
+  sudo iptables -A DOCKER-USER -i $IF -p tcp -m conntrack --ctorigdstport $PORT -j DROP
+done
+sudo netfilter-persistent save
+```
+
+L'ordre compte : la ligne `ESTABLISHED,RELATED` doit venir en premier, sinon les
+réponses aux requêtes sortantes des conteneurs se font jeter. Pour plusieurs
+adresses, ajouter une ligne `ACCEPT` par adresse **avant** le `DROP` du port —
+`! -s` répété ne marche pas, chaque règle rejetterait ce que l'autre autorise.
+
+Contrôle, depuis une machine qui n'est pas dans la liste :
+
+```bash
+curl -m 5 http://<serveur>:9200/     # doit expirer, pas répondre
+```
+
+Et ce que ça ne règle toujours pas : **le trafic reste en clair**. L'IP fixe
+protège de qui se connecte, pas de qui écoute sur le chemin. Le mot de passe
+Neo4j part en base64 dans chaque en-tête, et ES n'en demande aucun. Avant
+d'ouvrir pour de bon :
+
+- **ES** : activer `xpack.security.enabled: true`, ce qui impose des comptes et
+  une reconfiguration de `ES_URL` côté `admin` — ce n'est pas une case à cocher ;
+- **Neo4j** : mettre du TLS (`server.https.enabled`) ou un proxy TLS devant ;
+- **ou** : ne rien ouvrir et garder le tunnel, qui fait déjà tout ça.
+
 ## 5. Créer le schéma et vérifier
 
 ```bash

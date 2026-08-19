@@ -62,11 +62,46 @@ ES_ARCH    := $(if $(filter arm64,$(NODE_ARCH)),aarch64,x86_64)
 ES_PKG     := elasticsearch-$(ES_VERSION)-$(NODE_OS)-$(ES_ARCH)
 ES_DL      := https://artifacts.elastic.co/downloads/elasticsearch/$(ES_PKG).tar.gz
 
+# --- Neo4j, la quatrième toolchain vendorisée --------------------------------
+#
+# Même régime que les autres : version figée dans .neo4j-version, archive
+# vérifiée contre la somme publiée, rien d'installé dans le système.
+#
+# UNE DIFFÉRENCE, ET ELLE SE PAIE : contrairement à Elasticsearch, l'archive de
+# Neo4j **n'embarque pas de JVM**. Il faut donc un Java 17 ou 21 sur la
+# machine — la seule dépendance système de tout le dépôt. `neo4j-start` la
+# vérifie et dit quoi faire si elle manque. Sur le serveur la question ne se
+# pose pas : Neo4j y est un service du compose, image officielle, JVM comprise.
+NEO4J_VERSION := $(shell cat .neo4j-version)
+NEO4J_DIR     := $(VENDOR)/neo4j
+NEO4J_PKG     := neo4j-community-$(NEO4J_VERSION)-unix.tar.gz
+NEO4J_DL      := https://dist.neo4j.org/$(NEO4J_PKG)
+
+# On cherche un Java 17 ou 21 parmi les endroits usuels, et **on vérifie ce
+# qu'on a trouvé en le lançant**. Le contrôle n'est pas du zèle : sur macOS,
+# `/usr/libexec/java_home -v 21` rend le JDK 18 de la machine plutôt que
+# d'échouer — mesuré ici. Sans la vérification, Neo4j recevrait une JVM
+# inadaptée et tomberait sur un message qui ne parle pas de Java.
+#
+# `?=` : un JAVA_HOME déjà posé dans l'environnement gagne et court-circuite
+# tout — `make neo4j-start JAVA_HOME=/chemin/vers/jdk21` reste le dernier mot.
+JAVA_HOME ?= $(shell \
+  for candidat in \
+      "$$(/usr/libexec/java_home -v 21 2>/dev/null)" \
+      "$$(/usr/libexec/java_home -v 17 2>/dev/null)" \
+      "$$(dirname "$$(dirname "$$(command -v java 2>/dev/null)")")" \
+      /usr/lib/jvm/java-21-openjdk-amd64 /usr/lib/jvm/java-17-openjdk-amd64; do \
+    [ -x "$$candidat/bin/java" ] || continue; \
+    "$$candidat/bin/java" -version 2>&1 | grep -qE 'version "(17|21)\.' \
+      && { echo "$$candidat"; break; }; \
+  done)
+
 DB_TEST ?= fivorites_v2_admin_test
 PSQL    := psql -h localhost -p 5432 -U postgres -d postgres
 
 .PHONY: bootstrap bootstrap-python bootstrap-node bootstrap-es sync guard doctor test lint fmt \
-        db-create migrate serve api web web-build dev es-start es-stop clean
+        db-create migrate serve api web web-build dev es-start es-stop \
+        bootstrap-neo4j neo4j-start neo4j-stop clean
 
 ## Installe les trois toolchains et les dépendances.
 bootstrap: bootstrap-python bootstrap-node bootstrap-es
@@ -149,6 +184,57 @@ bootstrap-es:
 	  "-Xms1g" \
 	  "-Xmx1g" \
 	  > "$(ES_DIR)/config/jvm.options.d/fivorites.options"
+
+## Neo4j dans vendor/. L'archive est vérifiée contre la somme publiée par
+## dist.neo4j.org avant d'être ouverte, comme Node et Elasticsearch.
+bootstrap-neo4j:
+	@if [ -x "$(NEO4J_DIR)/bin/neo4j" ] && [ "$(NEO4J_VERSION)" = "$$(cat $(NEO4J_DIR)/.version 2>/dev/null)" ]; then \
+	  echo "neo4j $(NEO4J_VERSION) déjà présent dans vendor/"; \
+	else \
+	  set -e; \
+	  echo "téléchargement de $(NEO4J_PKG)"; \
+	  tmp=$$(mktemp -d); \
+	  curl -fsSL "$(NEO4J_DL)" -o "$$tmp/$(NEO4J_PKG)"; \
+	  somme=$$(curl -fsSL "$(NEO4J_DL).sha256" | tr -d '[:space:]'); \
+	  (cd "$$tmp" && echo "$$somme  $(NEO4J_PKG)" | shasum -a 256 -c -); \
+	  rm -rf "$(NEO4J_DIR)"; mkdir -p "$(NEO4J_DIR)"; \
+	  tar -xzf "$$tmp/$(NEO4J_PKG)" -C "$(NEO4J_DIR)" --strip-components=1; \
+	  rm -rf "$$tmp"; \
+	  echo "$(NEO4J_VERSION)" > "$(NEO4J_DIR)/.version"; \
+	  echo "neo4j $(NEO4J_VERSION) installé dans vendor/neo4j"; \
+	fi
+	@printf '%s\n' \
+	  "# Écrit par \`make bootstrap-neo4j\` — modifier le Makefile, pas ce fichier." \
+	  "# N'écoute que la machine. Le port HTTP (7474) porte la Query API, celle" \
+	  "# que le client de l'admin parle ; Bolt (7687) sert cypher-shell." \
+	  "#" \
+	  "# Bolt reste allumé même si rien ne le joint de l'extérieur : le serveur" \
+	  "# exécute les requêtes de la Query API en repassant par son propre pilote" \
+	  "# Bolt. Le couper laisse la sonde HTTP répondre et fait échouer la première" \
+	  "# vraie requête sur « Unable to connect to http-driver.com:0 » — mesuré." \
+	  "server.default_listen_address=127.0.0.1" \
+	  "server.http.enabled=true" \
+	  "server.bolt.enabled=true" \
+	  "# Les données restent dans vendor/ : reprojetables par \`graphe projeter\`," \
+	  "# donc jetables avec le reste de la toolchain." \
+	  "server.directories.data=$(NEO4J_DIR)/data" \
+	  "server.directories.logs=$(NEO4J_DIR)/logs" \
+	  "# Un gigaoctet de tas et autant de cache de pages. Le graphe est petit en" \
+	  "# octets ; ce sont les index vectoriels qui consomment, et ils vivent hors" \
+	  "# du tas — inutile de lui donner la moitié de la RAM du poste." \
+	  "server.memory.heap.initial_size=1g" \
+	  "server.memory.heap.max_size=1g" \
+	  "server.memory.pagecache.size=1g" \
+	  > "$(NEO4J_DIR)/conf/neo4j.conf"
+	@# Le mot de passe initial. Neo4j refuse de démarrer avec `neo4j` : il faut
+	@# en poser un AVANT le premier démarrage. Fourni (`make bootstrap-neo4j
+	@# NEO4J_PASSWORD=…`) ou tiré au sort et affiché une fois — il n'est écrit
+	@# nulle part, c'est à vous de le mettre dans admin/.env.
+	@mot=$${NEO4J_PASSWORD:-$$(openssl rand -hex 16)}; \
+	  JAVA_HOME="$(JAVA_HOME)" "$(NEO4J_DIR)/bin/neo4j-admin" dbms set-initial-password "$$mot" \
+	    >/dev/null 2>&1 \
+	  && echo "mot de passe posé — à reporter dans admin/.env :  NEO4J_PASSWORD=$$mot" \
+	  || echo "mot de passe déjà posé (base existante) — inchangé"
 
 ## Met à jour les dépendances Python depuis uv.lock.
 sync:
@@ -243,6 +329,36 @@ es-stop:
 	@test -f "$(ES_DIR)/es.pid" \
 	  && { kill "$$(cat $(ES_DIR)/es.pid)" && echo "arrêté"; rm -f "$(ES_DIR)/es.pid"; } \
 	  || echo "pas de fichier pid — déjà arrêté ?"
+
+## Neo4j en arrière-plan. Idempotent, et détaché de `dev` comme Elasticsearch :
+## rien de l'API n'en dépend, on le démarre une fois et il reste là.
+neo4j-start:
+	@if curl -fsS http://127.0.0.1:7474/ >/dev/null 2>&1; then \
+	  echo "neo4j répond déjà sur 127.0.0.1:7474"; \
+	else \
+	  test -x "$(NEO4J_DIR)/bin/neo4j" || { echo "absent — \`make bootstrap-neo4j\`"; exit 1; }; \
+	  test -n "$(JAVA_HOME)" || { \
+	    echo "ERREUR : pas de Java 17 ou 21 sur cette machine."; \
+	    echo "         L'archive Neo4j n'embarque pas de JVM, contrairement à celle d'ES."; \
+	    echo "         macOS  : brew install --cask temurin@21"; \
+	    echo "         Debian : sudo apt install openjdk-21-jre-headless"; \
+	    echo "         puis   : make neo4j-start  (ou JAVA_HOME=/chemin make neo4j-start)"; \
+	    exit 1; }; \
+	  JAVA_HOME="$(JAVA_HOME)" "$(NEO4J_DIR)/bin/neo4j" start >/dev/null; \
+	  printf "démarrage"; \
+	  for i in $$(seq 1 90); do \
+	    curl -fsS http://127.0.0.1:7474/ >/dev/null 2>&1 && break; \
+	    printf "."; sleep 1; \
+	  done; echo; \
+	  curl -fsS http://127.0.0.1:7474/ >/dev/null 2>&1 \
+	    && echo "neo4j prêt — $(NEO4J_DIR)" \
+	    || { echo "ERREUR : pas de réponse — voir $(NEO4J_DIR)/logs/neo4j.log"; exit 1; }; \
+	fi
+
+neo4j-stop:
+	@test -x "$(NEO4J_DIR)/bin/neo4j" \
+	  && JAVA_HOME="$(JAVA_HOME)" "$(NEO4J_DIR)/bin/neo4j" stop \
+	  || echo "neo4j absent de vendor/ — rien à arrêter"
 
 clean:
 	rm -rf .venv .pytest_cache .ruff_cache $(FRONT)/node_modules

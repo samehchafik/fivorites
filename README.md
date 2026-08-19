@@ -35,8 +35,11 @@ Les données sont organisées en trois couches :
 ## État
 
 L'acquisition des séries est en place : le catalogue TMDB est inventorié
-(228 454 séries) et la collecte de masse tourne. Les couches 2 et 3 — les axes
-et les facettes — restent à construire.
+(228 454 séries) et la collecte de masse tourne. La couche 2 — les axes — est
+notée et estimée sur la traîne. Le graphe de recommandation vient de s'ouvrir :
+les œuvres, leurs genres et leur distribution y entrent, et l'empreinte y est
+indexée pour la recherche des plus proches voisins. Les facettes d'usage
+restent à construire.
 
 | Répertoire | Rôle |
 |---|---|
@@ -53,6 +56,7 @@ et les facettes — restent à construire.
 | [`doc/exploitation.md`](doc/exploitation.md) | lancer, surveiller, diagnostiquer — au quotidien |
 | [`doc/admin.md`](doc/admin.md) | **l'administration** — où est le code, ce qu'il fait, ce qui a été construit |
 | [`doc/contrat-donnees-admin.md`](doc/contrat-donnees-admin.md) | comment l'admin lit le sourcing — les langues, les nouvelles tables |
+| [`doc/graphe-neo4j.md`](doc/graphe-neo4j.md) | **le graphe** — le modèle, les deux distances de l'empreinte, la mise en service |
 | [`doc/dictionnaire-donnees.md`](doc/dictionnaire-donnees.md) | **la donnée en détail** — chaque table, chaque colonne, les payloads |
 | [`doc/etude-couverture-marche-arabe.md`](doc/etude-couverture-marche-arabe.md) | ce que valent les catalogues arabe, golfe et turc |
 | [`doc/etude-sources-complementaires.md`](doc/etude-sources-complementaires.md) | ce qu'apportent Wikidata et TVmaze — et pourquoi IMDb est écartée |

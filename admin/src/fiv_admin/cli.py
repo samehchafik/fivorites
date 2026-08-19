@@ -11,7 +11,7 @@ import logging
 import secrets
 from collections.abc import Coroutine
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import psycopg
 import typer
@@ -22,17 +22,22 @@ from fiv_admin.db import MigrationsNotFound, connect, migrate
 from fiv_admin.redact import SecretFilter, redact_dsn
 from fiv_admin.security import hash_password
 
+if TYPE_CHECKING:
+    from fiv_admin.graphe import Graphe
+
 app = typer.Typer(help="Administration Fivorites V2 — suivi de l'acquisition", no_args_is_help=True)
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
 user_app = typer.Typer(help="Comptes d'administration", no_args_is_help=True)
 catalog_app = typer.Typer(help="Projection d'affichage du catalogue", no_args_is_help=True)
 training_app = typer.Typer(help="Entraînement de la notation", no_args_is_help=True)
 search_app = typer.Typer(help="Recherche plein texte (Elasticsearch)", no_args_is_help=True)
+graphe_app = typer.Typer(help="Graphe de recommandation (Neo4j)", no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(training_app, name="training")
 app.add_typer(search_app, name="search")
+app.add_typer(graphe_app, name="graphe")
 
 
 @training_app.command("note")
@@ -1151,6 +1156,247 @@ def search_status() -> None:
                         ",", " "
                     )
                 )
+
+    _run(run())
+
+
+# ---------------------------------------------------------------------------
+# Le graphe
+
+
+def _graphe_ou_sortir() -> Graphe:
+    """Le client Neo4j, ou un message qui dit quoi faire. Trois commandes en
+    ont besoin ; le contrôle n'est écrit qu'ici."""
+    from fiv_admin.graphe import Graphe
+
+    settings = get_settings()
+    if not settings.neo4j_url:
+        typer.echo("ERREUR : NEO4J_URL est vide — le graphe est désactivé.")
+        raise typer.Exit(1)
+    if not settings.neo4j_password:
+        typer.echo("ERREUR : NEO4J_PASSWORD est vide.")
+        typer.echo("→ sur le poste : make bootstrap-neo4j (il écrit le mot de passe initial)")
+        typer.echo("→ sur le serveur : NEO4J_PASSWORD dans le .env, à côté du docker-compose.yml")
+        raise typer.Exit(1)
+    return Graphe(
+        settings.neo4j_url,
+        settings.neo4j_user,
+        settings.neo4j_password,
+        base=settings.neo4j_database,
+        timeout=settings.neo4j_timeout,
+    )
+
+
+async def _dimensions_du_bareme(conn: psycopg.AsyncConnection) -> tuple[str, int]:
+    """Le barème courant et son nombre d'axes — la dimension de l'espace."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select version, axes from notation.rubric order by created_at desc limit 1"
+        )
+        row = await cur.fetchone()
+    if row is None:
+        typer.echo("ERREUR : aucun barème en base — `fiv-admin db migrate` d'abord.")
+        raise typer.Exit(1)
+    return row[0], len(row[1])
+
+
+@graphe_app.command("schema")
+def graphe_schema() -> None:
+    """Pose les contraintes et les index vectoriels. Idempotent.
+
+    La dimension des index vectoriels est celle du barème courant, lue en base
+    et pas écrite en dur : c'est le barème qui définit l'espace des empreintes.
+    Changer de barème pour un autre nombre d'axes demande donc de supprimer les
+    deux index et de rejouer cette commande — Neo4j refusera d'indexer un
+    vecteur d'une autre taille, et c'est le garde-fou qu'on veut.
+    """
+    from fiv_admin.graphe import poser_schema
+
+    settings = get_settings()
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            bareme, dimensions = await _dimensions_du_bareme(conn)
+        graphe = _graphe_ou_sortir()
+        async with graphe:
+            typer.echo(f"barème {bareme} — {dimensions} axes, donc {dimensions} dimensions")
+            for nom in await poser_schema(graphe, dimensions):
+                typer.echo(f"  ✓ {nom}")
+
+    _run(run())
+
+
+@graphe_app.command("projeter")
+def graphe_projeter(
+    univers: Annotated[
+        str, typer.Option("--univers", help="series, movies, ou all (défaut).")
+    ] = "all",
+    lot: Annotated[int, typer.Option("--lot", min=50, max=5000, help="Œuvres par envoi.")] = 500,
+) -> None:
+    """Projette Postgres dans le graphe : œuvres, genres, distribution, empreintes.
+
+    Idempotent : `MERGE` sur le pivot `sourcing.oeuvre.id`, et les relations que
+    la projection possède sont effacées puis réécrites œuvre par œuvre — un
+    genre retiré d'une fiche recollectée disparaît vraiment.
+
+    À lancer après une passe de collecte ou une campagne de notation. Le graphe
+    ne se met pas à jour au fil de l'eau : c'est un état qu'on reprojette, le
+    même régime que `search reindex` et que `catalog refresh`.
+    """
+    import time
+
+    from fiv_admin.graphe import projeter
+    from fiv_admin.media import MEDIA
+
+    settings = get_settings()
+    cibles = [m for m in MEDIA.values() if m.catalog_table is not None]
+    if univers != "all":
+        cibles = [m for m in cibles if m.univers == univers]
+        if not cibles:
+            typer.echo(f"ERREUR : univers inconnu ou sans catalogue : {univers}")
+            raise typer.Exit(1)
+
+    async def run() -> None:
+        graphe = _graphe_ou_sortir()
+        async with (
+            graphe,
+            connect(settings.database_url, settings.sourcing_schema, "admin") as conn,
+        ):
+            for media in cibles:
+                typer.echo(f"{media.univers} : extraction et projection…")
+                debut = time.monotonic()
+                bilan = await projeter(
+                    conn,
+                    graphe,
+                    media,
+                    lot=lot,
+                    avancement=lambda n: print(f"\r  {n:,}".replace(",", " "), end=""),
+                )
+                print()
+                compte = f"{bilan['oeuvres']:,}".replace(",", " ")
+                typer.echo(f"  {compte} œuvre(s) ({time.monotonic() - debut:.0f} s)")
+
+    _run(run())
+
+
+@graphe_app.command("sync")
+def graphe_sync(
+    univers: Annotated[
+        str, typer.Option("--univers", help="series, movies, ou all (défaut).")
+    ] = "all",
+    lot: Annotated[int, typer.Option("--lot", min=50, max=5000, help="Œuvres par envoi.")] = 500,
+) -> None:
+    """Rattrape le graphe : ce qui a été collecté ou noté depuis le dernier passage.
+
+    C'est la commande du quotidien — la passe nocturne l'enchaîne après
+    `catalog refresh`. Trois choses la déclenchent pour une œuvre : son pivot
+    est neuf, sa fiche a été recollectée, ou elle a reçu une note. La
+    troisième est celle qu'un index de recherche n'a pas : une campagne
+    `training note` ne touche ni le brut ni `fetch_state`, et sans elle les
+    empreintes fraîches n'entreraient jamais dans le graphe.
+
+    Ses limites sont celles d'un rattrapage : une œuvre disparue du catalogue
+    reste, et les nœuds devenus orphelins aussi — `graphe elaguer` pour les
+    seconds. Sans marqueur, elle refuse : `graphe projeter` d'abord.
+    """
+    from fiv_admin.graphe import synchroniser
+    from fiv_admin.media import MEDIA
+
+    settings = get_settings()
+    cibles = [m for m in MEDIA.values() if m.catalog_table is not None]
+    if univers != "all":
+        cibles = [m for m in cibles if m.univers == univers]
+        if not cibles:
+            typer.echo(f"ERREUR : univers inconnu ou sans catalogue : {univers}")
+            raise typer.Exit(1)
+
+    async def run() -> bool:
+        echec = False
+        graphe = _graphe_ou_sortir()
+        async with (
+            graphe,
+            connect(settings.database_url, settings.sourcing_schema, "admin") as conn,
+        ):
+            for media in cibles:
+                bilan = await synchroniser(conn, graphe, media, lot=lot)
+                if "erreur" in bilan:
+                    typer.echo(f"{media.univers} : ✗ {bilan['erreur']}")
+                    echec = True
+                else:
+                    typer.echo(
+                        f"{media.univers} : {bilan['changees']} œuvre(s) changée(s), "
+                        f"{bilan['oeuvres']} projetée(s)"
+                    )
+        return echec
+
+    if _run(run()):
+        raise typer.Exit(1)
+
+
+@graphe_app.command("elaguer")
+def graphe_elaguer() -> None:
+    """Supprime les genres et les personnes que plus aucune œuvre ne cite.
+
+    Ni la projection ni la synchronisation ne le font : elles raisonnent œuvre
+    par œuvre, et une personne détachée d'un film reste peut-être au générique
+    de vingt autres. Savoir qu'elle est devenue orpheline demande de regarder
+    le graphe entier.
+
+    Sans urgence — un nœud sans relation ne remonte dans aucune traversée. À
+    passer de loin en loin, quand les comptes de `graphe etat` cessent d'avoir
+    l'air justes.
+    """
+    from fiv_admin.graphe import elaguer
+
+    async def run() -> None:
+        graphe = _graphe_ou_sortir()
+        async with graphe:
+            for label, compte in (await elaguer(graphe)).items():
+                typer.echo(f"  {label:<16} {compte} orphelin(s) supprimé(s)")
+
+    _run(run())
+
+
+@graphe_app.command("etat")
+def graphe_etat() -> None:
+    """Ce que le graphe contient, et si ses index sont en ligne."""
+    import httpx
+
+    from fiv_admin.graphe import GrapheErreur, etat
+
+    settings = get_settings()
+
+    async def run() -> None:
+        graphe = _graphe_ou_sortir()
+        async with graphe:
+            try:
+                bilan = await etat(graphe)
+            except (httpx.HTTPError, GrapheErreur) as exc:
+                typer.echo(f"Neo4j injoignable sur {settings.neo4j_url} : {exc}")
+                raise typer.Exit(1) from exc
+
+            if not bilan["univers"]:
+                typer.echo("graphe vide — lancer `fiv-admin graphe schema` puis `graphe projeter`")
+            for ligne in bilan["univers"]:
+                # Le chiffre qui compte n'est pas le nombre d'œuvres, c'est le
+                # nombre d'empreintes : sans vecteur, le graphe sait qui joue
+                # dans quoi et rien d'autre.
+                typer.echo(
+                    f"  {ligne['univers']:<8} {ligne['oeuvres']:>8,} œuvres"
+                    f"   {ligne['empreintes']:>7,} empreintes"
+                    f" (dont {ligne['jugees']:,} jugées)".replace(",", " ")
+                )
+                # Sans marqueur, `graphe sync` refusera : autant le dire ici.
+                if not ligne.get("marqueur"):
+                    typer.echo("           pas de marqueur — `graphe projeter` avant tout sync")
+            typer.echo(
+                f"  genres {bilan['genres']}, personnes {bilan['personnes']:,}".replace(",", " ")
+            )
+            for ligne in bilan["relations"]:
+                typer.echo(f"  {ligne['type']:<20} {ligne['n']:>10,}".replace(",", " "))
+            for ligne in bilan["index"]:
+                marque = "✓" if ligne["state"] == "ONLINE" else "…"
+                typer.echo(f"  {marque} {ligne['name']:<24} {ligne['type']:<10} {ligne['state']}")
 
     _run(run())
 

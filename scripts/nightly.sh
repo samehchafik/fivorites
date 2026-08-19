@@ -31,5 +31,11 @@ docker compose run --rm admin catalog refresh   # la grille de l'admin
 # `|| true` : ES absent ou jamais réindexé ne doit pas faire échouer la passe,
 # l'admin retombe sur le SQL et la réponse d'API le dit (searchEngine).
 docker compose run --rm admin search sync || true
+# Le graphe rattrape la même passe : œuvres neuves, fiches recollectées, et —
+# ce que l'index de recherche n'a pas — les œuvres notées depuis la veille, qui
+# n'ont bougé ni dans le brut ni dans `fetch_state`.
+# `|| true` pour la même raison : un Neo4j absent ou jamais projeté ne doit pas
+# faire échouer la collecte, dont rien ne dépend de lui.
+docker compose run --rm admin graphe sync || true
 
 echo "=== fin $(date -Is) ==="

@@ -90,12 +90,14 @@ services:
       cluster.name: fivorites
       node.name: serveur
       discovery.type: single-node
-      # Pas de TLS ni de comptes : le service n'a AUCUN port publié (voir
-      # l'absence de `ports:` ci-dessous), il n'est joignable que par les
-      # autres conteneurs du réseau compose. L'activer imposerait une
-      # cérémonie de certificats pour une liaison qui ne sort jamais de la
-      # machine. Corollaire : ne jamais ajouter de `ports:` ici sans activer
-      # xpack.security en même temps.
+      # Pas de TLS ni de comptes : le port n'est publié que sur la boucle
+      # locale (voir `ports:` plus bas), et les autres conteneurs le joignent
+      # par le réseau interne. L'activer imposerait une cérémonie de
+      # certificats pour une liaison qui ne sort pas de la machine.
+      #
+      # Corollaire, et il ne s'est pas adouci : **ne jamais mettre ES_BIND
+      # au-delà de 127.0.0.1 sans activer xpack.security en même temps.** Sans
+      # authentification, qui atteint 9200 lit, écrit et supprime tout.
       xpack.security.enabled: "false"
       # Aucune fonction de machine learning utilisée : autant ne pas réserver
       # la mémoire qu'elle prend.
@@ -129,9 +131,27 @@ services:
       memlock: -1
     volumes:
       - es-data:/usr/share/elasticsearch/data
-    # Pas de `ports:` — volontairement. Seul le conteneur `admin` le joint, par
-    # le réseau interne du compose. Pour regarder depuis la machine :
-    #   docker compose exec elasticsearch curl -s localhost:9200/_cat/indices
+    # Publié sur 127.0.0.1 par défaut : joignable depuis l'hôte (donc par un
+    # tunnel SSH) et par personne d'autre. `admin`, lui, passe par le réseau
+    # interne et ne dépend pas de cette ligne.
+    #
+    # ES_BIND change l'interface d'écoute — `0.0.0.0` ou une adresse publique
+    # de la machine. ⚠ DEUX CHOSES À SAVOIR AVANT :
+    #
+    #   1. Ce service n'a AUCUNE authentification (xpack.security.enabled:
+    #      false, ci-dessus). Qui atteint le port lit, écrit et supprime tout.
+    #      L'ouvrir sans activer la sécurité d'ES revient à publier la base.
+    #   2. Changer l'interface ne filtre PAS la source. Et un `ufw deny` ne
+    #      protège pas un port publié par Docker — voir doc/serveur-debian11.md
+    #      §« Exposer ES et Neo4j à des IP fixes », qui donne les règles
+    #      DOCKER-USER, la seule chaîne qui morde ici.
+    #
+    # ES_PORT change le port côté hôte. Utile dans un seul cas, mais il fait
+    # échouer le démarrage quand il se présente : un Elasticsearch resté
+    # installé sur la machine (le service vient d'un paquet apt jusqu'au lot
+    # précédent) tient déjà 9200, et Docker refuse alors d'allouer le port.
+    ports:
+      - "${ES_BIND:-127.0.0.1}:${ES_PORT:-9200}:9200"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS localhost:9200/_cluster/health || exit 1"]
       interval: 30s
@@ -140,6 +160,70 @@ services:
       # Le démarrage d'une JVM plus l'ouverture des index : large, parce qu'un
       # `admin` qui démarrerait trop tôt tomberait sur un service muet et
       # passerait en repli SQL pour rien.
+      start_period: 90s
+
+  # --- Le graphe -------------------------------------------------------------
+  #
+  # Neo4j porte la couche que la notation alimente : les œuvres, leurs genres,
+  # leurs gens, et l'empreinte en six dimensions indexée pour la recherche des
+  # plus proches voisins. Le raisonnement de modélisation est dans
+  # doc/graphe-neo4j.md ; ici, seulement la mise en service.
+  #
+  # Version calendaire plutôt que la LTS 5.26, et c'est un choix : la clause
+  # `SEARCH ... IN (VECTOR INDEX …)` et le réglage `vector.quantization.type`
+  # n'existent que sur les calendaires, et les deux servent directement ici —
+  # le second parce que la quantification est ACTIVE par défaut et qu'arrondir
+  # un vecteur de six dimensions n'économise rien tout en abîmant le
+  # classement. Repli LTS possible : `5.26-community`, avec
+  # `vector.quantization.enabled: false` dans `graphe.schema_cypher`.
+  neo4j:
+    image: neo4j:2026.07.1-community
+    restart: unless-stopped
+    environment:
+      # Le mot de passe initial. Neo4j refuse de démarrer avec `neo4j` comme
+      # mot de passe, et refuse aussi de démarrer sans ce réglage ni
+      # NEO4J_AUTH=none. Obligatoire, donc, comme DB_PASSWORD.
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD doit être défini dans .env}
+      # Le tas et le cache de pages. Le graphe est petit en octets — quelques
+      # centaines de milliers de nœuds, une poignée de propriétés chacun — mais
+      # les index vectoriels vivent en mémoire hors tas (HNSW) : c'est le cache
+      # de pages qui compte, pas le tas.
+      NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP:-1g}
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP:-1g}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-1g}
+    mem_limit: ${NEO4J_MEM_LIMIT:-3g}
+    volumes:
+      - neo4j-data:/data
+    # Sur 127.0.0.1 par défaut, comme Elasticsearch : le tunnel SSH marche, et
+    # rien ne sort de la machine. Les DEUX ports sont publiés parce que le
+    # navigateur Neo4j est servi en 7474 mais **parle Bolt en 7687 depuis le
+    # poste du client** : n'ouvrir que 7474 donne une page qui ne se connecte
+    # jamais.
+    #
+    # NEO4J_BIND ouvre au-delà. ⚠ Neo4j a un mot de passe, mais HTTP et Bolt
+    # sont ici EN CLAIR : l'en-tête d'authentification circule tel quel. Une
+    # exposition hors de la machine demande un filtrage par source (chaîne
+    # DOCKER-USER, voir doc/serveur-debian11.md) et, si le lien n'est pas déjà
+    # privé, du TLS.
+    ports:
+      - "${NEO4J_BIND:-127.0.0.1}:${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BIND:-127.0.0.1}:${NEO4J_BOLT_PORT:-7687}:7687"
+    #
+    # Bolt reste ACTIVÉ (c'est le défaut, on ne le coupe pas) même si personne
+    # ne le joint : le serveur exécute les requêtes de la Query API HTTP en
+    # repassant par son propre pilote Bolt en interne. Le couper laisse la
+    # sonde HTTP répondre et fait échouer la première vraie requête sur
+    # « Unable to connect to http-driver.com:0 » — mesuré.
+    healthcheck:
+      # `/` du serveur HTTP répond sans authentification et sans base ouverte :
+      # c'est ce qu'on veut d'une sonde — savoir si le serveur écoute, pas
+      # exécuter une requête.
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:7474/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # Une JVM, plus l'ouverture des magasins et la reconstruction éventuelle
+      # des index vectoriels.
       start_period: 90s
 
   # --- Administration --------------------------------------------------------
@@ -175,6 +259,11 @@ services:
     depends_on:
       elasticsearch:
         condition: service_started
+      # Même régime, et pour les mêmes raisons : la projection du graphe est
+      # une commande, pas un service. Un Neo4j en panne ne doit pas empêcher un
+      # `db migrate`.
+      neo4j:
+        condition: service_started
     ports:
       # Adresse d'écoute réglable, ouverte par défaut — choix explicite pour
       # pouvoir joindre l'administration directement pendant la mise en route.
@@ -201,11 +290,16 @@ services:
       CORS_ORIGINS: ""
       SEASON_LANGUAGES: ${TMDB_SEASON_LANGUAGES:-fr-FR,en-US,es-ES,ar-SA,tr-TR}
       WEB_DIST: /srv/www
-      # La recherche plein texte. Comme Postgres, Elasticsearch tourne sur
-      # l'HÔTE (apt, voir doc/recherche-elasticsearch.md), joint par la
-      # passerelle — pas un conteneur de plus à orchestrer. Facultatif : tant
-      # qu'il ne répond pas, la recherche retombe sur l'ILIKE historique.
+      # La recherche plein texte. Elasticsearch est un service du compose
+      # depuis le lot précédent : il se joint par le réseau interne, pas par la
+      # passerelle comme Postgres. Facultatif de bout en bout — tant qu'il ne
+      # répond pas, la recherche retombe sur l'ILIKE historique.
       ES_URL: ${ES_URL:-http://elasticsearch:9200}
+      # Le graphe. Port HTTP (Query API), pas Bolt : le client est en httpx,
+      # sans pilote — même choix que pour ES. Rien n'en dépend au démarrage.
+      NEO4J_URL: ${NEO4J_URL:-http://neo4j:7474}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
       # L'atelier d'entraînement (pages Training 1 et 2). Facultatives : sans
       # elles, tout le reste de l'admin fonctionne et les routes /training
       # répondent par un message clair.
@@ -247,6 +341,11 @@ services:
       start_period: 10s
 
 volumes:
+  # Le graphe. Contenu dérivé lui aussi — `graphe projeter` le reconstruit
+  # depuis Postgres — mais nettement plus long à refaire qu'un index de
+  # recherche : à ne supprimer qu'en connaissance de cause.
+  neo4j-data:
+
   # Les index de recherche. Contenu dérivé : `search reindex` le reconstruit
   # depuis Postgres, donc ce volume se supprime sans perte — à la différence
   # des données de Postgres, qui vivent sur l'hôte.
