@@ -485,7 +485,49 @@ préfixé par le nom du projet compose.)
 
 ---
 
-### 7.1 Sur le poste de dev
+### 7.1 Cohabiter avec un autre Neo4j sur la même machine
+
+Le cas s'est présenté à la mise en service : un Neo4j **déjà en service sur
+l'hôte**, pour un autre usage, tenant 7474 et 7687 sur toutes les interfaces.
+Le conteneur refuse alors de démarrer :
+
+```
+Error starting userland proxy: listen tcp4 127.0.0.1:7687: bind: address already in use
+```
+
+C'est un conflit de **ports publiés**, pas un conflit de bases. Une ligne le
+règle :
+
+```bash
+printf 'NEO4J_HTTP_PORT=7475\nNEO4J_BOLT_PORT=7688\n' >> .env
+```
+
+Les deux instances sont alors étanches — conteneur séparé, volume séparé, JVM
+séparée — et **rien du fonctionnement ne change** : `admin` joint la sienne par
+le réseau interne du compose, où le port reste 7474 quoi qu'il arrive. Seul le
+tunnel se décale :
+
+```bash
+ssh -L 7474:127.0.0.1:7475 -L 7687:127.0.0.1:7688 serveur
+```
+
+Le tunnel garde **7687 côté poste** : le navigateur Neo4j y ouvre sa session
+Bolt en dur.
+
+Ce que ça coûte : deux JVM et deux caches de pages sur la même machine, à côté
+d'Elasticsearch et de Postgres. `NEO4J_HEAP` et `NEO4J_PAGECACHE` (1 Go chacun
+par défaut) sont là pour ça — le graphe est petit en octets, et ce sont les
+index vectoriels qui consomment, hors du tas.
+
+Ce qu'on n'a **pas** fait, et pourquoi : réutiliser l'instance de l'hôte. Neo4j
+Community n'autorise qu'une seule base par instance — pas de `CREATE DATABASE`
+pour se ranger à côté — donc les deux graphes partageraient le même espace. Le
+préfixe `Fiv` le rendrait techniquement sûr (§5), mais ce serait écrire dans
+une base de production qui sert à autre chose, pour économiser une JVM.
+
+---
+
+### 7.2 Sur le poste de dev
 
 Pas de conteneur — même règle que Postgres et Elasticsearch. Neo4j est
 vendorisé dans `admin/vendor/`, version figée dans `.neo4j-version`, archive
