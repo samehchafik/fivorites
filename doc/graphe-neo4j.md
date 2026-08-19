@@ -25,11 +25,13 @@ il ne répète pas ces raisonnements, il les applique.
 │ nom: Drame│       │ titre, annee, affiche   │
 └───────────┘       │ note, votes             │
                     │                         │
-┌──────────────┐    │ empreinte ────────► index vectoriel euclidien
-│ :FivPersonne │    │ empreinteUnitaire ► index vectoriel cosinus
-│ cle: tmdb:…  │    │ empreinteNorme            │
-│ nom, photo   │    │ empreinteSource, Bareme   │
-└──────┬───────┘    └─────────────────────────┘
+┌──────────────────┐│ empreinte ────────► index vectoriel euclidien
+│ :FivPersonne     ││ empreinteUnitaire ► index vectoriel cosinus
+│ :FivActeur       ││ empreinteNorme            │
+│ :FivRealisateur  ││ empreinteSource, Bareme   │
+│ cle: tmdb:…      │└─────────────────────────┘
+│ nom, photo       │
+└──────┬───────────┘
        │                       ▲
        │  FIV_JOUE_DANS {personnage, ordre, épisodes}
        │  FIV_A_REALISE {épisodes}
@@ -275,10 +277,73 @@ comparant deux fiches.
 
 ---
 
-## 5. Unicité : une personne, un nœud
+## 5. Acteurs et réalisateurs : une personne, un nœud, plusieurs métiers
 
-C'est la garantie qui fait tout l'intérêt du graphe, et elle repose sur deux
-choses, pas une.
+### 5.1 Le métier est un label, pas un type de nœud
+
+`(:FivPersonne:FivActeur)`, `(:FivPersonne:FivRealisateur)`, et les deux à la
+fois quand c'est le cas. Les requêtes sont celles qu'on attend :
+
+```cypher
+MATCH (a:FivActeur)      RETURN a.nom
+MATCH (r:FivRealisateur) RETURN r.nom
+MATCH (p:FivActeur:FivRealisateur) RETURN p.nom   -- ceux qui font les deux
+```
+
+**Pourquoi pas deux types de nœuds distincts** — c'était la première idée, et
+elle se casse sur un cas courant : Clint Eastwood joue *et* réalise, souvent
+dans le même film. Deux nœuds le dédoubleraient — deux fiches, deux
+filmographies coupées en deux, et « le réalisateur qui joue dans ses films »
+deviendrait une question sans réponse. Or l'unicité était l'exigence de départ.
+
+Le label est exactement l'outil de Neo4j pour ça, et c'est le même raisonnement
+qu'`:FivOeuvre:FivFilm` (§2.1) : un métier n'est pas une entité à part, c'est
+une facette de la personne. Un balayage par label est une opération de premier
+ordre, un nœud peut en porter autant qu'il veut.
+
+`:FivPersonne` reste et porte l'identité — c'est lui que la contrainte
+d'unicité vise et sur lui que tous les `MERGE` s'ancrent ; les labels de métier
+se posent par-dessus. Ancrer un `MERGE` sur `:FivActeur` recréerait un second
+nœud le jour où la personne réalise : c'est vérifié par un test.
+
+Mesuré contre un vrai serveur, sur Eastwood projeté dans deux films (il joue
+dans le premier, réalise les deux) :
+
+```
+noeuds : 1    labels : ['FivPersonne', 'FivActeur', 'FivRealisateur']
+FIV_A_REALISE  → Gran Torino, Sully
+FIV_JOUE_DANS  → Gran Torino
+```
+
+Conséquence à connaître pour lire `graphe etat` : **la somme des métiers dépasse
+le nombre de personnes.** Qui joue et réalise est compté deux fois. Ce n'est pas
+une anomalie, c'est le signe que le modèle tient.
+
+### 5.2 Les labels se retirent aussi
+
+Un label posé ne s'enlève pas tout seul. Une personne dont la dernière fiche
+d'acteur disparaît reste une personne — elle a peut-être réalisé — mais elle
+n'est plus `:FivActeur`. Sans quoi les labels s'accumulent et
+`MATCH (a:FivActeur)` finit par rendre des gens qui ne jouent nulle part.
+
+`graphe elaguer` s'en charge, en même temps que les nœuds orphelins : pour
+chaque métier, il retire le label des personnes qui n'ont plus la relation
+correspondante. Vérifié sur le même Eastwood, reprojeté sans son rôle :
+
+```
+labels avant : ['FivPersonne', 'FivActeur', 'FivRealisateur']
+elagage      : FivActeur (label retire) : 1
+labels apres : ['FivPersonne', 'FivRealisateur']
+noeuds       : 1
+```
+
+La projection ne le fait pas d'elle-même, et pour la même raison qu'elle ne
+supprime pas les orphelins : elle raisonne œuvre par œuvre, et savoir qu'un
+label est devenu faux demande de regarder toutes les relations de la personne.
+
+### 5.3 L'unicité, et sur quoi elle repose
+
+Elle repose sur deux choses, pas une.
 
 1. **La contrainte.** `fivPersonneCle` impose `p.cle` unique sur `:FivPersonne`,
    `fivGenreCle` fait de même sur `:FivGenre`. Neo4j refuse physiquement le
@@ -295,16 +360,19 @@ Vérifié contre un vrai serveur : Peter Dinklage projeté dans deux séries don
 le personnage est une propriété de la relation, pas de la personne, ce qui est
 exactement pourquoi il peut différer d'une œuvre à l'autre.
 
-La clé est `tmdb:<id>`, l'identifiant TMDB de la personne. Deux limites à
-connaître, et elles ne sont pas dans le graphe :
+La clé est `tmdb:<id>`, l'identifiant TMDB de la personne — **la même quel que
+soit le métier**, ce qui est précisément ce qui fait converger l'acteur et le
+réalisateur sur un seul nœud. Deux limites à connaître, et elles ne sont pas
+dans le graphe :
 
 - **Si TMDB a deux fiches pour un même acteur, on a deux nœuds.** Le graphe ne
   peut pas mieux faire que sa source. La réconciliation, le jour où elle sera
   utile, se fera en Postgres — une table `sourcing.personne` avec son pivot,
   comme `sourcing.oeuvre` l'a fait pour les œuvres — et le graphe suivra.
 - **Un genre disparu ou un acteur retiré de toutes ses fiches laisse un nœud
-  orphelin.** Sans conséquence (il ne remonte dans aucune traversée), et
-  `graphe elaguer` le supprime.
+  orphelin**, et un métier abandonné laisse un label faux. Sans conséquence
+  immédiate (un nœud sans relation ne remonte dans aucune traversée), et
+  `graphe elaguer` fait les deux.
 
 ---
 

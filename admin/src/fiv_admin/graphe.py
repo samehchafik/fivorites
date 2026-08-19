@@ -78,6 +78,34 @@ LABEL_OEUVRE = "FivOeuvre"
 LABEL_GENRE = "FivGenre"
 LABEL_PERSONNE = "FivPersonne"
 
+# Les métiers, en labels supplémentaires sur le MÊME nœud.
+#
+# `:FivPersonne:FivActeur:FivRealisateur` plutôt que deux nœuds : Clint
+# Eastwood joue et réalise, souvent dans le même film. Deux nœuds le
+# dédoubleraient — donc deux fiches, deux filmographies, et « le réalisateur
+# qui joue dans ses films » deviendrait une question sans réponse.
+#
+# Le label est ce que Neo4j offre exactement pour ça : `MATCH (a:FivActeur)`
+# est un balayage de premier ordre, et un nœud peut en porter plusieurs. Même
+# raisonnement qu'`:FivOeuvre:FivFilm` (§2.1 du doc) — le métier n'est pas une
+# entité à part, c'est une facette de la personne.
+#
+# `:FivPersonne` reste et porte l'identité : c'est lui que la contrainte
+# d'unicité vise, et c'est sur lui que tous les `MERGE` s'ancrent. Les autres
+# se posent par-dessus.
+LABEL_ACTEUR = "FivActeur"
+LABEL_REALISATEUR = "FivRealisateur"
+LABEL_CREATEUR = "FivCreateur"
+
+# Le métier que chaque relation confère à la personne qui la porte. C'est aussi
+# la table qui dit à `elaguer` quel label retirer quand la dernière relation
+# d'un métier disparaît.
+LABEL_DU_ROLE: dict[str, str] = {
+    "FIV_JOUE_DANS": LABEL_ACTEUR,
+    "FIV_A_REALISE": LABEL_REALISATEUR,
+    "FIV_A_CREE": LABEL_CREATEUR,
+}
+
 # Le point de reprise de la synchronisation, rangé DANS le graphe : il meurt
 # avec lui, et un graphe reconstruit repart donc de son propre début. Aucun
 # état à tenir ailleurs — même principe que le marqueur `_meta` d'ES.
@@ -606,7 +634,7 @@ UNWIND $oeuvres AS o
 MATCH (n:{oeuvre} {{oeuvreId: o.oeuvreId}})
 UNWIND o.distribution AS membre
 MERGE (p:{personne} {{cle: membre.cle}})
-SET p.nom = coalesce(membre.nom, p.nom), p.photo = coalesce(membre.photo, p.photo)
+SET p:{metier}, p.nom = coalesce(membre.nom, p.nom), p.photo = coalesce(membre.photo, p.photo)
 MERGE (p)-[r:{rel}]->(n)
 SET r.personnage = membre.personnage, r.ordre = membre.ordre, r.episodes = membre.episodes
 """
@@ -616,7 +644,7 @@ UNWIND $oeuvres AS o
 MATCH (n:{oeuvre} {{oeuvreId: o.oeuvreId}})
 UNWIND o.realisation AS membre
 MERGE (p:{personne} {{cle: membre.cle}})
-SET p.nom = coalesce(membre.nom, p.nom), p.photo = coalesce(membre.photo, p.photo)
+SET p:{metier}, p.nom = coalesce(membre.nom, p.nom), p.photo = coalesce(membre.photo, p.photo)
 MERGE (p)-[r:{rel}]->(n)
 SET r.episodes = membre.episodes
 """
@@ -626,7 +654,7 @@ UNWIND $oeuvres AS o
 MATCH (n:{oeuvre} {{oeuvreId: o.oeuvreId}})
 UNWIND o.creation AS membre
 MERGE (p:{personne} {{cle: membre.cle}})
-SET p.nom = coalesce(membre.nom, p.nom), p.photo = coalesce(membre.photo, p.photo)
+SET p:{metier}, p.nom = coalesce(membre.nom, p.nom), p.photo = coalesce(membre.photo, p.photo)
 MERGE (p)-[:{rel}]->(n)
 """
 
@@ -644,9 +672,15 @@ def lot_cypher(univers: str) -> tuple[str, ...]:
     return (
         _CYPHER_OEUVRES.format(oeuvre=LABEL_OEUVRE, univers=label_univers),
         _CYPHER_GENRES.format(oeuvre=LABEL_OEUVRE, genre=LABEL_GENRE, rel=REL_GENRE),
-        _CYPHER_DISTRIBUTION.format(oeuvre=LABEL_OEUVRE, personne=LABEL_PERSONNE, rel=REL_JOUE),
-        _CYPHER_REALISATION.format(oeuvre=LABEL_OEUVRE, personne=LABEL_PERSONNE, rel=REL_REALISE),
-        _CYPHER_CREATION.format(oeuvre=LABEL_OEUVRE, personne=LABEL_PERSONNE, rel=REL_CREE),
+        _CYPHER_DISTRIBUTION.format(
+            oeuvre=LABEL_OEUVRE, personne=LABEL_PERSONNE, metier=LABEL_ACTEUR, rel=REL_JOUE
+        ),
+        _CYPHER_REALISATION.format(
+            oeuvre=LABEL_OEUVRE, personne=LABEL_PERSONNE, metier=LABEL_REALISATEUR, rel=REL_REALISE
+        ),
+        _CYPHER_CREATION.format(
+            oeuvre=LABEL_OEUVRE, personne=LABEL_PERSONNE, metier=LABEL_CREATEUR, rel=REL_CREE
+        ),
     )
 
 
@@ -870,6 +904,26 @@ async def elaguer(graphe: Graphe, *, lot: int = 10_000) -> dict[str, int]:
     la façon classique de faire tomber la JVM sur un dépassement de tas.
     """
     supprimes: dict[str, int] = {}
+
+    # D'abord les labels de métier devenus faux. Une personne qui perd son
+    # dernier rôle d'acteur reste une personne — elle a peut-être réalisé — mais
+    # elle n'est plus `:FivActeur`. Sans ce passage, les labels s'accumulent et
+    # `MATCH (a:FivActeur)` finit par rendre des gens qui ne jouent nulle part.
+    for relation, label in LABEL_DU_ROLE.items():
+        total = 0
+        while True:
+            lignes = await graphe.executer(
+                f"MATCH (p:{label}) WHERE NOT (p)-[:{relation}]->()"
+                f" WITH p LIMIT $lot REMOVE p:{label} RETURN count(p) AS n",
+                lot=lot,
+            )
+            retire = lignes[0]["n"] if lignes else 0
+            total += retire
+            if retire < lot:
+                break
+        if total:
+            supprimes[f"{label} (label retire)"] = total
+
     for label in (LABEL_PERSONNE, LABEL_GENRE):
         total = 0
         while True:
@@ -908,6 +962,14 @@ async def etat(graphe: Graphe) -> dict[str, Any]:
     )
     genres = await graphe.executer(f"MATCH (g:{LABEL_GENRE}) RETURN count(*) AS n")
     personnes = await graphe.executer(f"MATCH (p:{LABEL_PERSONNE}) RETURN count(*) AS n")
+    # Par métier, et la somme dépasse le total : une personne qui joue et
+    # réalise est comptée deux fois, parce qu'elle porte les deux labels. C'est
+    # le signe que le modèle tient — deux nœuds, ce serait la même personne
+    # dédoublée.
+    metiers = {
+        label: (await graphe.executer(f"MATCH (p:{label}) RETURN count(*) AS n"))[0]["n"]
+        for label in (LABEL_ACTEUR, LABEL_REALISATEUR, LABEL_CREATEUR)
+    }
     relations = await graphe.executer(
         "MATCH ()-[r]->() WHERE type(r) IN $relations"
         " RETURN type(r) AS type, count(*) AS n ORDER BY type",
@@ -924,6 +986,7 @@ async def etat(graphe: Graphe) -> dict[str, Any]:
         "univers": noeuds,
         "genres": genres[0]["n"] if genres else 0,
         "personnes": personnes[0]["n"] if personnes else 0,
+        "metiers": metiers,
         "relations": relations,
         "index": index,
     }

@@ -1392,6 +1392,10 @@ def graphe_etat() -> None:
             typer.echo(
                 f"  genres {bilan['genres']}, personnes {bilan['personnes']:,}".replace(",", " ")
             )
+            # La somme des métiers dépasse le total des personnes : qui joue ET
+            # réalise porte les deux labels, sur un seul nœud.
+            for label, compte in bilan["metiers"].items():
+                typer.echo(f"    {label:<18} {compte:>9,}".replace(",", " "))
             for ligne in bilan["relations"]:
                 typer.echo(f"  {ligne['type']:<20} {ligne['n']:>10,}".replace(",", " "))
             for ligne in bilan["index"]:

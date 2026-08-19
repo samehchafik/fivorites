@@ -27,7 +27,12 @@ from conftest import requires_db
 from fiv_admin.graphe import (
     _PIVOTS_CHANGES,
     DISTRIBUTION_MAX,
+    LABEL_ACTEUR,
+    LABEL_CREATEUR,
+    LABEL_DU_ROLE,
     LABEL_OEUVRE,
+    LABEL_PERSONNE,
+    LABEL_REALISATEUR,
     LABEL_UNIVERS,
     PREFIXE,
     REALISATEURS_MAX,
@@ -81,7 +86,14 @@ def _ligne(**champs: Any) -> dict[str, Any]:
 
 class TestVocabulaire:
     def test_tout_est_prefixe(self) -> None:
-        labels = [LABEL_OEUVRE, *LABEL_UNIVERS.values()]
+        labels = [
+            LABEL_OEUVRE,
+            LABEL_PERSONNE,
+            LABEL_ACTEUR,
+            LABEL_REALISATEUR,
+            LABEL_CREATEUR,
+            *LABEL_UNIVERS.values(),
+        ]
         assert all(label.startswith(PREFIXE) for label in labels)
         assert all(rel.startswith(PREFIXE.upper() + "_") for rel in RELATIONS_PROJETEES)
 
@@ -600,3 +612,39 @@ class TestSynchronisation:
             " values ('tmdb', 'tv', '200', now()), ('tmdb', 'tv', '100', '2020-01-01'::timestamptz)"
         )
         assert await self._pivots_changes(conn, "2026-01-01") == sorted([pivots[200], pivots[300]])
+
+
+class TestMetiers:
+    """Acteurs et réalisateurs sont des labels sur le MÊME nœud, pas des nœuds
+    distincts. C'est ce qui permet à Clint Eastwood d'être les deux sans être
+    dédoublé — et l'unicité demandée reste portée par `:FivPersonne`."""
+
+    def test_chaque_relation_confere_un_metier(self) -> None:
+        assert set(LABEL_DU_ROLE) == {REL_JOUE, REL_REALISE, REL_CREE}
+        # Le genre n'est pas un métier : la table ne doit pas déborder sur les
+        # relations qui ne partent pas d'une personne.
+        assert REL_GENRE not in LABEL_DU_ROLE
+
+    def test_les_metiers_sont_poses_par_la_projection(self) -> None:
+        instructions = lot_cypher("series")
+        ensemble = " ".join(instructions)
+        for relation, label in LABEL_DU_ROLE.items():
+            assert f"SET p:{label}" in ensemble
+            assert relation in ensemble
+
+    def test_le_merge_reste_ancre_sur_la_personne(self) -> None:
+        """Les `MERGE` visent `:FivPersonne` — c'est lui qui porte la
+        contrainte d'unicité. Ancrer sur `:FivActeur` créerait un second nœud
+        pour la même personne le jour où elle réalise."""
+        for instruction in lot_cypher("movies"):
+            for label in (LABEL_ACTEUR, LABEL_REALISATEUR, LABEL_CREATEUR):
+                assert f"MERGE (p:{label}" not in instruction
+        assert f"MERGE (p:{LABEL_PERSONNE}" in " ".join(lot_cypher("movies"))
+
+    def test_lunicite_ne_porte_que_sur_la_personne(self) -> None:
+        """Une contrainte par métier serait au mieux redondante, au pire un
+        second espace de clés : `cle` identifie la personne, pas le rôle."""
+        contraintes = [i for i in schema_cypher(6) if "CREATE CONSTRAINT" in i]
+        assert any(LABEL_PERSONNE in i for i in contraintes)
+        for label in (LABEL_ACTEUR, LABEL_REALISATEUR, LABEL_CREATEUR):
+            assert not any(label in i for i in contraintes)
