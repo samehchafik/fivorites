@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import collections
+import json
 from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 import psycopg
@@ -12,6 +15,8 @@ import pytest_asyncio
 from conftest import requires_db
 from fiv_admin.app import create_app
 from fiv_admin.config import Settings
+from fiv_admin.deps import current_user
+from fiv_admin.graphe import Graphe
 from fiv_admin.security import hash_password
 from test_catalog import seed
 
@@ -201,3 +206,139 @@ async def test_les_membres_sont_derriere_la_session(settings: Settings) -> None:
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http,
     ):
         assert (await http.get("/api/membres")).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Le graphe du membre
+# ---------------------------------------------------------------------------
+
+
+def _reponse(champs: list[str], lignes: list[list[Any]]) -> dict[str, Any]:
+    return {"data": {"fields": champs, "values": lignes}}
+
+
+def _graphe_simule(reponses: dict[str, dict[str, Any]]) -> Graphe:
+    """Un Neo4j de papier : chaque motif reconnu dans l'instruction rend ses
+    lignes. Ce qui est testé ici est la composition — le Cypher lui-même ne se
+    vérifie que contre un vrai serveur."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        statement = json.loads(request.content)["statement"]
+        for motif, valeurs in reponses.items():
+            if motif in statement:
+                return httpx.Response(202, json=valeurs)
+        return httpx.Response(202, json=_reponse([], []))
+
+    graphe = Graphe("http://neo4j.test", "neo4j", "x")
+    graphe._http = httpx.AsyncClient(
+        base_url="http://neo4j.test", transport=httpx.MockTransport(handler)
+    )
+    return graphe
+
+
+VOISINAGE = {
+    "FIV_CITE]->(o:FivOeuvre)": _reponse(
+        ["oeuvreId", "titre", "annee", "affiche", "univers", "rang", "periode"],
+        [
+            [10, "Le Trône de fer", 2011, "/got.jpg", "series", 1, "life"],
+            [11, "Breaking Bad", 2008, None, "series", 2, "life"],
+        ],
+    ),
+    "FivPersonne)-[r]->": _reponse(
+        ["oeuvreId", "cle", "nom", "photo", "role"],
+        [
+            [10, "tmdb:22970", "Peter Dinklage", "/pd.jpg", "FIV_JOUE_DANS"],
+            [11, "tmdb:17419", "Bryan Cranston", None, "FIV_JOUE_DANS"],
+            # La même personne sur deux œuvres : un seul nœud, deux arêtes.
+            [11, "tmdb:22970", "Peter Dinklage", "/pd.jpg", "FIV_JOUE_DANS"],
+        ],
+    ),
+    "<-[:FIV_CITE]-(v:FivMembre)": _reponse(
+        ["membreId", "partagees", "communes"],
+        [[2, [10, 11], 2], [3, [10], 1]],
+    ),
+}
+
+
+@pytest_asyncio.fixture
+async def client_graphe(
+    conn: psycopg.AsyncConnection, settings: Settings
+) -> AsyncIterator[httpx.AsyncClient]:
+    await conn.execute(
+        "insert into admin_user (username, password_hash) values (%s, %s)",
+        ("sameh", hash_password(PASSWORD)),
+    )
+    await semer_membres(conn)
+
+    app = create_app(settings)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http,
+    ):
+        app.state.graphe = _graphe_simule(VOISINAGE)
+        await http.post("/api/auth/login", json={"username": "sameh", "password": PASSWORD})
+        yield http
+
+
+async def test_le_graphe_compose_les_trois_couches(client_graphe: httpx.AsyncClient) -> None:
+    body = (await client_graphe.get("/api/membres/1/graphe")).json()
+
+    types = collections.Counter(n["type"] for n in body["noeuds"])
+    assert types == {"moi": 1, "oeuvre": 2, "personne": 2, "voisin": 2}
+    assert body["projete"] is True
+
+
+async def test_une_personne_sur_deux_oeuvres_est_un_seul_noeud(
+    client_graphe: httpx.AsyncClient,
+) -> None:
+    """C'est tout l'intérêt du dessin : ce qui relie deux œuvres entre elles.
+    Deux nœuds pour Peter Dinklage, et le lien ne se verrait plus."""
+    body = (await client_graphe.get("/api/membres/1/graphe")).json()
+
+    dinklage = [n for n in body["noeuds"] if n["libelle"] == "Peter Dinklage"]
+    assert len(dinklage) == 1
+    aretes = [a for a in body["aretes"] if a["de"] == "personne:tmdb:22970"]
+    assert {a["vers"] for a in aretes} == {"oeuvre:10", "oeuvre:11"}
+
+
+async def test_le_voisin_porte_ses_oeuvres_communes(client_graphe: httpx.AsyncClient) -> None:
+    body = (await client_graphe.get("/api/membres/1/graphe")).json()
+
+    voisins = {n["libelle"]: n for n in body["noeuds"] if n["type"] == "voisin"}
+    # Le pseudo vient de Postgres, jamais du graphe : le nœud Neo4j n'en porte
+    # pas. C'est l'administration qui rapproche, derrière sa session.
+    assert "bob" in voisins
+    assert voisins["bob"]["communes"] == 2
+
+
+async def test_un_membre_hors_du_graphe_le_dit(
+    conn: psycopg.AsyncConnection, settings: Settings
+) -> None:
+    """`projete: false` distingue « pas encore projeté » de « ne cite rien » —
+    le front n'a pas à deviner lequel des deux il regarde."""
+    app = create_app(settings)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http,
+    ):
+        app.state.graphe = _graphe_simule({})
+        app.dependency_overrides[current_user] = lambda: "sameh"
+        body = (await http.get("/api/membres/1/graphe")).json()
+
+    assert body == {"membre": {"id": 1}, "noeuds": [], "aretes": [], "projete": False}
+
+
+async def test_sans_neo4j_la_route_dit_ce_qui_manque(
+    conn: psycopg.AsyncConnection, settings: Settings
+) -> None:
+    app = create_app(settings)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http,
+    ):
+        app.state.graphe = None
+        app.dependency_overrides[current_user] = lambda: "sameh"
+        reponse = await http.get("/api/membres/1/graphe")
+
+    assert reponse.status_code == 503
+    assert "NEO4J_URL" in reponse.json()["detail"]

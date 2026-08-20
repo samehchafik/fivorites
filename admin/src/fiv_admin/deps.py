@@ -9,6 +9,7 @@ import psycopg
 from fastapi import Depends, HTTPException, Request, status
 
 from fiv_admin.config import Settings
+from fiv_admin.graphe import Graphe
 from fiv_admin.queries import SummaryCache
 from fiv_admin.search import Recherche
 from fiv_admin.security import LoginThrottle, read_session
@@ -32,6 +33,12 @@ def get_summary_cache(request: Request) -> SummaryCache:
 
 def get_search(request: Request) -> Recherche:
     return request.app.state.search
+
+
+def get_graphe(request: Request) -> Graphe | None:
+    """Le client Neo4j, ou `None` s'il n'est pas configuré. À la route de dire
+    ce qui manque : ici on ne sait pas si l'appelant en a besoin."""
+    return request.app.state.graphe
 
 
 async def get_conn(request: Request) -> AsyncIterator[psycopg.AsyncConnection]:
@@ -70,3 +77,4 @@ CurrentUser = Annotated[str, Depends(current_user)]
 Conn = Annotated[psycopg.AsyncConnection, Depends(get_conn)]
 Config = Annotated[Settings, Depends(get_config)]
 Search = Annotated[Recherche, Depends(get_search)]
+GrapheOpt = Annotated["Graphe | None", Depends(get_graphe)]

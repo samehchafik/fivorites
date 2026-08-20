@@ -13,6 +13,7 @@ import {
   Stack,
   Switch,
   Table,
+  Tabs,
   Text,
   TextInput,
   Title,
@@ -24,6 +25,7 @@ import { useQuery } from '@tanstack/react-query'
 import { IconArrowDown, IconArrowUp, IconArrowsSort, IconSearch } from '@tabler/icons-react'
 
 import { api } from '../api'
+import { GrapheMembre } from './GrapheMembre'
 import { POSTER_FALLBACK, formatDate, formatNumber, titleDirection } from '../display'
 import type { Membre, MembreFive } from '../types'
 
@@ -249,20 +251,36 @@ export function MembresTab() {
           </Group>
         }
       >
-        {detail.isLoading ? (
-          <Center p="xl">
-            <Loader />
-          </Center>
-        ) : (
-          <Stack gap="lg">
-            {detail.data?.fives.length === 0 && (
-              <Text c="dimmed">Ce membre n'a aucun top.</Text>
+        {/* Deux lectures du même membre : la liste de ses tops, et le
+            voisinage qu'ils dessinent. Le graphe n'est chargé qu'à l'ouverture
+            de son onglet — il interroge Neo4j, ce que la fiche ne fait pas. */}
+        <Tabs defaultValue="tops" keepMounted={false}>
+          <Tabs.List mb="md">
+            <Tabs.Tab value="tops">Ses tops</Tabs.Tab>
+            <Tabs.Tab value="graphe">Voisinage</Tabs.Tab>
+          </Tabs.List>
+
+          <Tabs.Panel value="tops">
+            {detail.isLoading ? (
+              <Center p="xl">
+                <Loader />
+              </Center>
+            ) : (
+              <Stack gap="lg">
+                {detail.data?.fives.length === 0 && (
+                  <Text c="dimmed">Ce membre n'a aucun top.</Text>
+                )}
+                {detail.data?.fives.map((five) => (
+                  <TopDuMembre key={five.id} five={five} />
+                ))}
+              </Stack>
             )}
-            {detail.data?.fives.map((five) => (
-              <TopDuMembre key={five.id} five={five} />
-            ))}
-          </Stack>
-        )}
+          </Tabs.Panel>
+
+          <Tabs.Panel value="graphe">
+            {ouvert && <GrapheMembre id={ouvert.id} />}
+          </Tabs.Panel>
+        </Tabs>
       </Drawer>
     </Stack>
   )

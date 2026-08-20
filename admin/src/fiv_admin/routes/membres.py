@@ -16,7 +16,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from fiv_admin.deps import Conn, CurrentUser
+from fiv_admin.deps import Conn, CurrentUser, GrapheOpt
+from fiv_admin.graphe import une_ligne
 
 router = APIRouter()
 
@@ -257,3 +258,179 @@ async def fives(user: CurrentUser, conn: Conn, membre_id: int) -> dict[str, Any]
         },
         "fives": list(tops.values()),
     }
+
+
+# ---------------------------------------------------------------------------
+# Le voisinage, vu du graphe
+# ---------------------------------------------------------------------------
+
+# Trois plafonds, et ils ne sont pas des réglages de confort : sans eux la vue
+# est illisible avant d'être lente. Un membre cite jusqu'à 118 œuvres, une
+# œuvre populaire est citée par 13 817 membres, et chaque œuvre porte quinze
+# personnes. Le produit se compte en centaines de milliers d'arêtes pour un
+# écran qui en montre cent.
+OEUVRES_MAX = 12
+PERSONNES_PAR_OEUVRE = 4
+VOISINS_MAX = 10
+
+# Ce qu'on prend d'une œuvre : ceux qui la font, pas ceux qui y passent.
+ROLES = ("FIV_JOUE_DANS", "FIV_A_REALISE", "FIV_A_CREE")
+
+_CY_OEUVRES = """
+MATCH (m:FivMembre {membreId: $id})-[c:FIV_CITE]->(o:FivOeuvre)
+RETURN o.oeuvreId AS oeuvreId, o.titre AS titre, o.annee AS annee,
+       o.affiche AS affiche, o.univers AS univers, c.rang AS rang, c.periode AS periode
+ORDER BY c.rang, o.titre
+LIMIT $limite
+"""
+
+_CY_PERSONNES = """
+UNWIND $oeuvres AS oid
+MATCH (p:FivPersonne)-[r]->(o:FivOeuvre {oeuvreId: oid})
+WHERE type(r) IN $roles
+WITH oid, p, type(r) AS role, coalesce(r.ordre, 99) AS ordre
+ORDER BY ordre
+WITH oid, collect({cle: p.cle, nom: p.nom, photo: p.photo, role: role})[0..$parOeuvre] AS gens
+UNWIND gens AS g
+RETURN oid AS oeuvreId, g.cle AS cle, g.nom AS nom, g.photo AS photo, g.role AS role
+"""
+
+# Le voisin, c'est quelqu'un qui cite les mêmes œuvres. On garde ceux qui en
+# partagent le plus : un voisin à une œuvre commune, il y en a des milliers et
+# ils ne disent rien.
+_CY_VOISINS = """
+UNWIND $oeuvres AS oid
+MATCH (o:FivOeuvre {oeuvreId: oid})<-[:FIV_CITE]-(v:FivMembre)
+WHERE v.membreId <> $id
+WITH v, collect(DISTINCT oid) AS partagees
+RETURN v.membreId AS membreId, partagees, size(partagees) AS communes
+ORDER BY communes DESC, v.membreId
+LIMIT $limite
+"""
+
+
+@router.get("/membres/{membre_id}/graphe")
+async def graphe_du_membre(
+    user: CurrentUser, conn: Conn, graphe: GrapheOpt, membre_id: int
+) -> dict[str, Any]:
+    """Le voisinage d'un membre : ses œuvres, qui les fait, qui les partage.
+
+    Trois interrogations plutôt qu'une : le Cypher d'un seul tenant serait
+    illisible, et surtout chaque couche a son propre plafond — les composer
+    dans une requête reviendrait à couper au mauvais endroit, par exemple à
+    perdre un voisin parce qu'un acteur a pris sa place.
+
+    **Les voisins sont nommés ici, et seulement ici.** Le graphe ne porte aucun
+    pseudo (doc/graphe-neo4j.md §9) ; c'est l'administration qui rapproche les
+    identifiants de `membre.membre`, derrière sa session. Le site public, lui,
+    n'a pas cette route.
+    """
+    if graphe is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "graphe non configuré (NEO4J_URL, NEO4J_PASSWORD)",
+        )
+
+    oeuvres = await graphe.executer(une_ligne(_CY_OEUVRES), id=membre_id, limite=OEUVRES_MAX)
+    if not oeuvres:
+        # Deux causes, et le front doit pouvoir les distinguer d'un membre
+        # sans top : soit la projection n'a jamais tourné, soit ce membre ne
+        # cite rien. La réponse est la même — un graphe vide — le message non.
+        return {"membre": {"id": membre_id}, "noeuds": [], "aretes": [], "projete": False}
+
+    ids = [o["oeuvreId"] for o in oeuvres]
+    personnes = await graphe.executer(
+        une_ligne(_CY_PERSONNES), oeuvres=ids, roles=list(ROLES), parOeuvre=PERSONNES_PAR_OEUVRE
+    )
+    voisins = await graphe.executer(
+        une_ligne(_CY_VOISINS), id=membre_id, oeuvres=ids, limite=VOISINS_MAX
+    )
+
+    pseudos = await _pseudos(conn, [v["membreId"] for v in voisins] + [membre_id])
+
+    noeuds: list[dict[str, Any]] = [
+        {
+            "id": f"membre:{membre_id}",
+            "type": "moi",
+            "libelle": pseudos.get(membre_id) or f"membre {membre_id}",
+        }
+    ]
+    aretes: list[dict[str, Any]] = []
+
+    for o in oeuvres:
+        noeuds.append(
+            {
+                "id": f"oeuvre:{o['oeuvreId']}",
+                "type": "oeuvre",
+                "libelle": o["titre"] or f"œuvre {o['oeuvreId']}",
+                "annee": o["annee"],
+                "affiche": o["affiche"],
+                "univers": o["univers"],
+            }
+        )
+        aretes.append(
+            {
+                "de": f"membre:{membre_id}",
+                "vers": f"oeuvre:{o['oeuvreId']}",
+                "type": "cite",
+                "rang": o["rang"],
+                "periode": o["periode"],
+            }
+        )
+
+    vus: set[str] = set()
+    for p in personnes:
+        cle = f"personne:{p['cle']}"
+        if cle not in vus:
+            vus.add(cle)
+            noeuds.append(
+                {
+                    "id": cle,
+                    "type": "personne",
+                    "libelle": p["nom"] or p["cle"],
+                    "photo": p["photo"],
+                }
+            )
+        aretes.append(
+            {
+                "de": cle,
+                "vers": f"oeuvre:{p['oeuvreId']}",
+                "type": p["role"],
+            }
+        )
+
+    for v in voisins:
+        cle = f"membre:{v['membreId']}"
+        noeuds.append(
+            {
+                "id": cle,
+                "type": "voisin",
+                "libelle": pseudos.get(v["membreId"]) or f"membre {v['membreId']}",
+                "communes": v["communes"],
+            }
+        )
+        for oid in v["partagees"]:
+            aretes.append({"de": cle, "vers": f"oeuvre:{oid}", "type": "cite"})
+
+    return {
+        "membre": {"id": membre_id, "pseudo": pseudos.get(membre_id)},
+        "noeuds": noeuds,
+        "aretes": aretes,
+        "projete": True,
+        "plafonds": {
+            "oeuvres": OEUVRES_MAX,
+            "personnesParOeuvre": PERSONNES_PAR_OEUVRE,
+            "voisins": VOISINS_MAX,
+        },
+    }
+
+
+async def _pseudos(conn: Any, ids: list[int]) -> dict[int, str | None]:
+    """Les pseudos, pour l'affichage côté administration uniquement."""
+    if not ids:
+        return {}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id, pseudo from membre.membre where id = any(%s)", (list(set(ids)),)
+        )
+        return {ident: pseudo for ident, pseudo in await cur.fetchall()}

@@ -603,3 +603,36 @@ export interface MembreFives {
   membre: Membre
   fives: MembreFive[]
 }
+
+/** Un nœud du voisinage. `type` décide de la forme et de la couleur ; le reste
+ *  n'est renseigné que pour les types qui le portent. */
+export interface GrapheNoeud {
+  id: string
+  type: 'moi' | 'oeuvre' | 'personne' | 'voisin'
+  libelle: string
+  annee?: number | null
+  affiche?: string | null
+  univers?: string | null
+  photo?: string | null
+  /** Voisins seulement : combien d'œuvres en commun. */
+  communes?: number
+}
+
+export interface GrapheArete {
+  de: string
+  vers: string
+  /** `cite` pour un membre, sinon le rôle : FIV_JOUE_DANS, FIV_A_REALISE… */
+  type: string
+  rang?: number
+  periode?: string
+}
+
+export interface GrapheMembreData {
+  membre: { id: number; pseudo?: string | null }
+  noeuds: GrapheNoeud[]
+  aretes: GrapheArete[]
+  /** Faux quand le membre n'a aucun nœud dans le graphe — projection jamais
+   *  lancée, ou membre qui ne cite rien. */
+  projete: boolean
+  plafonds?: { oeuvres: number; personnesParOeuvre: number; voisins: number }
+}

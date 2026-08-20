@@ -104,17 +104,48 @@ change à chaque version (`?version=0.1.37`).
 
 ## 4. Ce qu'on voit à l'écran
 
-### Les deux vues
+### Les trois vues
 
 | Onglet | Question | Source |
 |---|---|---|
 | **Catalogue collecté** | « qu'est-ce qu'on a ? » — une carte par série | `admin.tv_card`, la projection |
 | **Avancement** | « que reste-t-il à faire ? » — les 228 454 séries du catalogue | `sourcing`, en direct |
+| **Membres** | « qui sont-ils, et qu'aiment-ils ? » — les 69 355 venus de la V1 | `membre`, plus Neo4j pour le voisinage |
 
 Une série non téléchargée **n'a pas de vignette** : le catalogue TMDB ne porte
 qu'un id, un titre original et une popularité. C'est pourquoi les deux vues
 existent, et pourquoi la grille peut être presque vide alors que le tableau
 affiche 228 454 lignes.
+
+### Les membres
+
+La liste — pseudo, email, nombre de tops, œuvres citées — se cherche dans le
+pseudo **et** dans l'email : 37 006 membres n'ont pas d'adresse (des invités de
+la V1), 945 n'ont pas de pseudo, et chercher dans un seul champ en rendrait une
+partie introuvable. Chacun porte un badge **masqué** : ils sont tous invisibles
+côté public, et c'est voulu (migration 014).
+
+Un clic ouvre le tiroir, en deux onglets :
+
+* **Ses tops** — les positions dans l'ordre du classement, avec l'affiche,
+  l'année et le « pourquoi » écrit par le membre. Le titre vient de la fiche
+  TMDB, du pivot, ou à défaut du titre saisi en V1 — pour les 208 œuvres dont
+  TMDB a supprimé la fiche, c'est tout ce qui reste.
+* **Voisinage** — le même membre, dessiné : ses œuvres, les acteurs et
+  réalisateurs qui les font, et les membres qui citent les mêmes. C'est la
+  seule vue de l'administration qui lise Neo4j.
+
+Le dessin est plafonné à 12 œuvres, 4 personnes par œuvre et 10 voisins. Les
+plafonds ne sont pas du confort : un membre cite jusqu'à 118 œuvres, une œuvre
+populaire est citée par 13 817 membres. Sans eux, la vue est illisible avant
+d'être lente. Le pied du graphe les rappelle, pour qu'on ne prenne pas un
+extrait pour un tout.
+
+Deux détails qui ont une raison. Une personne n'est nommée que si elle relie
+**deux** œuvres — c'est ce qu'on cherche à voir, le reste encombre. Et les
+pseudos des voisins viennent de Postgres, jamais du graphe : `:FivMembre` ne
+porte aucun nom (`doc/graphe-neo4j.md` §9), c'est l'administration qui
+rapproche, derrière sa session.
 
 ### La grille
 
@@ -210,6 +241,9 @@ d'entraînement de la notation ajoute les siennes sous `/api/training`.
 | `GET /api/catalog/works/{id}/seasons/{n}` | les épisodes d'une saison, dans la langue demandée |
 | `GET /api/catalog/works/{id}/sources` | l'enrichissement — Wikipédia, Wikidata, TVmaze — groupé par source |
 | `POST /api/catalog/refresh` | recalcule la projection `admin.tv_card` |
+| `GET /api/membres` | la liste — `q`, `tri`, `ordre`, `avecFives`, `page` |
+| `GET /api/membres/{id}/fives` | ses tops, positions et « pourquoi » |
+| `GET /api/membres/{id}/graphe` | son voisinage, lu dans Neo4j — 503 si le graphe n'est pas configuré |
 
 Chaque page de la grille embarque l'état de la projection : une grille vide a
 deux causes très différentes — rien de collecté, ou une projection jamais

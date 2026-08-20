@@ -7,8 +7,8 @@ Trois familles de routes, et le découpage suit ce qu'elles touchent :
 * `/api/acquisition/*` — l'avancement, en lecture pure sur `sourcing` ;
 * `/api/catalog/*` — la navigation dans ce qui a été collecté ; écrit
   uniquement la projection d'affichage, sur demande explicite ;
-* `/api/membres/*` — les membres venus de la V1 et leurs tops, en lecture pure
-  sur `membre`.
+* `/api/membres/*` — les membres venus de la V1, leurs tops, et le voisinage
+  lu dans le graphe ; en lecture pure sur `membre` et sur Neo4j.
 
 Rien dans ce service ne déclenche de collecte. Le front observe le pipeline,
 il ne le pilote pas : l'acquisition est un traitement par lots qui se lance en
@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 
 from fiv_admin.config import Settings, get_settings
 from fiv_admin.db import build_pool
+from fiv_admin.graphe import Graphe
 from fiv_admin.oeuvre import SansPivot
 from fiv_admin.queries import SummaryCache
 from fiv_admin.routes import acquisition, auth, catalog, membres, training
@@ -97,10 +98,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (il est facultatif), et c'est le disjoncteur du client qui gère les
         # pannes en cours de route.
         app.state.search = Recherche(settings.es_url, timeout=settings.es_timeout)
+        # Le graphe, même régime que la recherche : facultatif, jamais vérifié
+        # au démarrage. `None` quand il n'est pas configuré — la seule route
+        # qui s'en sert répond alors 503 en disant quoi faire, et tout le reste
+        # de l'administration ignore son absence.
+        app.state.graphe = (
+            Graphe(
+                settings.neo4j_url,
+                settings.neo4j_user,
+                settings.neo4j_password,
+                base=settings.neo4j_database,
+                timeout=settings.neo4j_timeout,
+            )
+            if settings.neo4j_url and settings.neo4j_password
+            else None
+        )
         try:
             yield
         finally:
             await app.state.search.fermer()
+            if app.state.graphe is not None:
+                await app.state.graphe.fermer()
             await pool.close()
 
     app = FastAPI(

@@ -6,6 +6,7 @@ import type {
   Dossier,
   GenresResponse,
   ItemsResponse,
+  GrapheMembreData,
   MembreFives,
   MembresResponse,
   Meta,
@@ -140,6 +141,11 @@ export const api = {
   /** Les tops d'un membre. Appelé seulement à l'ouverture d'une ligne : les
    *  324 000 positions de la base n'ont rien à faire dans une liste. */
   membreFives: (id: number) => request<MembreFives>(`/api/membres/${id}/fives`),
+
+  /** Le voisinage d'un membre, lu dans Neo4j : ses œuvres, qui les fait, qui
+   *  les partage. Trois plafonds côté serveur — sans eux le dessin est
+   *  illisible avant d'être lent. */
+  membreGraphe: (id: number) => request<GrapheMembreData>(`/api/membres/${id}/graphe`),
 
   // --------------------------------------------------------- entraînement
 
