@@ -83,6 +83,11 @@ const DEFAULT_GRID: GridState = {
  * Le sélecteur de langue est commun aux deux, dans l'en-tête : c'est la même
  * question posée à deux échelles.
  */
+/** La valeur de la section « Membres » dans le sélecteur d'en-tête. Elle vit à
+ *  côté des univers sans en être un : `meta.media` vient du serveur, celle-ci
+ *  est ajoutée par le front. */
+const SECTION_MEMBRES = 'membres'
+
 export function Dashboard({ account, onSignedOut }: { account: Account; onSignedOut: () => void }) {
   const client = useQueryClient()
 
@@ -91,7 +96,12 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   // ensuite c'est l'état qui réécrit l'URL, et l'inverse bouclerait.
   const [depuisUrl] = useState(readUrl)
 
-  const [view, setView] = useState<'cards' | 'table' | 'membres'>('cards')
+  const [view, setView] = useState<'cards' | 'table'>('cards')
+  // Les membres ne sont pas un troisième univers : ils n'en dépendent
+  // d'aucun. D'où une section à part, à côté de Séries et Films dans
+  // l'en-tête — et non un onglet du catalogue, qui aurait laissé croire que
+  // la liste change quand on passe des séries aux films.
+  const [vue, setVue] = useState<'catalogue' | 'membres'>(depuisUrl.vue)
   const [media, setMedia] = useState(depuisUrl.univers ?? 'tv')
   const [lang, setLang] = useState(depuisUrl.lang ?? 'fr-FR')
 
@@ -136,6 +146,12 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
    * ordre, et la page 4 de l'un ne veut rien dire dans l'autre.
    */
   const changerUnivers = (choisi: string) => {
+    if (choisi === SECTION_MEMBRES) {
+      setVue('membres')
+      setModalId(null)
+      return
+    }
+    setVue('catalogue')
     setMedia(choisi)
     setModalId(null)
   }
@@ -148,6 +164,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   // copiable-collable telle quelle.
   useEffect(() => {
     writeUrl({
+      vue,
       univers: media,
       id: modalId,
       onglet: modalTab,
@@ -159,6 +176,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       withOverview: grid.withOverview,
     })
   }, [
+    vue,
     media,
     modalId,
     modalTab,
@@ -174,7 +192,10 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
 
   const meta = useQuery<Meta>({ queryKey: ['meta'], queryFn: api.meta, staleTime: 5 * 60_000 })
   const available = meta.data?.media.find((entry) => entry.key === media)
-  const enabled = available?.available ?? false
+  // Les requêtes du catalogue ne partent pas quand on regarde les membres :
+  // la grille et le tableau ne sont pas à l'écran, et ils balaient 228 000
+  // lignes pour personne.
+  const enabled = (available?.available ?? false) && vue === 'catalogue'
 
   const summary = useQuery<Summary>({
     queryKey: ['summary', media],
@@ -408,33 +429,46 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
             {meta.data && (
               <SegmentedControl
                 size="xs"
-                value={media}
+                value={vue === 'membres' ? SECTION_MEMBRES : media}
                 onChange={changerUnivers}
-                data={meta.data.media.map((entry) => ({ value: entry.key, label: entry.label }))}
+                data={[
+                  ...meta.data.media.map((entry) => ({ value: entry.key, label: entry.label })),
+                  { value: SECTION_MEMBRES, label: 'Membres' },
+                ]}
               />
             )}
           </Group>
 
           <Group gap="xs" wrap="nowrap">
-            <LanguagePicker
-              languages={languages}
-              value={lang}
-              onChange={setLang}
-              summary={summary.data}
-            />
-            <Tooltip label="Recalculer les vignettes et tout relire" multiline w={220}>
-              <ActionIcon
-                variant="default"
-                size="lg"
-                onClick={() => refresh.mutate()}
-                loading={
-                  refresh.isPending || items.isFetching || summary.isFetching || cards.isFetching
-                }
-                aria-label="Rafraîchir"
-              >
-                <IconRefresh size={18} />
-              </ActionIcon>
-            </Tooltip>
+            {/* Les deux n'agissent que sur le catalogue : une langue
+                d'affichage et un recalcul de vignettes n'ont rien à proposer
+                devant une liste de membres. */}
+            {vue === 'catalogue' && (
+              <>
+                <LanguagePicker
+                  languages={languages}
+                  value={lang}
+                  onChange={setLang}
+                  summary={summary.data}
+                />
+                <Tooltip label="Recalculer les vignettes et tout relire" multiline w={220}>
+                  <ActionIcon
+                    variant="default"
+                    size="lg"
+                    onClick={() => refresh.mutate()}
+                    loading={
+                      refresh.isPending ||
+                      items.isFetching ||
+                      summary.isFetching ||
+                      cards.isFetching
+                    }
+                    aria-label="Rafraîchir"
+                  >
+                    <IconRefresh size={18} />
+                  </ActionIcon>
+                </Tooltip>
+              </>
+            )}
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
                 <Button variant="default" size="xs" leftSection={<IconUser size={16} />}>
@@ -463,11 +497,10 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
 
       <AppShell.Main>
         {/* Un univers non collecté ne vide que les deux onglets qui le
-            regardent. Les membres, eux, ne dépendent d'aucun univers : cacher
-            leur onglet parce que les films ne sont pas inventoriés reviendrait
-            à faire disparaître 69 355 personnes pour une raison qui ne les
-            concerne pas. */}
-        {(() => {
+            regardent — les membres sont une section à part, dans l'en-tête. */}
+        {vue === 'membres' ? (
+          <MembresTab />
+        ) : (() => {
           const indisponible =
             available && !available.available ? (
               <Alert
@@ -480,14 +513,10 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
               </Alert>
             ) : null
           return (
-          <Tabs
-            value={view}
-            onChange={(next) => next && setView(next as 'cards' | 'table' | 'membres')}
-          >
+          <Tabs value={view} onChange={(next) => next && setView(next as 'cards' | 'table')}>
             <Tabs.List mb="md">
               <Tabs.Tab value="cards">Catalogue collecté</Tabs.Tab>
               <Tabs.Tab value="table">Avancement</Tabs.Tab>
-              <Tabs.Tab value="membres">Membres</Tabs.Tab>
             </Tabs.List>
 
             <Tabs.Panel value="cards">
@@ -572,9 +601,6 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
               )}
             </Tabs.Panel>
 
-            <Tabs.Panel value="membres">
-              <MembresTab />
-            </Tabs.Panel>
           </Tabs>
           )
         })()}

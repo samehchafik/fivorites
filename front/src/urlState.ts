@@ -7,6 +7,7 @@
  *
  *     ?id=1399
  *     ?univers=films
+ *     ?vue=membres
  *     ?filtre=image,description
  *     ?lang=ar-SA
  *     ?tri=note:desc&puis=popularite:desc
@@ -111,6 +112,10 @@ const ONGLETS = ['presentation', 'training1', 'training2'] as const
 type Onglet = (typeof ONGLETS)[number]
 
 export interface UrlState {
+  /** La section affichée. `catalogue` est le défaut et ne s'écrit pas ; les
+   *  membres, eux, ne dépendent d'aucun univers — d'où une clé à part plutôt
+   *  qu'un troisième `univers`, qui aurait qualifié l'`id` d'une fiche. */
+  vue: 'catalogue' | 'membres'
   /** L'univers affiché — la clé d'API (`tv`, `movie`), ou null pour le défaut. */
   univers: string | null
   /** La fiche à ouvrir, ou null. */
@@ -162,6 +167,7 @@ export function readUrl(search = window.location.search): UrlState {
   const univers = params.get('univers')
 
   return {
+    vue: params.get('vue') === 'membres' ? 'membres' : 'catalogue',
     univers: univers !== null && univers in UNIVERS ? UNIVERS[univers as NomUnivers] : null,
     id: Number.isInteger(id) && id > 0 ? id : null,
     onglet: ONGLETS.includes(onglet as Onglet) ? (onglet as Onglet) : 'presentation',
@@ -179,6 +185,11 @@ export function writeUrl(state: UrlState, replace = true): void {
   // `?utm_source`, un futur `?vue` — n'ont pas à disparaître parce qu'on a
   // coché une case.
   const params = new URLSearchParams(window.location.search)
+
+  // Seule la vue qui n'est pas le défaut s'écrit : `?vue=membres` se lit, et
+  // `?vue=catalogue` sur toutes les autres URL serait du bruit.
+  if (state.vue === 'membres') params.set('vue', 'membres')
+  else params.delete('vue')
 
   // L'univers est toujours écrit, pour la raison de la langue et une de plus :
   // il qualifie l'`id` qui l'accompagne. Une fiche partagée sans son univers

@@ -106,11 +106,21 @@ change à chaque version (`?version=0.1.37`).
 
 ### Les trois vues
 
-| Onglet | Question | Source |
+`Séries · Films · Membres` en tête de page choisit la **section** ; à
+l'intérieur du catalogue, deux onglets choisissent la question.
+
+| Vue | Question | Source |
 |---|---|---|
-| **Catalogue collecté** | « qu'est-ce qu'on a ? » — une carte par série | `admin.tv_card`, la projection |
-| **Avancement** | « que reste-t-il à faire ? » — les 228 454 séries du catalogue | `sourcing`, en direct |
-| **Membres** | « qui sont-ils, et qu'aiment-ils ? » — les 69 355 venus de la V1 | `membre`, plus Neo4j pour le voisinage |
+| **Catalogue collecté** (onglet) | « qu'est-ce qu'on a ? » — une carte par série | `admin.tv_card`, la projection |
+| **Avancement** (onglet) | « que reste-t-il à faire ? » — les 228 454 séries du catalogue | `sourcing`, en direct |
+| **Membres** (section) | « qui sont-ils, et qu'aiment-ils ? » — les 69 355 venus de la V1 | `membre`, plus Neo4j pour le voisinage |
+
+Les membres sont une **section**, pas un onglet du catalogue, et le sélecteur
+d'en-tête est l'endroit juste : ils ne dépendent d'aucun univers. En onglet, ils
+auraient laissé croire que la liste change quand on passe des séries aux films.
+Quand la section est active, la langue d'affichage et le bouton de
+rafraîchissement disparaissent — ils n'agissent que sur le catalogue — et les
+requêtes de la grille ne partent plus. L'URL la porte : `?vue=membres`.
 
 Une série non téléchargée **n'a pas de vignette** : le catalogue TMDB ne porte
 qu'un id, un titre original et une popularité. C'est pourquoi les deux vues
