@@ -6,6 +6,8 @@ import type {
   Dossier,
   GenresResponse,
   ItemsResponse,
+  MembreFives,
+  MembresResponse,
   Meta,
   Phase1Result,
   Phase2Result,
@@ -123,6 +125,21 @@ export const api = {
     request<RichSources>(`/api/catalog/works/${id}/sources?${query({ media })}`),
 
   refreshCatalog: () => request<Projection>('/api/catalog/refresh', { method: 'POST' }),
+
+  // -------------------------------------------------------------- membres
+
+  membres: (params: {
+    q?: string
+    tri: string
+    ordre: 'asc' | 'desc'
+    avecFives?: boolean
+    page: number
+    pageSize: number
+  }) => request<MembresResponse>(`/api/membres?${query(params)}`),
+
+  /** Les tops d'un membre. Appelé seulement à l'ouverture d'une ligne : les
+   *  324 000 positions de la base n'ont rien à faire dans une liste. */
+  membreFives: (id: number) => request<MembreFives>(`/api/membres/${id}/fives`),
 
   // --------------------------------------------------------- entraînement
 

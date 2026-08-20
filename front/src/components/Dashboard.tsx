@@ -33,6 +33,7 @@ import type {
 import { readUrl, writeUrl } from '../urlState'
 import { AcquisitionTable } from './AcquisitionTable'
 import { DetailDrawer } from './DetailDrawer'
+import { MembresTab } from './MembresTab'
 import { Filters, type FilterState } from './Filters'
 import { LanguageCoverage } from './LanguageCoverage'
 import { LanguagePicker } from './LanguagePicker'
@@ -90,7 +91,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
   // ensuite c'est l'état qui réécrit l'URL, et l'inverse bouclerait.
   const [depuisUrl] = useState(readUrl)
 
-  const [view, setView] = useState<'cards' | 'table'>('cards')
+  const [view, setView] = useState<'cards' | 'table' | 'membres'>('cards')
   const [media, setMedia] = useState(depuisUrl.univers ?? 'tv')
   const [lang, setLang] = useState(depuisUrl.lang ?? 'fr-FR')
 
@@ -461,23 +462,36 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       </AppShell.Header>
 
       <AppShell.Main>
-        {available && !available.available ? (
-          <Alert
-            color="yellow"
-            variant="light"
-            icon={<IconAlertTriangle size={18} />}
-            title={`${available.label} : rien à afficher`}
+        {/* Un univers non collecté ne vide que les deux onglets qui le
+            regardent. Les membres, eux, ne dépendent d'aucun univers : cacher
+            leur onglet parce que les films ne sont pas inventoriés reviendrait
+            à faire disparaître 69 355 personnes pour une raison qui ne les
+            concerne pas. */}
+        {(() => {
+          const indisponible =
+            available && !available.available ? (
+              <Alert
+                color="yellow"
+                variant="light"
+                icon={<IconAlertTriangle size={18} />}
+                title={`${available.label} : rien à afficher`}
+              >
+                {available.reason}
+              </Alert>
+            ) : null
+          return (
+          <Tabs
+            value={view}
+            onChange={(next) => next && setView(next as 'cards' | 'table' | 'membres')}
           >
-            {available.reason}
-          </Alert>
-        ) : (
-          <Tabs value={view} onChange={(next) => next && setView(next as 'cards' | 'table')}>
             <Tabs.List mb="md">
               <Tabs.Tab value="cards">Catalogue collecté</Tabs.Tab>
               <Tabs.Tab value="table">Avancement</Tabs.Tab>
+              <Tabs.Tab value="membres">Membres</Tabs.Tab>
             </Tabs.List>
 
             <Tabs.Panel value="cards">
+              {indisponible ?? (
               <SeriesGrid
                 data={cards.data}
                 genres={genres.data?.items ?? []}
@@ -501,9 +515,11 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
                 onRefreshProjection={() => refresh.mutate()}
                 refreshing={refresh.isPending}
               />
+              )}
             </Tabs.Panel>
 
             <Tabs.Panel value="table">
+              {indisponible ?? (
               <Stack gap="lg">
                 <SummaryCards summary={summary.data} lang={lang} langLabel={langLabel} />
 
@@ -553,9 +569,15 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
                   tout le brut. Le tableau, lui, est toujours à jour.
                 </Text>
               </Stack>
+              )}
+            </Tabs.Panel>
+
+            <Tabs.Panel value="membres">
+              <MembresTab />
             </Tabs.Panel>
           </Tabs>
-        )}
+          )
+        })()}
       </AppShell.Main>
 
       <SeriesModal

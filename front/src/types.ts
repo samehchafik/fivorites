@@ -547,3 +547,56 @@ export interface GenresResponse {
   /** `es` ou `sql` — d'où vient le décompte. */
   source: string
 }
+
+// ------------------------------------------------------------------ membres
+
+/** Un membre venu de la V1. `email` est nul pour les 37 006 invités — ils ont
+ *  un top mais jamais eu de compte — et `pseudo` l'est pour 945 d'entre eux. */
+export interface Membre {
+  id: number
+  pseudo: string | null
+  email: string | null
+  fives: number
+  positions: number
+  bani: boolean
+  valide: boolean
+  creation: string | null
+  derniereConnexion: string | null
+}
+
+export interface MembresResponse {
+  items: Membre[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+/** Une œuvre citée dans un top. `titre` vient de la fiche TMDB, du pivot ou du
+ *  titre saisi en V1 — dans cet ordre ; il n'est jamais vide. */
+export interface MembrePosition {
+  rang: number
+  oeuvreId: number
+  idTmdb: number | null
+  titre: string | null
+  titreSaisi: string | null
+  poster: string | null
+  annee: number | null
+  note: number | null
+  pourquoi: string | null
+  commentaire: string | null
+}
+
+export interface MembreFive {
+  id: number
+  univers: string
+  periode: string
+  visibilite: string
+  titre: string | null
+  creation: string | null
+  positions: MembrePosition[]
+}
+
+export interface MembreFives {
+  membre: Membre
+  fives: MembreFive[]
+}

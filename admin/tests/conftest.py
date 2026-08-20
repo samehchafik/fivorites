@@ -89,13 +89,18 @@ async def conn(settings: Settings) -> AsyncIterator[psycopg.AsyncConnection]:
         # `sourcing.riche_source` référence `raw_source` et `tmdb_catalog` :
         # l'omettre ferait échouer le truncate sur la contrainte, dans un test
         # qui n'a rien à voir. Les tables de notation référencent tmdb_catalog
-        # et rubric : mêmes obligations.
+        # et rubric : mêmes obligations, et les tables `membre` aussi depuis
+        # qu'elles rangent tops, découvertes et avis sous `sourcing.oeuvre` —
+        # sans elles ici, c'est toute la suite qui s'arrête sur
+        # « cannot truncate a table referenced in a foreign key constraint ».
         await connection.execute(
             "truncate sourcing.raw_source, sourcing.fetch_state, sourcing.tmdb_catalog,"
             " sourcing.riche_source, sourcing.oeuvre, sourcing.video, sourcing.video_scan,"
             " admin.admin_user,"
             " notation.score, notation.weights, notation.embedding, notation.media_caption,"
-            " notation.training_run, notation.training_weights"
+            " notation.training_run, notation.training_weights,"
+            " membre.membre, membre.identifiant, membre.oeuvre_v1, membre.five,"
+            " membre.five_position, membre.decouverte, membre.avis"
         )
         # Les barèmes de test disparaissent, le `v1` semé par la migration
         # reste : c'est lui que la page d'entraînement propose par défaut.

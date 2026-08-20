@@ -6,7 +6,9 @@ Trois familles de routes, et le découpage suit ce qu'elles touchent :
   connexion) ;
 * `/api/acquisition/*` — l'avancement, en lecture pure sur `sourcing` ;
 * `/api/catalog/*` — la navigation dans ce qui a été collecté ; écrit
-  uniquement la projection d'affichage, sur demande explicite.
+  uniquement la projection d'affichage, sur demande explicite ;
+* `/api/membres/*` — les membres venus de la V1 et leurs tops, en lecture pure
+  sur `membre`.
 
 Rien dans ce service ne déclenche de collecte. Le front observe le pipeline,
 il ne le pilote pas : l'acquisition est un traitement par lots qui se lance en
@@ -31,7 +33,7 @@ from fiv_admin.config import Settings, get_settings
 from fiv_admin.db import build_pool
 from fiv_admin.oeuvre import SansPivot
 from fiv_admin.queries import SummaryCache
-from fiv_admin.routes import acquisition, auth, catalog, training
+from fiv_admin.routes import acquisition, auth, catalog, membres, training
 from fiv_admin.search import Recherche
 from fiv_admin.security import LoginThrottle
 
@@ -139,6 +141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(acquisition.router, prefix="/api", tags=["acquisition"])
     app.include_router(catalog.router, prefix="/api", tags=["catalogue"])
     app.include_router(training.router, prefix="/api", tags=["entraînement"])
+    app.include_router(membres.router, prefix="/api", tags=["membres"])
 
     @app.get("/api/health", tags=["service"])
     async def health() -> dict[str, str]:
