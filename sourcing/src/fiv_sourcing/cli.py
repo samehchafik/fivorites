@@ -1050,6 +1050,58 @@ def _octets(taille: float) -> str:
     return f"{taille:.1f} To"
 
 
+@app.command("import-v1")
+def import_v1_cmd(
+    dossier: Annotated[
+        Path,
+        typer.Option("--dossier", help="Répertoire de l'export V1 (contenant manifest.json)."),
+    ] = Path("/imports"),
+) -> None:
+    """Importe l'export V1 — membres, tops, découvertes, avis.
+
+    Rejouable : chaque table s'écrit sur sa clé V1, relancer ne duplique rien.
+    Sur le serveur, le répertoire arrive par `./imports` monté dans le
+    conteneur :
+
+        docker compose run --rm sourcing import-v1
+
+    À la fin, si des fiches TMDB citées n'ont jamais été collectées, leur
+    liste sort dans `a-collecter-<univers>.txt` — les pivots existent déjà,
+    l'import n'attend pas ces fiches.
+    """
+    from fiv_sourcing.import_v1 import importer
+
+    settings = get_settings()
+    if not (dossier / "manifest.json").is_file():
+        typer.echo(f"ERREUR : pas de manifest.json dans {dossier}")
+        typer.echo("        → l'export V1 se produit avec tools/export_v1.py, et le")
+        typer.echo("          répertoire se monte dans le conteneur (volume ./imports).")
+        raise typer.Exit(2)
+
+    typer.echo(f"cible  : {redact_dsn(settings.database_url)} (schéma {settings.db_schema})")
+    typer.echo(f"source : {dossier}")
+
+    async def run():
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            await _exiger_le_schema_a_jour(conn, settings)
+            return await importer(conn, dossier)
+
+    debut = time.monotonic()
+    r = _run_db(run)
+    typer.echo(f"œuvres      : {r.oeuvres_tmdb} par id TMDB, {r.oeuvres_titre} par titre, "
+               f"{r.oeuvres_creees} créées depuis la V1")
+    for univers, ids in r.a_collecter.items():
+        typer.echo(f"              {len(ids)} fiches {univers} jamais collectées "
+                   f"→ a-collecter-{univers}.txt (les pivots existent)")
+    typer.echo(f"membres     : {r.membres}, dont {r.identifiants} avec un compte")
+    typer.echo(f"fives       : {r.fives}  ({r.positions} positions, "
+               f"{r.positions_ecartees} écartées — vides, doublons, orphelines)")
+    typer.echo(f"découvertes : {r.decouvertes}  ({r.decouvertes_ecartees} écartées)")
+    typer.echo(f"avis        : {r.avis}  ({r.avis_ecartes} écartés, "
+               f"{r.reponses_recousues} fils recousus)")
+    typer.echo(f"terminé en {_duree(time.monotonic() - debut)}")
+
+
 async def _exiger_le_schema_a_jour(conn: psycopg.AsyncConnection, settings: Settings) -> None:
     """Refuse de démarrer une passe sur un schéma en retard.
 

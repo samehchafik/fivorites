@@ -36,6 +36,12 @@ services:
     # deux garde des saisons manquantes que `backfill` ne reprendra jamais —
     # il ne sélectionne que ce qui n'a jamais abouti.
     stop_grace_period: 180s
+    volumes:
+      # L'export V1 (migration des membres, doc/migration-v1-v2.md) : les JSONL
+      # y arrivent par scp, `import-v1` les lit et y dépose ses listes
+      # `a-collecter-*.txt`. En écriture, donc — et le répertoire peut rester
+      # vide en dehors d'une migration, personne ne le lit au démarrage.
+      - ./imports:/imports
     environment:
       DATABASE_URL: postgresql://${DB_USER:-fivorites_v2}:${DB_PASSWORD:?DB_PASSWORD doit être défini dans .env}@${DB_HOST:-172.28.0.1}:${DB_PORT:-5432}/${DB_NAME:-fivorites_v2}
       DB_SCHEMA: ${DB_SCHEMA:-sourcing}
