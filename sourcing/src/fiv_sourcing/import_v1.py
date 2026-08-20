@@ -342,6 +342,11 @@ async def importer_membres(
             lot_identifiants.append((u["v1_id"], u["email"], u["dates"]["creation"]))
 
     async with conn.cursor() as cur:
+        # `masque` n'est ni inséré ni mis à jour, et les deux comptent : à
+        # l'insertion le défaut du schéma (`true`) s'applique — un membre de la
+        # V1 arrive masqué, migration 014 ; à la mise à jour, l'absence de la
+        # colonne préserve un démasquage décidé depuis. Un ré-import ne
+        # republie donc personne.
         await cur.executemany(
             """
             insert into membre.membre (v1_id, pseudo, profil, valide, bani, privacy_v1,

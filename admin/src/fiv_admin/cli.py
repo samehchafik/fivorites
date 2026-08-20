@@ -1279,6 +1279,60 @@ def graphe_projeter(
     _run(run())
 
 
+@graphe_app.command("projeter-membres")
+def graphe_projeter_membres(
+    lot: Annotated[int, typer.Option("--lot", min=50, max=5000, help="Membres par envoi.")] = 500,
+) -> None:
+    """Projette les membres et leurs citations — en nœuds anonymes.
+
+    Le second versant du graphe : `graphe projeter` décrit les œuvres, celle-ci
+    dit qui cite quoi. Ensemble elles ouvrent la recommandation par voisinage,
+    five → personne → five → personne.
+
+    Le nœud `:FivMembre` ne porte QUE `membreId`. Pas de pseudo, pas d'adresse,
+    pas d'identifiant V1 : le voisinage n'a besoin d'aucune identité, et ce que
+    le graphe ne porte pas ne peut fuiter par aucune requête. C'est le pendant,
+    côté graphe, du drapeau `membre.masque` (migration 014).
+
+    À lancer APRÈS `graphe projeter` : une citation dont l'œuvre n'est pas
+    encore dans le graphe est ignorée — elle sera posée à la passe suivante,
+    et le compte rendu dit combien sont restées à quai.
+    """
+    import time
+
+    from fiv_admin.graphe import projeter_membres
+
+    settings = get_settings()
+
+    async def run() -> None:
+        graphe = _graphe_ou_sortir()
+        async with (
+            graphe,
+            connect(settings.database_url, settings.sourcing_schema, "admin") as conn,
+        ):
+            typer.echo("membres : extraction et projection…")
+            debut = time.monotonic()
+            bilan = await projeter_membres(
+                conn,
+                graphe,
+                lot=lot,
+                avancement=lambda n: print(f"\r  {n:,}".replace(",", " "), end=""),
+            )
+            print()
+            membres = f"{bilan['membres']:,}".replace(",", " ")
+            posees = f"{bilan['citationsPosees']:,}".replace(",", " ")
+            duree = time.monotonic() - debut
+            typer.echo(f"  {membres} membre(s), {posees} citation(s) ({duree:.0f} s)")
+            if bilan["citationsSansOeuvre"]:
+                manquantes = f"{bilan['citationsSansOeuvre']:,}".replace(",", " ")
+                typer.echo(
+                    f"  {manquantes} citation(s) sans œuvre dans le graphe — "
+                    f"`graphe projeter` puis relancer"
+                )
+
+    _run(run())
+
+
 @graphe_app.command("sync")
 def graphe_sync(
     univers: Annotated[

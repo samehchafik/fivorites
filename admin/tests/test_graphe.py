@@ -25,17 +25,20 @@ from psycopg.rows import dict_row
 
 from conftest import requires_db
 from fiv_admin.graphe import (
+    _EXTRACTION_MEMBRES,
     _PIVOTS_CHANGES,
     DISTRIBUTION_MAX,
     LABEL_ACTEUR,
     LABEL_CREATEUR,
     LABEL_DU_ROLE,
+    LABEL_MEMBRE,
     LABEL_OEUVRE,
     LABEL_PERSONNE,
     LABEL_REALISATEUR,
     LABEL_UNIVERS,
     PREFIXE,
     REALISATEURS_MAX,
+    REL_CITE,
     REL_CREE,
     REL_GENRE,
     REL_JOUE,
@@ -45,6 +48,7 @@ from fiv_admin.graphe import (
     GrapheErreur,
     construire_oeuvre,
     lot_cypher,
+    lot_membres_cypher,
     normaliser,
     parametres_extraction,
     requete_extraction,
@@ -97,12 +101,104 @@ class TestVocabulaire:
         assert all(label.startswith(PREFIXE) for label in labels)
         assert all(rel.startswith(PREFIXE.upper() + "_") for rel in RELATIONS_PROJETEES)
 
+    def test_le_membre_est_prefixe_et_distinct_de_la_personne(self) -> None:
+        # `:FivPersonne` est l'acteur ou le réalisateur ; `:FivMembre` est
+        # quelqu'un qui a un compte. Les confondre ferait apparaître un
+        # abonné dans un générique.
+        assert LABEL_MEMBRE.startswith(PREFIXE)
+        assert LABEL_MEMBRE != LABEL_PERSONNE
+        assert REL_CITE.startswith(PREFIXE.upper() + "_")
+
     def test_chaque_univers_a_son_label(self) -> None:
         # Un univers servi par l'admin sans label ici ferait des nœuds sans
         # second label, donc invisibles à toute requête par univers.
         for media in MEDIA.values():
             if media.catalog_table is not None:
                 assert media.univers in LABEL_UNIVERS
+
+
+class TestMembres:
+    """La projection des membres, et la seule chose qui compte vraiment : que
+    rien d'identifiant n'y entre."""
+
+    IDENTIFIANTS = ("pseudo", "email", "mail", "nom", "v1", "identifiant")
+
+    def test_le_noeud_ne_porte_que_son_identifiant(self) -> None:
+        # Le test qui a une raison d'exister : le jour où quelqu'un ajoutera
+        # « juste le pseudo, pour déboguer », il échouera. Un graphe qui ne
+        # porte pas une donnée ne peut pas la laisser fuiter.
+        cypher = " ".join(lot_membres_cypher()).lower()
+        for mot in self.IDENTIFIANTS:
+            assert mot not in cypher, f"le Cypher des membres mentionne « {mot} »"
+        assert "membreid" in cypher
+
+    def test_la_requete_ne_lit_aucune_colonne_identifiante(self) -> None:
+        sql = _EXTRACTION_MEMBRES.lower()
+        for mot in ("pseudo", "email", "profil", "v1_id"):
+            assert mot not in sql, f"l'extraction lit « {mot} »"
+
+    def test_les_citations_ne_creent_jamais_une_oeuvre(self) -> None:
+        """`MATCH` sur l'œuvre, jamais `MERGE`.
+
+        Un `MERGE` fabriquerait un nœud portant un `oeuvreId` et rien d'autre,
+        impossible à distinguer d'une œuvre réelle mal projetée. La citation
+        attend son œuvre, elle ne l'invente pas.
+        """
+        _, citations = lot_membres_cypher()
+        assert f"MATCH (o:{LABEL_OEUVRE}" in citations
+        assert f"MERGE (o:{LABEL_OEUVRE}" not in citations
+
+    def test_le_membre_est_cree_puis_detache(self) -> None:
+        """Deux instructions, et la première efface les citations du membre.
+
+        Sans cet effacement, un top raccourci garderait ses anciennes
+        positions : `MERGE` réécrit ce qu'on lui donne, il n'enlève rien.
+        """
+        membres, _ = lot_membres_cypher()
+        assert f"MERGE (p:{LABEL_MEMBRE}" in membres
+        assert "DELETE perimee" in membres
+        assert REL_CITE in membres
+
+    def test_le_rang_voyage_sur_la_relation(self) -> None:
+        # Le rang est le seul degré de force que la V1 donne : hors de la
+        # relation, il n'existe nulle part.
+        _, citations = lot_membres_cypher()
+        assert "r.rang = c.rang" in citations
+        assert "r.periode = c.periode" in citations
+
+
+@requires_db
+@pytest.mark.integration
+class TestExtractionMembres:
+    """Ce que la requête retient, et surtout ce qu'elle écarte."""
+
+    async def test_un_membre_par_ligne_ses_citations_groupees(
+        self, conn: psycopg.AsyncConnection
+    ) -> None:
+        from test_api_membres import semer_membres
+
+        await semer_membres(conn)
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(_EXTRACTION_MEMBRES)
+            lignes = await cur.fetchall()
+
+        # Carla n'a aucun top : pas de nœud pour elle. Un nœud sans arête
+        # n'apporte rien à une traversée, et il y en aurait 8 593.
+        assert [ligne["membre_id"] for ligne in lignes] == [1, 2]
+        alice = lignes[0]["citations"]
+        assert [c["rang"] for c in alice] == [1, 2]
+        assert all(set(c) == {"oeuvreId", "rang", "periode", "univers"} for c in alice)
+
+    async def test_un_top_invalide_ne_compte_pas(self, conn: psycopg.AsyncConnection) -> None:
+        from test_api_membres import semer_membres
+
+        await semer_membres(conn)
+        await conn.execute("update membre.five set valide = false where membre_id = 2")
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(_EXTRACTION_MEMBRES)
+            lignes = await cur.fetchall()
+
+        assert [ligne["membre_id"] for ligne in lignes] == [1]
 
 
 class TestNormaliser:

@@ -56,7 +56,12 @@ async def conn(settings: Settings):
         # échouerait sur la contrainte.
         await connection.execute(
             "truncate raw_source, fetch_state, tmdb_catalog, riche_source, oeuvre,"
-            " video, video_scan"
+            " video, video_scan,"
+            # Depuis la migration 013, les tables `membre` rangent tops,
+            # découvertes et avis sous `sourcing.oeuvre` : les omettre fait
+            # échouer le truncate sur la contrainte, et toute la suite avec.
+            " membre.membre, membre.identifiant, membre.oeuvre_v1, membre.five,"
+            " membre.five_position, membre.decouverte, membre.avis"
         )
         yield connection
     finally:

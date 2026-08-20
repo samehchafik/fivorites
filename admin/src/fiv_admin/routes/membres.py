@@ -77,6 +77,7 @@ async def liste(
                        i.email,
                        m.bani,
                        m.valide,
+                       m.masque,
                        m.creation,
                        m.derniere_connexion,
                        coalesce(c.fives, 0)     as fives,
@@ -122,6 +123,7 @@ async def liste(
                 "positions": i["positions"],
                 "bani": i["bani"],
                 "valide": i["valide"],
+                "masque": i["masque"],
                 "creation": i["creation"],
                 "derniereConnexion": i["derniere_connexion"],
             }
@@ -146,8 +148,8 @@ async def fives(user: CurrentUser, conn: Conn, membre_id: int) -> dict[str, Any]
     async with conn.cursor() as cur:
         await cur.execute(
             """
-            select m.id, m.pseudo, m.bani, m.valide, m.creation, m.derniere_connexion,
-                   i.email
+            select m.id, m.pseudo, m.bani, m.valide, m.masque, m.creation,
+                   m.derniere_connexion, i.email
               from membre.membre m
               left join membre.identifiant i on i.membre_id = m.id
              where m.id = %s
@@ -248,9 +250,10 @@ async def fives(user: CurrentUser, conn: Conn, membre_id: int) -> dict[str, Any]
             "pseudo": tete[1],
             "bani": tete[2],
             "valide": tete[3],
-            "creation": tete[4],
-            "derniereConnexion": tete[5],
-            "email": tete[6],
+            "masque": tete[4],
+            "creation": tete[5],
+            "derniereConnexion": tete[6],
+            "email": tete[7],
         },
         "fives": list(tops.values()),
     }

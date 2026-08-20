@@ -560,6 +560,9 @@ export interface Membre {
   positions: number
   bani: boolean
   valide: boolean
+  /** Ne paraît jamais côté public. Vrai pour tout ce qui vient de la V1 — soit
+   *  la totalité aujourd'hui. Voir la migration 014. */
+  masque: boolean
   creation: string | null
   derniereConnexion: string | null
 }

@@ -78,6 +78,18 @@ LABEL_OEUVRE = "FivOeuvre"
 LABEL_GENRE = "FivGenre"
 LABEL_PERSONNE = "FivPersonne"
 
+# Le membre du site, et il n'a rien à voir avec `:FivPersonne` — qui est
+# l'acteur, le réalisateur, le créateur. Deux populations, deux labels : le
+# jour où un membre est aussi un réalisateur, ce sont deux nœuds, et c'est
+# juste. Confondre les deux ferait apparaître un abonné dans un générique.
+#
+# LE NŒUD EST ANONYME, et c'est la décision qui porte tout le reste. Il ne
+# transporte que `membreId` — l'identifiant interne de `membre.membre`. Ni
+# pseudo, ni email, ni identifiant V1. Le voisinage n'en a pas besoin : deux
+# membres qui citent la même œuvre sont voisins, qu'on sache leur nom ou non.
+# Et ce qu'un graphe ne porte pas ne peut fuiter par aucune requête.
+LABEL_MEMBRE = "FivMembre"
+
 # Les métiers, en labels supplémentaires sur le MÊME nœud.
 #
 # `:FivPersonne:FivActeur:FivRealisateur` plutôt que deux nœuds : Clint
@@ -119,6 +131,10 @@ LABEL_UNIVERS: dict[str, str] = {
 }
 
 REL_GENRE = "FIV_A_POUR_GENRE"
+# « Ce membre a mis cette œuvre dans un de ses tops », et le rang est porté par
+# la relation : la première place n'est pas la cinquième, c'est le seul degré
+# de force que la V1 nous donne.
+REL_CITE = "FIV_CITE"
 REL_JOUE = "FIV_JOUE_DANS"
 REL_REALISE = "FIV_A_REALISE"
 REL_CREE = "FIV_A_CREE"
@@ -182,6 +198,11 @@ def schema_cypher(dimensions: int) -> tuple[str, ...]:
         f" FOR (g:{LABEL_GENRE}) REQUIRE g.cle IS UNIQUE",
         f"CREATE CONSTRAINT fivPersonneCle IF NOT EXISTS"
         f" FOR (p:{LABEL_PERSONNE}) REQUIRE p.cle IS UNIQUE",
+        # Le membre. Sa clé est l'identifiant interne, jamais le `v1_id` : ce
+        # dernier est un identifiant de l'ancien site, et le graphe n'a aucune
+        # raison de porter un pont vers lui.
+        f"CREATE CONSTRAINT fivMembreCle IF NOT EXISTS"
+        f" FOR (m:{LABEL_MEMBRE}) REQUIRE m.membreId IS UNIQUE",
         # Un marqueur par univers, et un seul : deux marqueurs concurrents
         # feraient repartir la synchronisation du plus ancien, donc rejouer
         # sans fin, ou du plus récent, donc creuser un trou.
@@ -684,6 +705,68 @@ def lot_cypher(univers: str) -> tuple[str, ...]:
     )
 
 
+# ---------------------------------------------------------------------------
+# Les membres
+# ---------------------------------------------------------------------------
+
+# Ce que la projection lit : un membre, ses citations, rien d'autre.
+#
+# Trois filtres, et chacun retire du bruit plutôt que de l'information :
+#
+#   * `f.valide` — un top invalidé en V1 n'a pas à peser dans le voisinage ;
+#   * `p.oeuvre_id is not null` — garanti par la clé étrangère, mais la
+#     jointure le dit mieux que la confiance ;
+#   * les membres sans aucune citation ne sortent pas : un nœud sans arête
+#     n'apporte rien à une traversée et il y en aurait 8 593.
+#
+# Le tri par membre est ce qui permet de découper en lots sans jamais couper
+# un membre en deux — chaque lot part avec des membres entiers, donc une
+# reprise après incident ne laisse personne à moitié projeté.
+_EXTRACTION_MEMBRES = """
+select m.id                                        as membre_id,
+       json_agg(json_build_object(
+           'oeuvreId', p.oeuvre_id,
+           'rang',     p.rang,
+           'periode',  f.periode,
+           'univers',  f.univers
+       ) order by f.univers, f.periode, p.rang)     as citations
+  from membre.membre m
+  join membre.five f          on f.membre_id = m.id and f.valide
+  join membre.five_position p on p.five_id = f.id
+ group by m.id
+ order by m.id
+"""
+
+# Deux instructions, pour la raison écrite plus haut à propos des œuvres : un
+# `UNWIND` sur une liste vide supprimerait la ligne courante, et un membre dont
+# toutes les citations auraient disparu perdrait aussi son nœud au lieu d'être
+# simplement détaché.
+_CYPHER_MEMBRES = """
+UNWIND $membres AS m
+MERGE (p:{membre} {{membreId: m.membreId}})
+WITH p
+OPTIONAL MATCH (p)-[perimee:{rel}]->()
+DELETE perimee
+"""
+
+_CYPHER_CITATIONS = """
+UNWIND $membres AS m
+MATCH (p:{membre} {{membreId: m.membreId}})
+UNWIND m.citations AS c
+MATCH (o:{oeuvre} {{oeuvreId: c.oeuvreId}})
+MERGE (p)-[r:{rel}]->(o)
+SET r.rang = c.rang, r.periode = c.periode
+"""
+
+
+def lot_membres_cypher() -> tuple[str, str]:
+    """Les deux instructions d'un lot de membres."""
+    return (
+        _CYPHER_MEMBRES.format(membre=LABEL_MEMBRE, rel=REL_CITE),
+        _CYPHER_CITATIONS.format(membre=LABEL_MEMBRE, oeuvre=LABEL_OEUVRE, rel=REL_CITE),
+    )
+
+
 # `CREATE CONSTRAINT nom`, `CREATE INDEX nom`, `CREATE VECTOR INDEX nom` — le
 # nom ne tombe pas au même rang selon le type, d'où la lecture par motif.
 _NOM_SCHEMA = re.compile(r"^CREATE (?:CONSTRAINT|(?:\w+ )?INDEX) (\w+)")
@@ -883,6 +966,77 @@ async def projeter(
     if ids is None:
         await poser_marqueur(graphe, media.univers, depart)
     return {"univers": media.univers, "oeuvres": total}
+
+
+async def projeter_membres(
+    conn: psycopg.AsyncConnection,
+    graphe: Graphe,
+    *,
+    lot: int = 500,
+    avancement: Callable[[int], None] | None = None,
+) -> dict[str, int]:
+    """Les membres et leurs citations, en nœuds anonymes.
+
+    C'est le second versant du graphe : le premier décrit les œuvres, celui-ci
+    dit qui cite quoi. Ensemble ils ouvrent la traversée qui fait la
+    recommandation communautaire —
+
+        (moi)-[:FIV_CITE]->(oeuvre)<-[:FIV_CITE]-(voisin)-[:FIV_CITE]->(reco)
+
+    — où le voisin est quelqu'un dont on ne sait rien, sinon qu'il a aimé les
+    mêmes choses. C'est suffisant, et c'est tout ce qu'on veut savoir.
+
+    **Une œuvre absente du graphe est ignorée en silence**, par construction :
+    la seconde instruction fait `MATCH` sur le pivot, pas `MERGE`. Une citation
+    vers une œuvre jamais projetée ne crée donc pas un nœud vide qui
+    ressemblerait à une œuvre — elle attend simplement que `graphe projeter`
+    passe. Le compte rendu dit combien de citations sont ainsi restées à quai.
+
+    Idempotent comme la projection des œuvres : `MERGE` sur le membre, les
+    `FIV_CITE` du membre effacées puis réécrites. Un top raccourci depuis la
+    dernière passe perd bien ses positions en trop.
+    """
+    instructions = lot_membres_cypher()
+    membres = 0
+    citations = 0
+
+    async def envoyer(paquet: list[dict[str, Any]]) -> None:
+        for instruction in instructions:
+            await graphe.executer(instruction, membres=paquet)
+
+    async with (
+        conn.transaction(),
+        conn.cursor(name="graphe_membres", row_factory=dict_row) as cur,
+    ):
+        cur.itersize = lot
+        await cur.execute(_EXTRACTION_MEMBRES)
+        paquet: list[dict[str, Any]] = []
+        async for row in cur:
+            paquet.append({"membreId": row["membre_id"], "citations": row["citations"]})
+            citations += len(row["citations"])
+            if len(paquet) >= lot:
+                await envoyer(paquet)
+                membres += len(paquet)
+                paquet = []
+                if avancement is not None:
+                    avancement(membres)
+        if paquet:
+            await envoyer(paquet)
+            membres += len(paquet)
+
+    # Ce que le graphe a réellement retenu, relu chez lui plutôt que déduit de
+    # ce qu'on a envoyé : l'écart, ce sont les citations dont l'œuvre n'est pas
+    # projetée, et c'est précisément le chiffre qu'on veut voir.
+    posees = await graphe.executer(
+        une_ligne(f"MATCH (:{LABEL_MEMBRE})-[r:{REL_CITE}]->() RETURN count(r) AS n")
+    )
+    retenues = int(posees[0]["n"]) if posees else 0
+    return {
+        "membres": membres,
+        "citations": citations,
+        "citationsPosees": retenues,
+        "citationsSansOeuvre": max(0, citations - retenues),
+    }
 
 
 async def elaguer(graphe: Graphe, *, lot: int = 10_000) -> dict[str, int]:

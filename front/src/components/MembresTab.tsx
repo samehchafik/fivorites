@@ -189,6 +189,13 @@ export function MembresTab() {
                               banni
                             </Badge>
                           )}
+                          {m.masque && (
+                            <Tooltip label="Ne paraît jamais côté public — importé de la V1">
+                              <Badge size="xs" color="gray" variant="light">
+                                masqué
+                              </Badge>
+                            </Tooltip>
+                          )}
                         </Group>
                       </Table.Td>
                       <Table.Td>

@@ -658,11 +658,62 @@ Elasticsearch, à qui `search.py` parle en httpx sans client dédié. Une
 dépendance de moins dans l'image, et le protocole reste lisible dans les
 journaux.
 
-## 9. Ce qui n'est pas fait
+## 9. Les membres, en nœuds anonymes
 
-- **Les membres.** `:FivMembre`, ses fives, ses swipes, et le vecteur de profil
-  qui interrogera `fivEmpreinteCouleur`. C'est la suite immédiate — le graphe
-  actuel décrit les œuvres, pas les goûts.
+Le graphe décrivait les œuvres ; il dit maintenant **qui cite quoi**. C'est ce
+qui ouvre la recommandation communautaire — celle que les axes de goût ne
+savent pas faire, puisqu'ils comparent des œuvres et jamais des gens.
+
+```
+(:FivMembre {membreId})  ──FIV_CITE {rang, periode}──►  (:FivOeuvre)
+```
+
+**Le nœud ne porte que `membreId`.** Pas de pseudo, pas d'adresse, pas
+d'identifiant V1. Ce n'est pas une précaution de façade : les 69 355 membres
+viennent de la V1, ils ne se sont jamais inscrits ici, et rien dans le
+voisinage ne demande de savoir qui ils sont — deux membres qui citent la même
+œuvre sont voisins, nommés ou non. Ce qu'un graphe ne porte pas ne peut fuiter
+par aucune requête, et un test le vérifie (`test_le_noeud_ne_porte_que_son_identifiant`).
+Le pendant côté Postgres est le drapeau `membre.masque` (migration 014).
+
+Le **rang** voyage sur la relation, parce qu'il est le seul degré de force que
+la V1 nous donne : première place n'est pas cinquième.
+
+La traversée que tout cela sert :
+
+```cypher
+MATCH (m:FivMembre {membreId: $id})-[:FIV_CITE]->(:FivOeuvre)
+      <-[:FIV_CITE]-(voisin:FivMembre)-[c:FIV_CITE]->(reco:FivOeuvre)
+WHERE NOT (m)-[:FIV_CITE]->(reco)
+RETURN reco, count(DISTINCT voisin) AS voisins, avg(6 - c.rang) AS force
+ORDER BY voisins DESC, force DESC LIMIT 20
+```
+
+**La projection**, `fiv-admin graphe projeter-membres`, suit le régime des
+œuvres : `MERGE` sur le membre, ses `FIV_CITE` effacées puis réécrites — un top
+raccourci perd bien ses positions en trop. Deux différences, et elles sont
+voulues :
+
+- elle ne projette **que les membres qui citent** — 58 409 sur 69 355. Un nœud
+  sans arête n'apporte rien à une traversée ;
+- une citation dont l'œuvre n'est pas dans le graphe est **ignorée**, pas
+  créée : la seconde instruction fait `MATCH` sur le pivot, jamais `MERGE`. Un
+  `MERGE` fabriquerait un nœud portant un `oeuvreId` et rien d'autre,
+  indiscernable d'une œuvre réelle mal projetée. Le compte rendu dit combien
+  sont restées à quai — c'est le signal qu'il faut lancer `graphe projeter`
+  d'abord.
+
+Ordres de grandeur mesurés en base : **58 409 membres, 324 076 citations**, face
+aux 1,46 million d'œuvres et à leur distribution déjà projetées. Le graphe ne
+change pas de catégorie.
+
+---
+
+## 10. Ce qui n'est pas fait
+
+- **Les swipes et le vecteur de profil** du membre, celui qui interrogera
+  `fivEmpreinteCouleur`. Le graphe sait maintenant qui cite quoi ; il ne sait
+  pas encore résumer un goût en six coordonnées.
 - **Les transactions explicites** de la projection (§5).
 - **Le contrôle de dispersion** juge contre régression, que `empreinteSource`
   rend maintenant calculable mais que personne ne calcule encore.

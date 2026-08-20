@@ -93,6 +93,7 @@ async def test_liste_compte_les_tops(client: httpx.AsyncClient) -> None:
         "positions": 2,
         "bani": False,
         "valide": True,
+        "masque": True,
         "creation": par_pseudo["alice"]["creation"],
         "derniereConnexion": None,
     }
@@ -101,6 +102,46 @@ async def test_liste_compte_les_tops(client: httpx.AsyncClient) -> None:
     assert par_pseudo["bob"]["email"] is None
     assert par_pseudo["bob"]["fives"] == 1
     assert par_pseudo["carla"]["fives"] == 0
+
+
+async def test_tout_arrive_masque(client: httpx.AsyncClient) -> None:
+    """Personne n'a demandé à être publié en V2 : le défaut du schéma le dit,
+    et rien dans l'import ne le contredit (migration 014)."""
+    body = (await client.get("/api/membres")).json()
+
+    assert all(m["masque"] for m in body["items"])
+
+
+async def test_les_vues_publiques_ne_montrent_personne(conn: psycopg.AsyncConnection) -> None:
+    """Le filtre n'est pas un `where` à ne pas oublier : c'est une vue.
+
+    Trois membres, deux tops, et zéro ligne côté public tant que rien n'est
+    démasqué — puis exactement le membre démasqué, et son top s'il est public.
+    """
+    await semer_membres(conn)
+
+    visibles = await (await conn.execute("select count(*) from membre.public_membre")).fetchone()
+    assert visibles == (0,)
+
+    await conn.execute("update membre.membre set masque = false where pseudo = 'alice'")
+    await conn.execute("update membre.five set visibilite = 'public' where membre_id = 1")
+
+    lignes = await (await conn.execute("select pseudo from membre.public_membre")).fetchall()
+    assert lignes == [("alice",)]
+    tops = await (await conn.execute("select membre_id from membre.public_five")).fetchall()
+    assert tops == [(1,)]
+
+
+async def test_un_top_public_dun_membre_masque_reste_invisible(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Un top de cinq œuvres est déjà signant : le publier sans son auteur ne
+    masque rien du tout."""
+    await semer_membres(conn)
+    await conn.execute("update membre.five set visibilite = 'public'")
+
+    tops = await (await conn.execute("select count(*) from membre.public_five")).fetchone()
+    assert tops == (0,)
 
 
 async def test_recherche_dans_pseudo_et_email(client: httpx.AsyncClient) -> None:

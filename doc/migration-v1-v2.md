@@ -453,10 +453,10 @@ Trois conséquences qui remontent jusqu'à l'export :
   commune — la raison pour laquelle la traîne du §2.2b mérite un traitement, et
   pas un haussement d'épaules.
 
-Rien de tout cela n'oblige à projeter dès la migration : `membre.five_position`
-en Postgres suffit à la première recommandation par co-citation. La projection
-Neo4j est un lot séparé, qui lira ces tables comme `graphe projeter` lit
-`sourcing`.
+**C'est fait.** `fiv-admin graphe projeter-membres` projette 58 409 membres et
+leurs 324 076 citations en nœuds `:FivMembre` qui ne portent qu'un identifiant
+interne — voir `doc/graphe-neo4j.md` §9. Les membres sans citation ne sont pas
+projetés : un nœud sans arête n'apporte rien à une traversée.
 
 ---
 
@@ -472,7 +472,7 @@ cet état qu'on migre, et le chemin commence donc à l'exporteur.
 | **3** | ✅ **L'importeur** — `fiv-sourcing import-v1` ([`import_v1.py`](../sourcing/src/fiv_sourcing/import_v1.py)) : œuvres (id TMDB → pivot, rapprochement par titre, création fiche V1 comprise), membres, fives, positions, découvertes, avis | fait : 42 s, rejoué deux fois → zéro différence ; tops vérifiés dans l'ordre V1 |
 | **4** | **Jouer sur le serveur** : `db migrate` puis `import-v1` (§7.2) | le rapport de l'import, et les contrôles §7.1 |
 | **5** | **Le reliquat de collecte** : `tmdb fetch --id` sur les listes `a-collecter-*.txt` produites par l'import (~211 fiches attendues — les pivots existent déjà, seule la fiche manque) | `a-collecter-*.txt` vides à la passe suivante |
-| **6** | **Projection `:FivMembre`** dans le graphe (§6) | la requête de voisinage rend des suggestions |
+| **6** | ✅ **Projection `:FivMembre`** dans le graphe (§6) — `graphe projeter-membres`, nœuds anonymes | la requête de voisinage rend des suggestions |
 
 ### 7.2 Sur le serveur
 
@@ -534,6 +534,8 @@ fiche V1. Deux passes de suite : aucun compte ne bouge.
 | **Les tops « moment » sont gardés** | 3 111 tops en plus des « life » ; ce sont des citations, donc des arêtes, donc du voisinage. |
 | **Les pseudos restent tels quels** | 2 034 pseudos portés par 8 351 personnes. Un pseudo n'est pas un identifiant : plusieurs Pierre, c'est le monde normal. |
 | **Ce qui n'est pas apparié est créé** | rapprochement par titre d'abord, puis l'œuvre entre en V2 depuis sa fiche V1 (§2.2b). Aucune citation n'est abandonnée faute de fiche. |
+| **Les membres importés sont masqués** | migration 014 : `membre.masque` vaut `true` par défaut, donc pour les 69 355. Ils ne paraissent jamais côté public — ce sont des gens inscrits ailleurs, il y a des années, qui n'ont rien demandé à la V2. Leurs citations, elles, comptent : c'est tout ce qu'on leur prend. Le site public lit `membre.public_membre` et `membre.public_five`, jamais les tables. |
+| **Le graphe ne porte aucune identité** | `:FivMembre` n'a qu'un `membreId`. Ni pseudo, ni email, ni `v1_id` : le voisinage n'en a pas besoin, et ce qui n'est pas écrit ne fuit pas. |
 
 ### 8.1 Ce que je fixe par défaut, faute de raison de faire autrement
 
