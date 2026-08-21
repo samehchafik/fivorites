@@ -2452,3 +2452,252 @@ async def mesurer_validite(conn: Any, rubric: dict[str, Any]) -> dict[str, Any]:
         "contreJuge": bilan_juges,
         "contreJugeOeuvres": len(contre),
     }
+
+
+# Le coût d'encodage d'une œuvre, mesuré et non estimé : 0,85 $ pour 4 501
+# dossiers lors de la constitution du corpus, soit 0,000189 $. Arrondi au-dessus
+# — un devis qui sous-estime est pire qu'un devis prudent.
+COUT_ENCODAGE_OEUVRE = 0.0002
+
+
+async def _poids_courants(conn: Any, rubric_version: str, etiquette_encodeur: str) -> dict | None:
+    """Les poids les plus récents du barème, pour cet encodeur.
+
+    L'encodeur fait partie de la clé : des poids entraînés dans un autre espace
+    vectoriel rendraient six nombres plausibles et faux sur les vecteurs
+    d'aujourd'hui.
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select weights, works, trained_at from notation.training_weights
+            where rubric_version = %s and embedder = %s
+            order by trained_at desc limit 1
+            """,
+            (rubric_version, etiquette_encodeur),
+        )
+        return await cur.fetchone()
+
+
+async def generer_vecteurs(
+    conn: Any,
+    settings: Any,
+    rubric: dict[str, Any],
+    *,
+    univers: str = "series",
+    limit: int | None = None,
+    refaire: bool = False,
+    apercu: bool = False,
+    progres: Any = None,
+) -> dict[str, Any]:
+    """Applique les poids à TOUT le catalogue — la note interne de masse.
+
+    `training poids` ne régénère que les œuvres déjà jugées : quelques milliers.
+    Le catalogue en compte deux cent mille, et c'est précisément pour elles que
+    la régression existe — les œuvres que le juge ne verra jamais.
+
+    Trois protections, toutes issues d'erreurs déjà payées ailleurs :
+
+    * **la reprise est gratuite.** Une œuvre déjà générée APRÈS le dernier
+      entraînement est sautée par une requête, sans reconstruire son dossier.
+      Relancer après une coupure ne repaie rien, et un réentraînement rend
+      naturellement tout le monde éligible — les poids ont changé, les
+      prédictions sont périmées ;
+    * **les vecteurs déjà payés servent.** Le cache d'embeddings est interrogé
+      avant l'API ; les 25 000 œuvres encodées pour la distillation sont donc
+      gratuites ici ;
+    * **un dossier trop maigre ne produit rien.** En dessous de `MIN_CHARS`, le
+      vecteur ne décrit rien et la prédiction serait une décoration. L'œuvre est
+      comptée à part plutôt que notée au hasard.
+
+    Les poids sont choisis pour l'encodeur COURANT. Sans eux, la commande
+    refuse : appliquer des poids d'un autre espace vectoriel ne lève aucune
+    erreur, ça rend seulement six nombres qui ne veulent rien dire.
+    """
+    carte = CARTE_PAR_UNIVERS.get(univers)
+    if carte is None:
+        raise LlmError(f"univers inconnu : {univers} — attendus {sorted(CARTE_PAR_UNIVERS)}")
+
+    label = etiquette(settings.embedder)
+    poids = await _poids_courants(conn, rubric["version"], label)
+    if poids is None:
+        raise LlmError(
+            f"aucun poids entraîné pour {rubric['version']} avec l'encodeur {label}"
+            " — lancer `training poids` d'abord."
+        )
+    weights_json: dict[str, Any] = poids["weights"]
+
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Le nom de la vue est interpolé, pas paramétré : PostgreSQL n'accepte
+        # pas de table en paramètre. Il vient d'une table close, vérifiée
+        # au-dessus.
+        await cur.execute(
+            f"""
+            select v.id as id_tmdb, o.id as oeuvre_id
+            from {carte} v
+            join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
+            join sourcing.oeuvre o on o.univers = %(univers)s and o.id_tmdb = v.id
+            where %(refaire)s or not exists (
+                select 1 from notation.score s
+                where s.oeuvre_id = o.id and s.rubric_version = %(rubric)s
+                  and s.modele = %(interne)s and s.scored_at > %(depuis)s
+            )
+            order by c.popularity desc nulls last
+            limit %(limit)s
+            """,  # noqa: S608
+            {
+                "univers": univers,
+                "rubric": rubric["version"],
+                "interne": INTERNAL_MODEL,
+                "depuis": poids["trained_at"],
+                "refaire": refaire,
+                "limit": limit,
+            },
+        )
+        candidates = list(await cur.fetchall())
+
+    if apercu:
+        # Le devis se calcule sans reconstruire un seul dossier : on compte les
+        # œuvres qui n'ont AUCUN vecteur sous l'étiquette courante. C'est une
+        # borne haute — celles dont le dossier a changé depuis seront réencodées
+        # aussi — mais elle ne coûte qu'une requête.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                select count(*) from unnest(%s::bigint[]) as t(oeuvre_id)
+                where not exists (
+                    select 1 from notation.embedding e
+                    where e.oeuvre_id = t.oeuvre_id and e.embedder = %s
+                )
+                """,
+                ([c["oeuvre_id"] for c in candidates], label),
+            )
+            a_encoder = (await cur.fetchone())[0]
+        return {
+            "univers": univers,
+            "encodeur": label,
+            "poidsDu": poids["trained_at"],
+            "candidates": len(candidates),
+            "aEncoder": a_encoder,
+            "cout": round(a_encoder * COUT_ENCODAGE_OEUVRE, 2),
+            "generes": 0,
+            "maigres": 0,
+            "noncollectees": 0,
+        }
+
+    prompt_sha = _prompt_sha(rubric["prompt"])
+    api = _encodeur_api(settings.embedder)
+    generes = maigres = noncollectees = payees = 0
+
+    for depart in range(0, len(candidates), LOT_EMBEDDING):
+        lot = candidates[depart : depart + LOT_EMBEDDING]
+        dossiers: dict[int, dict[str, Any]] = {}
+        for ligne in lot:
+            built = await build_dossier(
+                conn, ligne["id_tmdb"], oeuvre_id=ligne["oeuvre_id"], univers=univers
+            )
+            if built is None:
+                noncollectees += 1
+            elif not built["enough"]:
+                maigres += 1
+            else:
+                dossiers[ligne["oeuvre_id"]] = built
+        if not dossiers:
+            if progres is not None:
+                progres(min(depart + LOT_EMBEDDING, len(candidates)), len(candidates), payees)
+            continue
+
+        connus = await _vecteurs_deja_payes(conn, dossiers, label)
+        manquants = [o for o in dossiers if o not in connus]
+        if manquants and api is not None:
+            if not settings.openai_api_key:
+                raise LlmError(f"{settings.embedder} demande OPENAI_API_KEY, absente du .env")
+            nom, dims = api
+            async with httpx.AsyncClient() as http:
+                frais = await embed_openai(
+                    http,
+                    api_key=settings.openai_api_key,
+                    model=nom,
+                    textes=[dossiers[o]["text"][:MAX_CHARS] for o in manquants],
+                    dimensions=dims,
+                )
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    """
+                    insert into notation.embedding (oeuvre_id, input_sha256, embedder, vector)
+                    values (%s, %s, %s, %s) on conflict do nothing
+                    """,
+                    [
+                        (o, dossiers[o]["sha256"], label, Jsonb(v))
+                        for o, v in zip(manquants, frais, strict=True)
+                    ],
+                )
+            connus.update(zip(manquants, frais, strict=True))
+            payees += len(manquants)
+        elif manquants:
+            vecteurs = await asyncio.to_thread(
+                embed_texts,
+                [dossiers[o]["text"] for o in manquants],
+                cache_dir=settings.embed_cache_dir,
+                model=settings.embedder,
+            )
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    """
+                    insert into notation.embedding (oeuvre_id, input_sha256, embedder, vector)
+                    values (%s, %s, %s, %s) on conflict do nothing
+                    """,
+                    [
+                        (o, dossiers[o]["sha256"], label, Jsonb(v))
+                        for o, v in zip(manquants, vecteurs, strict=True)
+                    ],
+                )
+            connus.update(zip(manquants, vecteurs, strict=True))
+
+        # Une seule insertion pour tout le lot. `_store_scores` écrit ligne par
+        # ligne, ce qui va très bien pour une œuvre notée à la main et ferait
+        # 1,4 million d'allers-retours sur le catalogue entier.
+        lignes_scores = []
+        for oeuvre_id, built in dossiers.items():
+            vecteur = connus.get(oeuvre_id)
+            if vecteur is None:
+                continue
+            for axe, entree in _predict_all(vecteur, weights_json).items():
+                lignes_scores.append(
+                    (
+                        oeuvre_id,
+                        axe,
+                        entree["score"],
+                        None,
+                        rubric["version"],
+                        INTERNAL_MODEL,
+                        built["sha256"],
+                        prompt_sha,
+                    )
+                )
+            generes += 1
+        if lignes_scores:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    """
+                    insert into notation.score
+                        (oeuvre_id, axe, valeur, confiance, rubric_version, modele,
+                         input_sha256, prompt_sha256)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    lignes_scores,
+                )
+        if progres is not None:
+            progres(min(depart + LOT_EMBEDDING, len(candidates)), len(candidates), payees)
+
+    return {
+        "univers": univers,
+        "encodeur": label,
+        "poidsDu": poids["trained_at"],
+        "candidates": len(candidates),
+        "aEncoder": payees,
+        "cout": round(payees * COUT_ENCODAGE_OEUVRE, 2),
+        "generes": generes,
+        "maigres": maigres,
+        "noncollectees": noncollectees,
+    }

@@ -845,6 +845,118 @@ def training_validite(
     _run(run())
 
 
+@training_app.command("generer")
+def training_generer(
+    univers: Annotated[
+        str, typer.Option("--univers", help="series, movies, ou tous (défaut).")
+    ] = "tous",
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", help="Plafond par univers. Défaut : tout le catalogue."),
+    ] = None,
+    bareme: Annotated[
+        str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
+    ] = None,
+    refaire: Annotated[
+        bool, typer.Option("--refaire", help="Régénérer même ce qui est déjà à jour.")
+    ] = False,
+    apercu: Annotated[
+        bool, typer.Option("--apercu", help="Compter et chiffrer, sans rien appeler.")
+    ] = False,
+) -> None:
+    """Applique les poids à TOUT le catalogue — films et séries.
+
+    `training poids` ne régénère que les œuvres déjà jugées, quelques milliers.
+    Le catalogue en compte deux cent mille, et c'est précisément pour elles que
+    la régression existe : les œuvres que le juge ne verra jamais.
+
+    Ce qui rend la commande relançable sans y penser :
+
+    * une œuvre déjà générée **après** le dernier entraînement est sautée par
+      une requête, sans reconstruire son dossier. Une coupure ne coûte donc que
+      le lot en cours, et un `training poids` rend naturellement tout le monde
+      éligible — les poids ont changé, les prédictions sont périmées ;
+    * les vecteurs déjà payés servent : le cache est interrogé avant l'API, donc
+      les œuvres encodées pour le corpus de distillation ne repassent pas à la
+      caisse ;
+    * un dossier trop maigre ne produit rien plutôt qu'une note au hasard.
+
+    Le coût est celui de l'encodage des œuvres jamais encodées, ~0,0002 $
+    chacune — chiffre mesuré, pas estimé. **Toujours lancer `--apercu`
+    d'abord** : sur le catalogue entier c'est quelques dizaines de dollars, et
+    ça se voit avant, pas sur la facture.
+
+    Long : comptez plusieurs heures pour tout le catalogue. À détacher.
+    """
+    from fiv_admin.llm import LlmError
+    from fiv_admin.routes.training import _rubric, generer_vecteurs
+
+    settings = get_settings()
+    univers_demandes = ["series", "movies"] if univers == "tous" else [univers]
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            if bareme:
+                rubric = await _rubric(conn, bareme)
+            else:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric"
+                        " order by created_at desc limit 1"
+                    )
+                    rubric = await cur.fetchone()
+                if rubric is None:
+                    typer.echo("aucun barème en base.")
+                    raise typer.Exit(1)
+
+            total_cout = 0.0
+            for nom in univers_demandes:
+                typer.echo(f"\nbarème {rubric['version']} · {nom} — sélection…")
+
+                def montrer(faits: int, total: int, payees: int, _nom: str = nom) -> None:
+                    typer.echo(f"  [{_nom}] {faits}/{total}  ({payees} encodée(s) payante(s))")
+
+                try:
+                    bilan = await generer_vecteurs(
+                        conn,
+                        settings,
+                        rubric,
+                        univers=nom,
+                        limit=limit,
+                        refaire=refaire,
+                        apercu=apercu,
+                        progres=montrer,
+                    )
+                except LlmError as exc:
+                    typer.echo(f"ERREUR : {exc}")
+                    raise typer.Exit(1) from exc
+
+                total_cout += float(bilan["cout"])
+                typer.echo(
+                    f"  encodeur      : {bilan['encodeur']}"
+                    f"\n  poids du      : {bilan['poidsDu']:%Y-%m-%d %H:%M}"
+                    f"\n  à générer     : {bilan['candidates']}"
+                )
+                if apercu:
+                    typer.echo(f"  à encoder     : {bilan['aEncoder']}  (~{bilan['cout']:.2f} $)")
+                else:
+                    typer.echo(
+                        f"  générées      : {bilan['generes']}"
+                        f"\n  encodées      : {bilan['aEncoder']}  (~{bilan['cout']:.2f} $)"
+                        f"\n  dossier maigre: {bilan['maigres']}  (sous le seuil, pas notées)"
+                        f"\n  non collectées: {bilan['noncollectees']}"
+                    )
+
+            if apercu:
+                typer.echo(
+                    f"\naperçu seul, rien n'a été appelé — coût total estimé ~{total_cout:.2f} $"
+                )
+            else:
+                typer.echo(f"\ncoût total : ~{total_cout:.2f} $")
+
+    _run(run())
+
+
 @training_app.command("diagnostic")
 def training_diagnostic(
     bareme: Annotated[

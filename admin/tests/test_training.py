@@ -1530,3 +1530,60 @@ def test_les_ancres_du_bareme_se_relisent_depuis_le_prompt() -> None:
     assert _normaliser("The Good Place") == "good place"
     assert _normaliser("Grey's Anatomy") == "greys anatomy"
     assert _normaliser("  24  ") == "24"
+
+
+async def test_la_generation_de_masse_saute_ce_qui_est_deja_a_jour(
+    conn: psycopg.AsyncConnection, settings: Settings
+) -> None:
+    """Relancer apres une coupure ne doit rien recalculer ni rien repayer.
+
+    C'est l'invariant qui rend la commande lancable sur deux cent mille
+    oeuvres : la selection ecarte celles dont la note interne est posterieure
+    au dernier entrainement, par une requete et sans reconstruire un seul
+    dossier. Le corollaire compte autant — un `training poids` redate les
+    poids, donc rend TOUT le monde eligible, parce que les predictions d'hier
+    sont perimees.
+    """
+    from fiv_admin.catalog import refresh_cards
+    from fiv_admin.routes.training import generer_vecteurs
+
+    oeuvre = await seed_series(conn, 1399)
+    await refresh_cards(conn)
+
+    # Des poids minimaux, dans l'espace de l'encodeur de test.
+    from fiv_admin.embed import DIMENSIONS, etiquette
+
+    poids = {
+        axe: {"intercept": 5.0, "coef": [0.0] * DIMENSIONS, "trainedOn": 10, "maeFit": 0.5}
+        for axe in ("joie", "reve")
+    }
+    await conn.execute(
+        "insert into notation.training_weights"
+        " (rubric_version, prompt, prompt_sha256, embedder, weights, works)"
+        " values ('v1', %s, 'sha-test', %s, %s, 10)",
+        ("p" * 60, etiquette(settings.embedder), Jsonb(poids)),
+    )
+
+    rubric = {"version": "v1", "prompt": "p" * 60, "axes": ["joie", "reve"]}
+    premier = await generer_vecteurs(conn, settings, rubric, univers="series")
+    assert premier["candidates"] == 1
+    assert premier["generes"] == 1
+
+    # Deuxieme passage : plus rien a faire, et surtout rien a encoder.
+    second = await generer_vecteurs(conn, settings, rubric, univers="series")
+    assert second["candidates"] == 0, "une oeuvre deja a jour a ete reselectionnee"
+    assert second["generes"] == 0
+    assert second["cout"] == 0.0
+
+    # `--refaire` passe outre : c'est la porte de sortie quand on doute.
+    force = await generer_vecteurs(conn, settings, rubric, univers="series", refaire=True)
+    assert force["candidates"] == 1
+
+    # Et la note est bien lisible la ou le catalogue la lit.
+    ligne = await (
+        await conn.execute(
+            "select count(*) from notation.score where oeuvre_id = %s and modele = 'interne-ridge'",
+            (oeuvre,),
+        )
+    ).fetchone()
+    assert ligne[0] >= 2, "une ligne par axe attendue"
