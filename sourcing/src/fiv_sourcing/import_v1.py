@@ -40,9 +40,7 @@ log = logging.getLogger(__name__)
 UNIVERS = ("series", "movies")
 FICHIER_OEUVRES = {"series": "oeuvres-series.jsonl", "movies": "oeuvres-films.jsonl"}
 
-_ARTICLES = re.compile(
-    r"^(le|la|les|l|un|une|des|the|a|an|el|los|las|il|lo|der|die|das)\s+", re.I
-)
+_ARTICLES = re.compile(r"^(le|la|les|l|un|une|des|the|a|an|el|los|las|il|lo|der|die|das)\s+", re.I)
 _PONCTUATION = re.compile(r"[^a-z0-9 ]+")
 _BALISES = re.compile(r"<[^>]+>")
 
@@ -86,15 +84,15 @@ def lire_jsonl(chemin: Path):
 class RapportImport:
     """Ce qui s'est passé, phase par phase — imprimé tel quel par la CLI."""
 
-    oeuvres_tmdb: int = 0            # résolues par identifiant TMDB
-    oeuvres_titre: int = 0           # rapprochées par titre + année
-    oeuvres_creees: int = 0          # créées en V2 depuis leur fiche V1
+    oeuvres_tmdb: int = 0  # résolues par identifiant TMDB
+    oeuvres_titre: int = 0  # rapprochées par titre + année
+    oeuvres_creees: int = 0  # créées en V2 depuis leur fiche V1
     a_collecter: dict[str, list[int]] = field(default_factory=dict)
     membres: int = 0
     identifiants: int = 0
     fives: int = 0
     positions: int = 0
-    positions_ecartees: int = 0      # vides, illisibles, orphelines, doublons
+    positions_ecartees: int = 0  # vides, illisibles, orphelines, doublons
     decouvertes: int = 0
     decouvertes_ecartees: int = 0
     avis: int = 0
@@ -103,6 +101,7 @@ class RapportImport:
 
 
 # ------------------------------------------------------------------ œuvres
+
 
 async def _resoudre_par_tmdb(
     conn: psycopg.AsyncConnection, univers: str, ids_tmdb: list[int]
@@ -150,15 +149,17 @@ async def _apparier_par_titre(
     """
     annee = oeuvre.get("annee")
     variantes = {
-        v for v in (
+        v
+        for v in (
             normaliser_titre(t)
             for t in [*oeuvre.get("titre", {}).values(), *oeuvre.get("titres_alternatifs", [])]
-        ) if v
+        )
+        if v
     }
     if not variantes or not annee:
         return None
 
-    candidats: set[int] = set()          # id TMDB des candidats retenus
+    candidats: set[int] = set()  # id TMDB des candidats retenus
     async with conn.cursor() as cur:
         await cur.execute(
             """
@@ -211,7 +212,7 @@ async def _creer_oeuvre(conn: psycopg.AsyncConnection, univers: str, oeuvre: dic
             (univers, str(oeuvre["v1_id"]), Jsonb(fiche), blob),
         )
         ligne = await cur.fetchone()
-        if ligne is None:      # déjà déposée par une passe précédente
+        if ligne is None:  # déjà déposée par une passe précédente
             await cur.execute(
                 """
                 select id from raw_source
@@ -293,7 +294,7 @@ async def importer_oeuvres(
             if o["id_tmdb"] is not None:
                 continue
             cle = (univers, o["v1_id"])
-            if cle in correspondance:      # passe précédente — le registre sait
+            if cle in correspondance:  # passe précédente — le registre sait
                 continue
             oeuvre_id = await _apparier_par_titre(conn, univers, o)
             if oeuvre_id is not None:
@@ -320,6 +321,7 @@ async def importer_oeuvres(
 
 # ------------------------------------------------------------------ membres
 
+
 async def importer_membres(
     conn: psycopg.AsyncConnection, dossier: Path, rapport: RapportImport
 ) -> None:
@@ -328,13 +330,19 @@ async def importer_membres(
         profil = dict(u["profil"])
         profil["emails_secondaires"] = u.get("emails_secondaires") or []
         profil["acquisition"] = u.get("acquisition") or {}
-        lot_membres.append((
-            u["v1_id"], u["pseudo"], Jsonb(profil),
-            u["statut"]["valide"], u["statut"]["bani"],
-            u["statut"].get("privacy_defaut_v1"),
-            u["dates"]["creation"], u["dates"]["derniere_maj"],
-            u["dates"]["derniere_connexion"],
-        ))
+        lot_membres.append(
+            (
+                u["v1_id"],
+                u["pseudo"],
+                Jsonb(profil),
+                u["statut"]["valide"],
+                u["statut"]["bani"],
+                u["statut"].get("privacy_defaut_v1"),
+                u["dates"]["creation"],
+                u["dates"]["derniere_maj"],
+                u["dates"]["derniere_connexion"],
+            )
+        )
         # L'email n'est un identifiant que s'il vient d'un compte : les
         # adresses de `personnes.emails` ne sont pas uniques (159 partages,
         # décision : pas de fusion), celles de `users_auth` le sont.
@@ -376,6 +384,7 @@ async def importer_membres(
 
 # ------------------------------------------------------------------ fives
 
+
 async def importer_fives(
     conn: psycopg.AsyncConnection,
     dossier: Path,
@@ -391,11 +400,19 @@ async def importer_fives(
         membre_id = membres.get(f["user_v1_id"])
         if membre_id is None:
             continue
-        fives.append((
-            f["v1_five_id"], membre_id, f["univers"], f["periode"],
-            f.get("privacy_v1"), f.get("titre"), f["valide"],
-            f["dates"]["creation"], f["dates"]["derniere_maj"],
-        ))
+        fives.append(
+            (
+                f["v1_five_id"],
+                membre_id,
+                f["univers"],
+                f["periode"],
+                f.get("privacy_v1"),
+                f.get("titre"),
+                f["valide"],
+                f["dates"]["creation"],
+                f["dates"]["derniere_maj"],
+            )
+        )
         for p in f["positions"]:
             if p.get("statut") or p.get("doublon_de"):
                 rapport.positions_ecartees += 1
@@ -404,10 +421,16 @@ async def importer_fives(
             if oeuvre_id is None:
                 rapport.positions_ecartees += 1
                 continue
-            positions.append((
-                f["v1_five_id"], p["rang"], oeuvre_id,
-                p.get("titre_saisi"), p.get("pourquoi"), p.get("commentaire"),
-            ))
+            positions.append(
+                (
+                    f["v1_five_id"],
+                    p["rang"],
+                    oeuvre_id,
+                    p.get("titre_saisi"),
+                    p.get("pourquoi"),
+                    p.get("commentaire"),
+                )
+            )
 
     async with conn.cursor() as cur:
         await cur.executemany(
@@ -435,8 +458,7 @@ async def importer_fives(
                 pourquoi = excluded.pourquoi, commentaire = excluded.commentaire
             """,
             [
-                {"five_v1": fv, "rang": r, "oeuvre": o,
-                 "titre": t, "pourquoi": p, "commentaire": c}
+                {"five_v1": fv, "rang": r, "oeuvre": o, "titre": t, "pourquoi": p, "commentaire": c}
                 for fv, r, o, t, p, c in positions
             ],
         )
@@ -444,6 +466,7 @@ async def importer_fives(
 
 
 # ------------------------------------------------------------------ le reste
+
 
 async def importer_decouvertes(
     conn: psycopg.AsyncConnection,
@@ -498,11 +521,20 @@ async def importer_avis(
         if membre_id is None or oeuvre_id is None:
             rapport.avis_ecartes += 1
             continue
-        lot.append((
-            a["univers"], a["v1_avis_id"], membre_id, oeuvre_id, a.get("note"),
-            a.get("titre"), a.get("texte"), a["valide"],
-            a["dates"]["creation"], a["dates"]["derniere_maj"],
-        ))
+        lot.append(
+            (
+                a["univers"],
+                a["v1_avis_id"],
+                membre_id,
+                oeuvre_id,
+                a.get("note"),
+                a.get("titre"),
+                a.get("texte"),
+                a["valide"],
+                a["dates"]["creation"],
+                a["dates"]["derniere_maj"],
+            )
+        )
         if a.get("reponse_a") is not None:
             fils.append((a["univers"], a["v1_avis_id"], a["reponse_a"]))
 
@@ -535,6 +567,7 @@ async def importer_avis(
 
 
 # ------------------------------------------------------------------ l'entrée
+
 
 async def importer(conn: psycopg.AsyncConnection, dossier: Path) -> RapportImport:
     """Joue l'import complet depuis un répertoire d'export V1.

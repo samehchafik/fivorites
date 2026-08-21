@@ -196,17 +196,32 @@ def enrich(
         int | None,
         typer.Option("--refresh-after", help="Reprendre aussi celles vues il y a plus de N jours."),
     ] = None,
+    univers_cle: Annotated[
+        str, typer.Option("--univers", help="series (défaut) ou movies.")
+    ] = "series",
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Compter le reste à faire, sans rien télécharger.")
     ] = False,
 ) -> None:
     """Ajoute les sources tierces : Wikidata, Wikipédia, TVmaze.
 
-    Sans `--id`, traite **toutes les séries collectées encore sans complément**
+    Sans `--id`, traite **toutes les œuvres collectées encore sans complément**
     et reprend là où la passe précédente s'est arrêtée. L'enrichissement se
-    raccroche à la fiche collectée (`riche_source.raw_source_id`) : une série
+    raccroche à la fiche collectée (`riche_source.raw_source_id`) : une œuvre
     doit être passée par `tmdb fetch` ou `tmdb backfill` d'abord.
+
+    `--univers movies` enrichit les films. Trois choses changent, et rien
+    d'autre : la propriété Wikidata d'entrée (`P4947` au lieu de `P4983` — les
+    deux catalogues TMDB se numérotent indépendamment), l'absence de TVmaze qui
+    est une base de séries, et le `kind` de reprise dans `fetch_state` pour que
+    le film 550 et la série 550 ne se volent pas leur état de passage.
+
+    Ce que l'enrichissement apporte à un film n'est pas la qualité de sa note
+    mais son **existence** : un dossier sous 400 caractères n'est pas notable du
+    tout, et l'article Wikipédia le fait passer le seuil. La couverture
+    Wikipédia est d'ailleurs bien meilleure sur les films que sur les séries.
     """
+    from fiv_sourcing import univers as mod_univers
     from fiv_sourcing.enrich import (
         EnrichAllReport,
         build_clients,
@@ -218,6 +233,11 @@ def enrich(
 
     settings = get_settings()
     langues = settings.wikipedia_languages
+    try:
+        univers = mod_univers.resoudre(univers_cle)
+    except ValueError as exc:
+        typer.echo(f"ERREUR : {exc}")
+        raise typer.Exit(1) from exc
 
     async def une_par_une() -> int:
         echecs = 0
@@ -226,7 +246,9 @@ def enrich(
             async with fetcher:
                 clients = build_clients(fetcher)
                 for tv_id in ids or []:
-                    report = await enrich_series(conn, clients, tv_id, languages=langues)
+                    report = await enrich_series(
+                        conn, clients, tv_id, languages=langues, univers=univers
+                    )
                     marker = "ok " if report.sources else "rien"
                     typer.echo(
                         f"{marker} {tv_id:>8}  {report.requests:>2} requêtes  "
@@ -253,14 +275,14 @@ def enrich(
         typer.echo(
             f"{report.done:>7}/{report.selected}  "
             f"{report.resolved} raccordée(s)  {report.enriched} enrichie(s)  "
-            f"{rate:5.2f} série/s  reste {_duree(eta)}"
+            f"{rate:5.2f} {univers.libelle}/s  reste {_duree(eta)}"
         )
 
     async def en_masse() -> EnrichAllReport:
         async with connect(settings.database_url, schema=settings.db_schema) as conn:
             await _exiger_le_schema_a_jour(conn, settings)
             selection = await pending_ids(
-                conn, refresh_after=refresh_after, limit=limit, order=order
+                conn, refresh_after=refresh_after, limit=limit, order=order, univers=univers
             )
             if dry_run or not selection:
                 return EnrichAllReport(selected=len(selection))
@@ -280,10 +302,15 @@ def enrich(
                     concurrency=concurrency,
                     stop=stop,
                     on_progress=show,
+                    univers=univers,
                 )
                 stats.append(fetcher.stats)
                 return resultat
 
+    typer.echo(
+        f"univers : {univers.cle} (Wikidata {univers.wikidata_propriete}"
+        f"{', TVmaze' if univers.tvmaze else ', sans TVmaze'})"
+    )
     typer.echo(f"langues : {', '.join(langues)}")
     typer.echo(f"débit   : {settings.enrich_rate_limit} req/s Wikimedia (ENRICH_RATE_LIMIT)")
     typer.echo(f"          {settings.tvmaze_rate_limit} req/s TVmaze (TVMAZE_RATE_LIMIT)")
@@ -1088,17 +1115,24 @@ def import_v1_cmd(
 
     debut = time.monotonic()
     r = _run_db(run)
-    typer.echo(f"œuvres      : {r.oeuvres_tmdb} par id TMDB, {r.oeuvres_titre} par titre, "
-               f"{r.oeuvres_creees} créées depuis la V1")
+    typer.echo(
+        f"œuvres      : {r.oeuvres_tmdb} par id TMDB, {r.oeuvres_titre} par titre, "
+        f"{r.oeuvres_creees} créées depuis la V1"
+    )
     for univers, ids in r.a_collecter.items():
-        typer.echo(f"              {len(ids)} fiches {univers} jamais collectées "
-                   f"→ a-collecter-{univers}.txt (les pivots existent)")
+        typer.echo(
+            f"              {len(ids)} fiches {univers} jamais collectées "
+            f"→ a-collecter-{univers}.txt (les pivots existent)"
+        )
     typer.echo(f"membres     : {r.membres}, dont {r.identifiants} avec un compte")
-    typer.echo(f"fives       : {r.fives}  ({r.positions} positions, "
-               f"{r.positions_ecartees} écartées — vides, doublons, orphelines)")
+    typer.echo(
+        f"fives       : {r.fives}  ({r.positions} positions, "
+        f"{r.positions_ecartees} écartées — vides, doublons, orphelines)"
+    )
     typer.echo(f"découvertes : {r.decouvertes}  ({r.decouvertes_ecartees} écartées)")
-    typer.echo(f"avis        : {r.avis}  ({r.avis_ecartes} écartés, "
-               f"{r.reponses_recousues} fils recousus)")
+    typer.echo(
+        f"avis        : {r.avis}  ({r.avis_ecartes} écartés, {r.reponses_recousues} fils recousus)"
+    )
     typer.echo(f"terminé en {_duree(time.monotonic() - debut)}")
 
 

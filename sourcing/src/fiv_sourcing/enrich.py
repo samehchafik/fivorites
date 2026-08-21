@@ -42,6 +42,7 @@ from fiv_sourcing import normalize, store
 from fiv_sourcing.config import Settings
 from fiv_sourcing.http import FetchResult, HttpFetcher
 from fiv_sourcing.sources import tvmaze, wikidata, wikipedia
+from fiv_sourcing.univers import SERIES, Univers
 
 log = logging.getLogger(__name__)
 
@@ -104,25 +105,31 @@ async def enrich_series(
     tv_id: int,
     *,
     languages: tuple[str, ...] = ("fr", "en"),
+    univers: Univers = SERIES,
 ) -> EnrichReport:
     report = EnrichReport(tv_id=tv_id)
 
-    fiche_id = (await store.latest_fiche_ids(conn, [tv_id])).get(tv_id)
+    fiche_id = (await store.latest_fiche_ids(conn, [tv_id], kind=univers.kind)).get(tv_id)
     if fiche_id is None:
-        report.errors.append("série non collectée — `tmdb fetch` d'abord")
+        # Tournure neutre : « série non collectée » et « film non collecté » ne
+        # s'accordent pas pareil, et un message qui se construit par morceaux
+        # finit toujours par écrire « série non collecté ».
+        report.errors.append(f"aucune fiche collectée ({univers.libelle}) — `tmdb fetch` d'abord")
         return report
 
     cible = Cible(
-        oeuvre_id=(await store.ensure_oeuvres(conn, [tv_id]))[tv_id],
+        oeuvre_id=(await store.ensure_oeuvres(conn, [tv_id], univers=univers.cle))[tv_id],
         cle=str(tv_id),
         tv_id=tv_id,
         fiche_id=fiche_id,
     )
-    titre = await _titre_du_catalogue(conn, tv_id)
-    imdb_connu = await _imdb_depuis_la_collecte(conn, tv_id)
-    faits = await _wikidata(conn, clients, cible, imdb_connu, report)
+    titre = await _titre_du_catalogue(conn, tv_id, univers)
+    imdb_connu = await _imdb_depuis_la_collecte(conn, tv_id, univers)
+    faits = await _wikidata(conn, clients, cible, imdb_connu, report, univers)
 
-    await _apres_wikidata(conn, clients, cible, faits, imdb_connu, titre, languages, report)
+    await _apres_wikidata(
+        conn, clients, cible, faits, imdb_connu, titre, languages, report, univers
+    )
     return report
 
 
@@ -156,6 +163,7 @@ async def _apres_wikidata(
     titre: str | None,
     languages: tuple[str, ...],
     report: EnrichReport,
+    univers: Univers = SERIES,
 ) -> None:
     """Ce qui suit la résolution, identique à l'unité et en masse.
 
@@ -166,16 +174,19 @@ async def _apres_wikidata(
         # Sans item Wikidata, il reste TVmaze — par l'imdb_id de la collecte, ou
         # par le titre si cet identifiant existe pour départager. Au dixième
         # décile de popularité, rien n'aboutit : c'est mesuré, pas une anomalie.
-        await _tvmaze(conn, clients, cible, None, imdb_connu, titre, report)
+        #
+        # Pour un film, il ne reste rien : TVmaze est une base de séries.
+        if univers.tvmaze:
+            await _tvmaze(conn, clients, cible, None, imdb_connu, titre, report)
         return
 
     articles = await _sitelinks(conn, clients, faits["qid"], report)
     imdb = faits.get("imdb") or imdb_connu
 
-    await asyncio.gather(
-        _wikipedia(conn, clients, cible, articles, languages, report),
-        _tvmaze(conn, clients, cible, faits.get("tvmaze"), imdb, titre, report),
-    )
+    etapes = [_wikipedia(conn, clients, cible, articles, languages, report)]
+    if univers.tvmaze:
+        etapes.append(_tvmaze(conn, clients, cible, faits.get("tvmaze"), imdb, titre, report))
+    await asyncio.gather(*etapes)
 
 
 # --------------------------------------------------------------------- étapes
@@ -185,11 +196,16 @@ async def _wikidata(
     cible: Cible,
     imdb_connu: str | None,
     report: EnrichReport,
+    univers: Univers = SERIES,
 ) -> dict[str, Any] | None:
-    """P4983 d'abord, P345 en second recours. Voir le module pour le pourquoi."""
-    resultat = await clients.wikidata.by_tmdb(cible.tv_id)
+    """L'identifiant TMDB d'abord, P345 en second recours.
+
+    La propriété dépend de l'univers — `P4983` pour une série, `P4947` pour un
+    film. Voir le module Wikidata pour le pourquoi de cet ordre.
+    """
+    resultat = await clients.wikidata.by_tmdb(cible.tv_id, propriete=univers.wikidata_propriete)
     report.requests += 1
-    voie = "p4983"
+    voie = univers.wikidata_propriete.lower()
     # `canonicaliser` avant tout : l'ordre des GROUP_CONCAT n'est pas garanti
     # par Blazegraph, et sans tri chaque rejeu écrirait une ligne de brut de
     # plus pour un contenu identique (R2).
@@ -398,8 +414,9 @@ async def pending_ids(
     refresh_after: int | None = None,
     limit: int | None = None,
     order: str = "id",
+    univers: Univers = SERIES,
 ) -> list[int]:
-    """Séries collectées et encore sans complément.
+    """Œuvres collectées et encore sans complément.
 
     **Collectées** : `riche_source` référence la fiche de `raw_source`, donc une
     série sans fiche n'est pas enrichissable — elle entrera dans la sélection
@@ -419,13 +436,13 @@ async def pending_ids(
             select c.id
             from tmdb_catalog c
             join fetch_state collecte
-                   on collecte.source = 'tmdb' and collecte.kind = 'tv'
+                   on collecte.source = 'tmdb' and collecte.kind = %(kind)s
                   and collecte.source_id = c.id::text
                   and collecte.last_success_at is not null
             left join fetch_state f
-                   on f.source = 'wikidata' and f.kind = 'lookup'
+                   on f.source = 'wikidata' and f.kind = %(lookup)s
                   and f.source_id = c.id::text
-            where c.univers = 'series'
+            where c.univers = %(univers)s
               and (f.last_fetched_at is null
                    or (%(refresh_after)s::int is not null
                        and f.last_fetched_at < now()
@@ -433,7 +450,13 @@ async def pending_ids(
             order by {ORDERS[order]}
             limit %(limit)s
             """,  # noqa: S608 — `order` est validé contre ORDERS juste au-dessus
-            {"refresh_after": refresh_after, "limit": limit},
+            {
+                "refresh_after": refresh_after,
+                "limit": limit,
+                "univers": univers.cle,
+                "kind": univers.kind,
+                "lookup": univers.lookup_kind,
+            },
         )
         return [row[0] for row in await cur.fetchall()]
 
@@ -448,8 +471,9 @@ async def enrich_all(
     concurrency: int = 4,
     stop: asyncio.Event | None = None,
     on_progress: Callable[[EnrichAllReport], None] | None = None,
+    univers: Univers = SERIES,
 ) -> EnrichAllReport:
-    """Enrichit une liste de séries collectées, par lots.
+    """Enrichit une liste d'œuvres collectées, par lots.
 
     Deux temps, et c'est ce qui rend la passe tenable :
 
@@ -465,8 +489,10 @@ async def enrich_all(
         if stop is not None and stop.is_set():
             break
         tranche = ids[depart : depart + lot]
-        fiches = await store.latest_fiche_ids(conn, tranche)
-        oeuvres = await store.ensure_oeuvres(conn, [i for i in tranche if i in fiches])
+        fiches = await store.latest_fiche_ids(conn, tranche, kind=univers.kind)
+        oeuvres = await store.ensure_oeuvres(
+            conn, [i for i in tranche if i in fiches], univers=univers.cle
+        )
         cibles = {
             tv_id: Cible(
                 oeuvre_id=oeuvres[tv_id],
@@ -477,9 +503,9 @@ async def enrich_all(
             for tv_id in tranche
             if tv_id in fiches
         }
-        faits_par_id = await _resoudre_le_lot(conn, clients, tranche, cibles, report)
-        titres = await _titres_du_catalogue(conn, tranche)
-        imdbs = await _imdbs_depuis_la_collecte(conn, tranche)
+        faits_par_id = await _resoudre_le_lot(conn, clients, tranche, cibles, report, univers)
+        titres = await _titres_du_catalogue(conn, tranche, univers)
+        imdbs = await _imdbs_depuis_la_collecte(conn, tranche, univers)
 
         await _traiter_la_tranche(
             conn,
@@ -494,6 +520,7 @@ async def enrich_all(
             stop=stop,
             report=report,
             on_progress=on_progress,
+            univers=univers,
         )
         if on_progress:
             on_progress(report)
@@ -516,8 +543,9 @@ async def _traiter_la_tranche(
     stop: asyncio.Event | None,
     report: EnrichAllReport,
     on_progress: Callable[[EnrichAllReport], None] | None,
+    univers: Univers = SERIES,
 ) -> None:
-    """Le détail des séries d'une tranche, `concurrency` en parallèle.
+    """Le détail des œuvres d'une tranche, `concurrency` en parallèle.
 
     Fonction séparée et non fermeture dans la boucle : capturer les
     dictionnaires de la tranche courante dans un `worker` défini sur place
@@ -529,7 +557,11 @@ async def _traiter_la_tranche(
         # Sans fiche collectée, rien à raccrocher. Sans item et sans imdb_id,
         # rien à tenter : la recherche par titre ne pourrait rien confirmer.
         # Le passage est déjà noté dans fetch_state.
-        if tv_id in cibles and (tv_id in faits_par_id or imdbs.get(tv_id)):
+        # Sans item Wikidata, seul TVmaze pourrait encore aboutir — et il
+        # n'existe pas pour les films. Un film sans item n'a donc plus rien à
+        # tenter, et le mettre en file ferait un tour de boucle pour rien.
+        recours = univers.tvmaze and bool(imdbs.get(tv_id))
+        if tv_id in cibles and (tv_id in faits_par_id or recours):
             file.put_nowait(tv_id)
         else:
             report.done += 1
@@ -556,6 +588,7 @@ async def _traiter_la_tranche(
                     titres.get(tv_id),
                     languages,
                     detail,
+                    univers,
                 )
             except Exception as exc:  # noqa: BLE001 — une série ne tue pas la passe
                 log.warning("série %s : %s", tv_id, exc)
@@ -578,9 +611,10 @@ async def _resoudre_le_lot(
     ids: list[int],
     cibles: dict[int, Cible],
     report: EnrichAllReport,
+    univers: Univers = SERIES,
 ) -> dict[int, dict[str, Any]]:
-    """Une requête SPARQL pour cent séries, et le passage noté pour chacune."""
-    resultat = await clients.wikidata.by_tmdb_lot(ids)
+    """Une requête SPARQL pour cent œuvres, et le passage noté pour chacune."""
+    resultat = await clients.wikidata.by_tmdb_lot(ids, propriete=univers.wikidata_propriete)
     report.requests += 1
     if not resultat.ok:
         report.errors += 1
@@ -597,7 +631,7 @@ async def _resoudre_le_lot(
         await store.mark_fetch(
             conn,
             source=wikidata.SOURCE,
-            kind="lookup",
+            kind=univers.lookup_kind,
             source_id=str(tv_id),
             http_status=resultat.status,
             changed=tv_id in faits_par_id,
@@ -614,18 +648,20 @@ async def _resoudre_le_lot(
     return faits_par_id
 
 
-async def _titres_du_catalogue(conn: psycopg.AsyncConnection, ids: list[int]) -> dict[int, str]:
+async def _titres_du_catalogue(
+    conn: psycopg.AsyncConnection, ids: list[int], univers: Univers = SERIES
+) -> dict[int, str]:
     async with conn.cursor() as cur:
         await cur.execute(
             "select id, original_name from tmdb_catalog "
-            "where univers = 'series' and id = any(%s) and original_name is not null",
-            (ids,),
+            "where univers = %s and id = any(%s) and original_name is not null",
+            (univers.cle, ids),
         )
         return dict(await cur.fetchall())
 
 
 async def _imdbs_depuis_la_collecte(
-    conn: psycopg.AsyncConnection, ids: list[int]
+    conn: psycopg.AsyncConnection, ids: list[int], univers: Univers = SERIES
 ) -> dict[int, str]:
     """Les `imdb_id` des fiches collectées, en une requête pour tout le lot."""
     async with conn.cursor() as cur:
@@ -635,32 +671,42 @@ async def _imdbs_depuis_la_collecte(
                    source_id::int,
                    payload -> 'external_ids' ->> 'imdb_id'
             from raw_source
-            where source = 'tmdb' and kind = 'tv'
+            where source = 'tmdb' and kind = %s
               and source_id = any(%s)
               and http_status between 200 and 299
             order by source_id, fetched_at desc
             """,
-            ([str(i) for i in ids],),
+            (univers.kind, [str(i) for i in ids]),
         )
         return {row[0]: row[1] for row in await cur.fetchall() if row[1]}
 
 
 # ---------------------------------------------------------------------- outils
-async def _titre_du_catalogue(conn: psycopg.AsyncConnection, tv_id: int) -> str | None:
+async def _titre_du_catalogue(
+    conn: psycopg.AsyncConnection, tv_id: int, univers: Univers = SERIES
+) -> str | None:
     async with conn.cursor() as cur:
         await cur.execute(
-            "select original_name from tmdb_catalog where univers = 'series' and id = %s",
-            (tv_id,),
+            "select original_name from tmdb_catalog where univers = %s and id = %s",
+            (univers.cle, tv_id),
         )
         row = await cur.fetchone()
     return row[0] if row and row[0] else None
 
 
-async def _imdb_depuis_la_collecte(conn: psycopg.AsyncConnection, tv_id: int) -> str | None:
+async def _imdb_depuis_la_collecte(
+    conn: psycopg.AsyncConnection, tv_id: int, univers: Univers = SERIES
+) -> str | None:
     """L'`imdb_id` de la fiche collectée. Il ouvre la seconde entrée Wikidata et
-    surtout il **décide** de l'appariement TVmaze."""
-    payload = await store.latest_payload(conn, source="tmdb", kind="tv", source_id=str(tv_id))
-    return ((payload or {}).get("external_ids") or {}).get("imdb_id") or None
+    surtout il **décide** de l'appariement TVmaze.
+
+    Un film le porte au premier niveau du payload ; une série l'enterre dans
+    `external_ids`. C'est un écart de TMDB, pas de nous."""
+    payload = await store.latest_payload(
+        conn, source="tmdb", kind=univers.kind, source_id=str(tv_id)
+    )
+    payload = payload or {}
+    return (payload.get("external_ids") or {}).get("imdb_id") or payload.get("imdb_id") or None
 
 
 def _entier(valeur: Any) -> int | None:

@@ -70,7 +70,7 @@ SELECT ?tmdb ?item ?imdb ?tvmaze
        (GROUP_CONCAT(DISTINCT ?actionNom; separator="|") AS ?action)
 WHERE {
   VALUES ?tmdb { %(valeurs)s }
-  ?item wdt:P4983 ?tmdb .
+  ?item wdt:%(propriete)s ?tmdb .
   OPTIONAL { ?item wdt:P345 ?imdb }
   OPTIONAL { ?item wdt:P8600 ?tvmaze }
   OPTIONAL { ?item wdt:P495 ?paysItem . ?paysItem wdt:P297 ?paysCode }
@@ -137,8 +137,15 @@ class WikidataClient:
     def __init__(self, fetcher: HttpFetcher) -> None:
         self._fetcher = fetcher
 
-    async def by_tmdb(self, tv_id: int) -> FetchResult:
-        return await self._sparql("P4983", str(tv_id))
+    async def by_tmdb(self, tv_id: int, *, propriete: str = "P4983") -> FetchResult:
+        """`P4983` pour une série, `P4947` pour un film.
+
+        Wikidata sépare les deux parce que les deux catalogues TMDB se
+        numérotent indépendamment. Entrer par la mauvaise propriété ne lève
+        aucune erreur : elle ramène l'œuvre qui porte le même numéro dans
+        l'autre catalogue.
+        """
+        return await self._sparql(propriete, str(tv_id))
 
     async def by_qid(self, qid: str) -> FetchResult:
         """Les faits d'un item déjà identifié — l'entrée du flux 2."""
@@ -169,11 +176,15 @@ class WikidataClient:
         }
         return await self._fetcher.get_json(SPARQL_URL, {"query": requete, "format": "json"})
 
-    async def by_tmdb_lot(self, ids: Sequence[int]) -> FetchResult:
+    async def by_tmdb_lot(self, ids: Sequence[int], *, propriete: str = "P4983") -> FetchResult:
         """Résout jusqu'à quelques centaines d'ids en une requête."""
         valeurs = " ".join(f'"{int(i)}"' for i in ids)
         return await self._fetcher.get_json(
-            SPARQL_URL, {"query": LOOKUP_LOT % {"valeurs": valeurs}, "format": "json"}
+            SPARQL_URL,
+            {
+                "query": LOOKUP_LOT % {"valeurs": valeurs, "propriete": propriete},
+                "format": "json",
+            },
         )
 
     async def by_imdb(self, imdb_id: str) -> FetchResult:

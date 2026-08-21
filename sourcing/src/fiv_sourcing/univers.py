@@ -17,6 +17,15 @@ Les quatre détails, mesurés sur les deux exports et les deux endpoints :
   cinq langues, un film tient en un appel. C'est l'écart de coût dominant —
   environ 40 requêtes contre une.
 
+L'enrichissement en ajoute trois, du même genre :
+
+* la **propriété Wikidata** qui porte l'identifiant TMDB : `P4983` contre
+  `P4947`. Les deux catalogues se numérotent indépendamment, et entrer par la
+  mauvaise ramènerait l'œuvre homonyme sans lever d'erreur ;
+* **TVmaze**, qui est une base de séries et n'a rien à dire d'un film ;
+* le **`kind` de reprise** dans `fetch_state`, pour que le film 550 et la série
+  550 ne se volent pas leur état de passage.
+
 Ce que ce fichier ne dit pas, volontairement : les sous-requêtes
 `append_to_response`, qui vivent dans `client.py` avec l'avertissement qui les
 accompagne (les changer oblige à retélécharger le catalogue entier).
@@ -59,6 +68,23 @@ class Univers:
     libelle: str
     """Pour les messages de la ligne de commande, au singulier."""
 
+    wikidata_propriete: str
+    """La propriété Wikidata qui porte l'identifiant TMDB. `P4983` pour les
+    séries, `P4947` pour les films — Wikidata les sépare parce que les deux
+    catalogues TMDB se numérotent indépendamment. Entrer par la mauvaise
+    ramènerait l'œuvre qui porte le même numéro dans l'autre catalogue, sans
+    lever la moindre erreur."""
+
+    tvmaze: bool
+    """TVmaze est une base de séries. Interroger pour un film ferait une requête
+    par œuvre pour ne jamais rien trouver."""
+
+    lookup_kind: str
+    """Le `kind` sous lequel `fetch_state` note le passage Wikidata. Il diffère
+    d'un univers à l'autre pour la même raison que tout le reste : la clé de
+    reprise est l'identifiant TMDB, et le film 550 partagerait sinon l'état du
+    passage de la série 550 — l'un empêcherait l'autre d'être tenté."""
+
 
 SERIES = Univers(
     cle="series",
@@ -69,6 +95,9 @@ SERIES = Univers(
     parties=True,
     part_kind="tv_season",
     libelle="série",
+    wikidata_propriete="P4983",
+    tvmaze=True,
+    lookup_kind="lookup",
 )
 
 FILMS = Univers(
@@ -80,6 +109,9 @@ FILMS = Univers(
     parties=False,
     part_kind=None,
     libelle="film",
+    wikidata_propriete="P4947",
+    tvmaze=False,
+    lookup_kind="lookup_movie",
 )
 
 UNIVERS: dict[str, Univers] = {u.cle: u for u in (SERIES, FILMS)}

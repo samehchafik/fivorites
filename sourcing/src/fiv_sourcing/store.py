@@ -130,23 +130,29 @@ async def mark_fetch(
         )
 
 
-async def latest_fiche_ids(conn: psycopg.AsyncConnection, ids: list[int]) -> dict[int, int]:
+async def latest_fiche_ids(
+    conn: psycopg.AsyncConnection, ids: list[int], *, kind: str = "tv"
+) -> dict[int, int]:
     """id TMDB → id de la dernière fiche collectée dans `raw_source`.
 
-    C'est la référence de `riche_source` : une série sans fiche n'est pas
+    C'est la référence de `riche_source` : une œuvre sans fiche n'est pas
     enrichissable — la collecte d'abord.
+
+    `kind` sépare les deux catalogues. Sans lui, le film 550 se raccrocherait à
+    la fiche de la série 550 : les identifiants TMDB se chevauchent, et rien
+    dans le résultat ne trahirait la confusion.
     """
     async with conn.cursor() as cur:
         await cur.execute(
             """
             select distinct on (source_id) source_id::int, id
             from raw_source
-            where source = 'tmdb' and kind = 'tv'
+            where source = 'tmdb' and kind = %s
               and source_id = any(%s)
               and http_status between 200 and 299
             order by source_id, fetched_at desc
             """,
-            ([str(i) for i in ids],),
+            (kind, [str(i) for i in ids]),
         )
         return dict(await cur.fetchall())
 

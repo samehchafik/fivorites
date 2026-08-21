@@ -210,7 +210,7 @@ async def test_une_serie_non_collectee_est_refusee(conn, settings: Settings):
     report = await _enrichir(conn, settings)
 
     assert report.sources == []
-    assert report.errors == ["série non collectée — `tmdb fetch` d'abord"]
+    assert report.errors == ["aucune fiche collectée (série) — `tmdb fetch` d'abord"]
     assert report.requests == 0, "aucun appel réseau pour une série non enrichissable"
 
 
@@ -265,3 +265,79 @@ async def test_l_imdb_de_la_fiche_ouvre_tvmaze_sans_item_wikidata(conn, settings
     async with conn.cursor() as cur:
         await cur.execute("select resolved_by from riche_source where source = 'tvmaze'")
         assert (await cur.fetchone())[0] == "imdb"
+
+
+@respx.mock
+async def test_un_film_entre_par_sa_propre_propriete_wikidata(conn, settings: Settings):
+    """Le film et la serie de MEME id ne doivent pas se confondre.
+
+    Les deux catalogues TMDB se numerotent independamment : l'identifiant 1399
+    designe une serie ET un film, sans rapport entre eux. Wikidata les separe
+    par deux proprietes — P4983 et P4947 — et entrer par la mauvaise ramenerait
+    l'oeuvre homonyme sans lever la moindre erreur.
+
+    Le test verifie les trois separations d'un coup : la propriete SPARQL, la
+    fiche du brut (`kind`), et l'absence d'appel TVmaze — qui est une base de
+    series et n'aurait rien a dire d'un film.
+    """
+    from fiv_sourcing.univers import FILMS
+
+    # Meme identifiant, deux univers, deux fiches. La serie est collectee mais
+    # ne doit jouer aucun role ici.
+    await load_catalog(
+        conn,
+        iter([{"id": TV_ID, "original_name": "Game of Thrones", "popularity": 1.0}]),
+        date(2026, 8, 6),
+    )
+    await store.store_raw(
+        conn,
+        source="tmdb",
+        kind="tv",
+        source_id=str(TV_ID),
+        lang="fr-FR",
+        http_status=200,
+        payload={"id": TV_ID},
+    )
+    await load_catalog(
+        conn,
+        iter([{"id": TV_ID, "original_title": "Un film homonyme", "popularity": 2.0}]),
+        date(2026, 8, 6),
+        univers=FILMS,
+    )
+    await store.store_raw(
+        conn,
+        source="tmdb",
+        kind="movie",
+        source_id=str(TV_ID),
+        lang="fr-FR",
+        http_status=200,
+        payload={"id": TV_ID, "imdb_id": IMDB},
+    )
+
+    vues: list[str] = []
+
+    def espion(request):
+        vues.append(str(request.url))
+        return httpx.Response(200, json=SPARQL_VIDE)
+
+    respx.get(url__startswith="https://query.wikidata.org/sparql").mock(side_effect=espion)
+    tvmaze = respx.get(url__startswith="https://api.tvmaze.com").mock(
+        httpx.Response(200, json=SHOW)
+    )
+
+    fetcher = build_fetcher(settings)
+    async with fetcher:
+        report = await enrich_series(
+            conn, build_clients(fetcher), TV_ID, languages=("fr", "en"), univers=FILMS
+        )
+
+    assert vues, "aucune requete SPARQL"
+    assert "P4947" in vues[0], "un film doit entrer par P4947, pas par P4983"
+    assert "P4983" not in vues[0]
+    assert not tvmaze.called, "TVmaze est une base de series : rien a y chercher pour un film"
+
+    # La fiche retenue est celle du bon catalogue : le pivot doit etre un film.
+    async with conn.cursor() as cur:
+        await cur.execute("select univers from oeuvre where id_tmdb = %s", (TV_ID,))
+        assert [r[0] for r in await cur.fetchall()] == ["movies"]
+    assert report.errors == [], report.errors
