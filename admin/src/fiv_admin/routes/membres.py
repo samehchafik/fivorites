@@ -272,6 +272,7 @@ async def fives(user: CurrentUser, conn: Conn, membre_id: int) -> dict[str, Any]
 OEUVRES_MAX = 12
 PERSONNES_PAR_OEUVRE = 4
 VOISINS_MAX = 10
+SUGGESTIONS_MAX = 12
 
 # Ce qu'on prend d'une œuvre : ceux qui la font, pas ceux qui y passent.
 ROLES = ("FIV_JOUE_DANS", "FIV_A_REALISE", "FIV_A_CREE")
@@ -295,6 +296,28 @@ UNWIND gens AS g
 RETURN oid AS oeuvreId, g.cle AS cle, g.nom AS nom, g.photo AS photo, g.role AS role
 """
 
+# Ce que les voisins citent et que le membre ne cite pas : la suggestion, au
+# sens propre. C'est le second degré — les œuvres des relations de ses
+# relations — et c'est la seule couche du dessin qui ne décrive pas ce qui est,
+# mais ce qui pourrait être.
+#
+# Le classement dit pourquoi une œuvre est là : d'abord le nombre de voisins
+# qui la citent (une œuvre portée par six voisins vaut mieux qu'une portée par
+# un), puis leur rang moyen — `6 - rang` met la première place à 5 et la
+# cinquième à 1, donc une œuvre citée en tête pèse plus que la même citée en
+# queue.
+_CY_SUGGESTIONS = """
+UNWIND $voisins AS vid
+MATCH (v:FivMembre {membreId: vid})-[c:FIV_CITE]->(reco:FivOeuvre)
+WHERE NOT reco.oeuvreId IN $siennes
+WITH reco, count(DISTINCT v) AS voisins, avg(6 - coalesce(c.rang, 5)) AS force,
+     collect(DISTINCT vid) AS par
+RETURN reco.oeuvreId AS oeuvreId, reco.titre AS titre, reco.annee AS annee,
+       reco.affiche AS affiche, reco.univers AS univers, voisins, force, par
+ORDER BY voisins DESC, force DESC, reco.oeuvreId
+LIMIT $limite
+"""
+
 # Le voisin, c'est quelqu'un qui cite les mêmes œuvres. On garde ceux qui en
 # partagent le plus : un voisin à une œuvre commune, il y en a des milliers et
 # ils ne disent rien.
@@ -313,7 +336,8 @@ LIMIT $limite
 async def graphe_du_membre(
     user: CurrentUser, conn: Conn, graphe: GrapheOpt, membre_id: int
 ) -> dict[str, Any]:
-    """Le voisinage d'un membre : ses œuvres, qui les fait, qui les partage.
+    """Le voisinage d'un membre : ses œuvres, qui les fait, qui les partage —
+    et ce que ces voisins-là citent qu'il ne cite pas.
 
     Trois interrogations plutôt qu'une : le Cypher d'un seul tenant serait
     illisible, et surtout chaque couche a son propre plafond — les composer
@@ -344,6 +368,16 @@ async def graphe_du_membre(
     )
     voisins = await graphe.executer(
         une_ligne(_CY_VOISINS), id=membre_id, oeuvres=ids, limite=VOISINS_MAX
+    )
+    suggestions = (
+        await graphe.executer(
+            une_ligne(_CY_SUGGESTIONS),
+            voisins=[v["membreId"] for v in voisins],
+            siennes=ids,
+            limite=SUGGESTIONS_MAX,
+        )
+        if voisins
+        else []
     )
 
     pseudos = await _pseudos(conn, [v["membreId"] for v in voisins] + [membre_id])
@@ -412,6 +446,25 @@ async def graphe_du_membre(
         for oid in v["partagees"]:
             aretes.append({"de": cle, "vers": f"oeuvre:{oid}", "type": "cite"})
 
+    for r in suggestions:
+        cle = f"oeuvre:{r['oeuvreId']}"
+        noeuds.append(
+            {
+                "id": cle,
+                "type": "suggestion",
+                "libelle": r["titre"] or f"œuvre {r['oeuvreId']}",
+                "annee": r["annee"],
+                "affiche": r["affiche"],
+                "univers": r["univers"],
+                "voisins": r["voisins"],
+                "force": round(float(r["force"]), 2) if r["force"] is not None else None,
+            }
+        )
+        # Une arête par voisin qui la cite : c'est ce qui explique la
+        # suggestion. Sans elles, l'œuvre flotterait sans raison visible.
+        for vid in r["par"]:
+            aretes.append({"de": f"membre:{vid}", "vers": cle, "type": "cite"})
+
     return {
         "membre": {"id": membre_id, "pseudo": pseudos.get(membre_id)},
         "noeuds": noeuds,
@@ -421,6 +474,7 @@ async def graphe_du_membre(
             "oeuvres": OEUVRES_MAX,
             "personnesParOeuvre": PERSONNES_PAR_OEUVRE,
             "voisins": VOISINS_MAX,
+            "suggestions": SUGGESTIONS_MAX,
         },
     }
 

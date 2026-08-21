@@ -607,8 +607,10 @@ export interface MembreFives {
 /** Un nœud du voisinage. `type` décide de la forme et de la couleur ; le reste
  *  n'est renseigné que pour les types qui le portent. */
 export interface GrapheNoeud {
+  /** `suggestion` est le second degré : une œuvre citée par les voisins et pas
+   *  par le membre. C'est la seule qui décrive ce qui pourrait être. */
   id: string
-  type: 'moi' | 'oeuvre' | 'personne' | 'voisin'
+  type: 'moi' | 'oeuvre' | 'personne' | 'voisin' | 'suggestion'
   libelle: string
   annee?: number | null
   affiche?: string | null
@@ -616,6 +618,10 @@ export interface GrapheNoeud {
   photo?: string | null
   /** Voisins seulement : combien d'œuvres en commun. */
   communes?: number
+  /** Suggestions seulement : combien de voisins la citent, et à quel rang
+   *  moyen (5 = tous en première place, 1 = tous en cinquième). */
+  voisins?: number
+  force?: number | null
 }
 
 export interface GrapheArete {
@@ -634,5 +640,10 @@ export interface GrapheMembreData {
   /** Faux quand le membre n'a aucun nœud dans le graphe — projection jamais
    *  lancée, ou membre qui ne cite rien. */
   projete: boolean
-  plafonds?: { oeuvres: number; personnesParOeuvre: number; voisins: number }
+  plafonds?: {
+    oeuvres: number
+    personnesParOeuvre: number
+    voisins: number
+    suggestions: number
+  }
 }

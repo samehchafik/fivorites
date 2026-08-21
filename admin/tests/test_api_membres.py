@@ -257,6 +257,10 @@ VOISINAGE = {
         ["membreId", "partagees", "communes"],
         [[2, [10, 11], 2], [3, [10], 1]],
     ),
+    "WHERE NOT reco.oeuvreId IN": _reponse(
+        ["oeuvreId", "titre", "annee", "affiche", "univers", "voisins", "force", "par"],
+        [[12, "Six Feet Under", 2001, None, "series", 2, 4.5, [2, 3]]],
+    ),
 }
 
 
@@ -284,7 +288,7 @@ async def test_le_graphe_compose_les_trois_couches(client_graphe: httpx.AsyncCli
     body = (await client_graphe.get("/api/membres/1/graphe")).json()
 
     types = collections.Counter(n["type"] for n in body["noeuds"])
-    assert types == {"moi": 1, "oeuvre": 2, "personne": 2, "voisin": 2}
+    assert types == {"moi": 1, "oeuvre": 2, "personne": 2, "voisin": 2, "suggestion": 1}
     assert body["projete"] is True
 
 
@@ -309,6 +313,48 @@ async def test_le_voisin_porte_ses_oeuvres_communes(client_graphe: httpx.AsyncCl
     # pas. C'est l'administration qui rapproche, derrière sa session.
     assert "bob" in voisins
     assert voisins["bob"]["communes"] == 2
+
+
+async def test_la_suggestion_vient_des_voisins_et_pas_de_lui(
+    client_graphe: httpx.AsyncClient,
+) -> None:
+    """Le second degré : ce que les voisins citent et que lui ne cite pas.
+
+    Chaque arête part du voisin, jamais du membre — c'est ce qui répond à
+    « pourquoi celle-là ? » sur le dessin. Une œuvre suggérée sans arête
+    flotterait sans raison visible.
+    """
+    body = (await client_graphe.get("/api/membres/1/graphe")).json()
+
+    suggestion = next(n for n in body["noeuds"] if n["type"] == "suggestion")
+    assert suggestion["libelle"] == "Six Feet Under"
+    assert suggestion["voisins"] == 2
+
+    vers_elle = [a for a in body["aretes"] if a["vers"] == suggestion["id"]]
+    assert {a["de"] for a in vers_elle} == {"membre:2", "membre:3"}
+    assert not any(a["de"] == "membre:1" for a in vers_elle)
+
+
+async def test_sans_voisin_aucune_suggestion(
+    conn: psycopg.AsyncConnection, settings: Settings
+) -> None:
+    """La quatrième requête ne part pas : `UNWIND` sur une liste vide ne rend
+    rien, mais l'aller-retour, lui, coûte quand même."""
+    sans_voisins = dict(VOISINAGE)
+    sans_voisins["<-[:FIV_CITE]-(v:FivMembre)"] = _reponse(
+        ["membreId", "partagees", "communes"], []
+    )
+
+    app = create_app(settings)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http,
+    ):
+        app.state.graphe = _graphe_simule(sans_voisins)
+        app.dependency_overrides[current_user] = lambda: "sameh"
+        body = (await http.get("/api/membres/1/graphe")).json()
+
+    assert not [n for n in body["noeuds"] if n["type"] in ("voisin", "suggestion")]
 
 
 async def test_un_membre_hors_du_graphe_le_dit(

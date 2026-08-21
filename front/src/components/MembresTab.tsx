@@ -259,7 +259,10 @@ export function MembresTab() {
         opened={ouvert !== null}
         onClose={() => setOuvert(null)}
         position="right"
-        size="xl"
+        // Large : le voisinage d'un membre, c'est quatre-vingts nœuds. Dans un
+        // tiroir étroit, ils se marchent dessus quel que soit le réglage de la
+        // simulation.
+        size="88%"
         title={
           <Group gap="xs">
             <Title order={4}>{ouvert?.pseudo ?? 'Membre sans pseudo'}</Title>

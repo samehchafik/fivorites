@@ -1,7 +1,23 @@
-import { useMemo } from 'react'
-import { Alert, Box, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ActionIcon,
+  Alert,
+  Box,
+  Center,
+  Group,
+  Loader,
+  Paper,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
-import { IconAlertTriangle } from '@tabler/icons-react'
+import {
+  IconAlertTriangle,
+  IconFocusCentered,
+  IconZoomIn,
+  IconZoomOut,
+} from '@tabler/icons-react'
 
 import { api } from '../api'
 import type { GrapheArete, GrapheNoeud } from '../types'
@@ -25,9 +41,24 @@ const COULEURS: Record<GrapheNoeud['type'], string> = {
   oeuvre: 'var(--mantine-color-violet-5)',
   personne: 'var(--mantine-color-teal-5)',
   voisin: 'var(--mantine-color-orange-5)',
+  suggestion: 'var(--mantine-color-pink-5)',
 }
 
-const RAYONS: Record<GrapheNoeud['type'], number> = { moi: 13, oeuvre: 9, personne: 5, voisin: 7 }
+const LIBELLES: Record<GrapheNoeud['type'], string> = {
+  moi: 'le membre',
+  oeuvre: 'ses œuvres',
+  personne: 'acteurs et réalisateurs',
+  voisin: 'voisins',
+  suggestion: 'ce qu\'ils citent et pas lui',
+}
+
+const RAYONS: Record<GrapheNoeud['type'], number> = {
+  moi: 13,
+  oeuvre: 9,
+  personne: 5,
+  voisin: 7,
+  suggestion: 8,
+}
 
 // La longueur au repos d'un ressort, par nature de lien, et l'écart entre les
 // trois est ce qui fait lire le dessin en couches plutôt qu'en pelote : les
@@ -48,6 +79,7 @@ const REPULSION = 5200
 const POIDS: Record<GrapheNoeud['type'], number> = {
   moi: 3,
   oeuvre: 2.4,
+  suggestion: 2,
   voisin: 1.3,
   personne: 1,
 }
@@ -132,7 +164,22 @@ function disposer(noeuds: GrapheNoeud[], aretes: GrapheArete[], moi: string): Po
   return points
 }
 
+interface Cadre {
+  x: number
+  y: number
+  l: number
+  h: number
+}
+
 export function GrapheMembre({ id }: { id: number }) {
+  const svg = useRef<SVGSVGElement>(null)
+  // La fenêtre regardée, en coordonnées du dessin. Zoomer et déplacer, c'est
+  // la bouger — pas transformer les nœuds : les épaisseurs de trait et les
+  // tailles de texte restent alors constantes à l'écran, ce qu'un `transform`
+  // sur un groupe ne donne pas.
+  const [vue, setVue] = useState<Cadre | null>(null)
+  const glisse = useRef<{ x: number; y: number; vue: Cadre } | null>(null)
+
   const graphe = useQuery({
     queryKey: ['membre-graphe', id],
     queryFn: () => api.membreGraphe(id),
@@ -150,14 +197,46 @@ export function GrapheMembre({ id }: { id: number }) {
     return {
       points,
       index,
-      vue: [
-        Math.min(...xs) - marge,
-        Math.min(...ys) - marge,
-        Math.max(...xs) - Math.min(...xs) + 2 * marge,
-        Math.max(...ys) - Math.min(...ys) + 2 * marge,
-      ].join(' '),
+      cadre: {
+        x: Math.min(...xs) - marge,
+        y: Math.min(...ys) - marge,
+        l: Math.max(...xs) - Math.min(...xs) + 2 * marge,
+        h: Math.max(...ys) - Math.min(...ys) + 2 * marge,
+      },
     }
   }, [graphe.data, id])
+
+  // Le cadre d'origine dès que la disposition change, et à chaque changement
+  // de membre : sans cela, ouvrir un second membre garderait le zoom du
+  // premier, cadré sur un endroit qui n'a plus de sens.
+  useEffect(() => {
+    setVue(dispose ? { ...dispose.cadre } : null)
+  }, [dispose])
+
+  function zoomer(facteur: number, ancre?: { x: number; y: number }) {
+    setVue((v) => {
+      if (!v) return v
+      // Bornes : au-delà, on ne lit plus rien — ni les étiquettes trop
+      // petites, ni un nœud unique qui remplit l'écran.
+      const l = Math.min(Math.max(v.l * facteur, 120), 6000)
+      const h = (l / v.l) * v.h
+      const cx = ancre?.x ?? v.x + v.l / 2
+      const cy = ancre?.y ?? v.y + v.h / 2
+      // Le point sous le curseur ne bouge pas : c'est ce qui rend le zoom à la
+      // molette utilisable pour aller chercher un coin du dessin.
+      return { x: cx - ((cx - v.x) * l) / v.l, y: cy - ((cy - v.y) * h) / v.h, l, h }
+    })
+  }
+
+  /** Un point de l'écran vers les coordonnées du dessin. */
+  function versDessin(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
+    const boite = svg.current?.getBoundingClientRect()
+    if (!boite || !vue) return null
+    return {
+      x: vue.x + ((e.clientX - boite.left) / boite.width) * vue.l,
+      y: vue.y + ((e.clientY - boite.top) / boite.height) * vue.h,
+    }
+  }
 
   if (graphe.isLoading) {
     return (
@@ -184,22 +263,76 @@ export function GrapheMembre({ id }: { id: number }) {
     )
   }
 
-  const { points, index, vue } = dispose
+  const { points, index } = dispose
+  const cadre = vue ?? dispose.cadre
 
   return (
     <Stack gap="xs">
-      <Paper withBorder p={0} style={{ overflow: 'hidden' }}>
+      <Paper withBorder p={0} style={{ overflow: 'hidden', position: 'relative' }}>
+        <Group gap={4} style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}>
+          <Tooltip label="Zoomer — ou la molette">
+            <ActionIcon variant="default" size="sm" onClick={() => zoomer(1 / 1.3)}>
+              <IconZoomIn size={15} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Dézoomer">
+            <ActionIcon variant="default" size="sm" onClick={() => zoomer(1.3)}>
+              <IconZoomOut size={15} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Tout revoir">
+            <ActionIcon variant="default" size="sm" onClick={() => setVue({ ...dispose.cadre })}>
+              <IconFocusCentered size={15} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
         <Box
           component="svg"
-          viewBox={vue}
+          ref={svg}
+          viewBox={`${cadre.x} ${cadre.y} ${cadre.l} ${cadre.h}`}
           preserveAspectRatio="xMidYMid meet"
-          style={{ width: '100%', height: 520, display: 'block' }}
+          onWheel={(e: React.WheelEvent<SVGSVGElement>) => {
+            // Pas de `preventDefault` : React attache l'écouteur en passif, il
+            // serait sans effet et l'avertissement le dit. Le dessin ne
+            // dépasse pas de son cadre, la page ne défile donc pas dessous.
+            const ancre = versDessin(e)
+            zoomer(e.deltaY > 0 ? 1.12 : 1 / 1.12, ancre ?? undefined)
+          }}
+          onPointerDown={(e: React.PointerEvent<SVGSVGElement>) => {
+            if (!vue) return
+            glisse.current = { x: e.clientX, y: e.clientY, vue }
+            e.currentTarget.setPointerCapture(e.pointerId)
+          }}
+          onPointerMove={(e: React.PointerEvent<SVGSVGElement>) => {
+            const depart = glisse.current
+            const boite = svg.current?.getBoundingClientRect()
+            if (!depart || !boite) return
+            // Le déplacement est converti en unités du dessin : à fort zoom, un
+            // pixel d'écran vaut moins qu'une unité, et le contraire de loin.
+            setVue({
+              ...depart.vue,
+              x: depart.vue.x - ((e.clientX - depart.x) / boite.width) * depart.vue.l,
+              y: depart.vue.y - ((e.clientY - depart.y) / boite.height) * depart.vue.h,
+            })
+          }}
+          onPointerUp={(e: React.PointerEvent<SVGSVGElement>) => {
+            glisse.current = null
+            e.currentTarget.releasePointerCapture(e.pointerId)
+          }}
+          style={{
+            width: '100%',
+            height: 620,
+            display: 'block',
+            cursor: glisse.current ? 'grabbing' : 'grab',
+            touchAction: 'none',
+          }}
         >
           {graphe.data.aretes.map((a, i) => {
             const de = index.get(a.de)
             const vers = index.get(a.vers)
             if (!de || !vers) return null
             const role = a.type !== 'cite'
+            const propose = traitSuggestion(index, a.vers)
             return (
               <line
                 key={i}
@@ -207,7 +340,13 @@ export function GrapheMembre({ id }: { id: number }) {
                 y1={de.y}
                 x2={vers.x}
                 y2={vers.y}
-                stroke={role ? 'var(--mantine-color-gray-4)' : 'var(--mantine-color-gray-5)'}
+                stroke={
+                  propose
+                    ? 'var(--mantine-color-pink-3)'
+                    : role
+                      ? 'var(--mantine-color-gray-4)'
+                      : 'var(--mantine-color-gray-5)'
+                }
                 strokeWidth={a.de === `membre:${id}` ? 1.6 : 0.8}
                 strokeDasharray={role ? '3 3' : undefined}
               />
@@ -220,6 +359,7 @@ export function GrapheMembre({ id }: { id: number }) {
                 {p.libelle}
                 {p.annee ? ` (${p.annee})` : ''}
                 {p.communes ? ` — ${p.communes} œuvre(s) en commun` : ''}
+                {p.voisins ? ` — citée par ${p.voisins} voisin(s)` : ''}
               </title>
               {/* On n'étiquette pas tout : une personne qui ne relie qu'une
                   seule œuvre n'apprend rien et encombre. Celles qui en relient
@@ -252,11 +392,11 @@ export function GrapheMembre({ id }: { id: number }) {
 
       <Group gap="lg" justify="space-between">
         <Group gap="md">
-          {(['moi', 'oeuvre', 'personne', 'voisin'] as const).map((t) => (
+          {(['moi', 'oeuvre', 'personne', 'voisin', 'suggestion'] as const).map((t) => (
             <Group key={t} gap={6}>
               <Box w={10} h={10} style={{ borderRadius: 5, background: COULEURS[t] }} />
               <Text size="xs" c="dimmed">
-                {{ moi: 'le membre', oeuvre: 'ses œuvres', personne: 'acteurs et réalisateurs', voisin: 'voisins' }[t]}
+                {LIBELLES[t]}
               </Text>
             </Group>
           ))}
@@ -264,7 +404,8 @@ export function GrapheMembre({ id }: { id: number }) {
         {graphe.data.plafonds && (
           <Text size="xs" c="dimmed">
             au plus {graphe.data.plafonds.oeuvres} œuvres, {graphe.data.plafonds.personnesParOeuvre}{' '}
-            personnes par œuvre, {graphe.data.plafonds.voisins} voisins
+            personnes par œuvre, {graphe.data.plafonds.voisins} voisins,{' '}
+            {graphe.data.plafonds.suggestions} suggestions
           </Text>
         )}
       </Group>
@@ -290,4 +431,10 @@ function etiquetable(p: GrapheNoeud, aretes: GrapheArete[]): boolean {
   if (p.type === 'personne') return compteLiens(aretes, p.id) > 1
   if (p.type === 'voisin') return !p.libelle.startsWith('membre ')
   return true
+}
+
+/** Le trait d'une arête. Une suggestion se distingue de ce qui est déjà cité :
+ *  c'est la seule couche qui propose au lieu de constater. */
+function traitSuggestion(index: Map<string, GrapheNoeud>, vers: string): boolean {
+  return index.get(vers)?.type === 'suggestion'
 }

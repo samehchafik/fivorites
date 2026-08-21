@@ -141,15 +141,27 @@ Un clic ouvre le tiroir, en deux onglets :
   l'année et le « pourquoi » écrit par le membre. Le titre vient de la fiche
   TMDB, du pivot, ou à défaut du titre saisi en V1 — pour les 208 œuvres dont
   TMDB a supprimé la fiche, c'est tout ce qui reste.
-* **Voisinage** — le même membre, dessiné : ses œuvres, les acteurs et
-  réalisateurs qui les font, et les membres qui citent les mêmes. C'est la
-  seule vue de l'administration qui lise Neo4j.
+* **Voisinage** — le même membre, dessiné, en quatre couches : ses œuvres, les
+  acteurs et réalisateurs qui les font, les membres qui citent les mêmes, et
+  **ce que ces voisins citent qu'il ne cite pas**. C'est la seule vue de
+  l'administration qui lise Neo4j.
 
-Le dessin est plafonné à 12 œuvres, 4 personnes par œuvre et 10 voisins. Les
-plafonds ne sont pas du confort : un membre cite jusqu'à 118 œuvres, une œuvre
-populaire est citée par 13 817 membres. Sans eux, la vue est illisible avant
-d'être lente. Le pied du graphe les rappelle, pour qu'on ne prenne pas un
-extrait pour un tout.
+La quatrième couche est la suggestion au sens propre — le second degré, les
+œuvres des relations de ses relations. Elle se classe par nombre de voisins qui
+la citent, puis par leur rang moyen : `6 - rang` met une première place à 5 et
+une cinquième à 1, donc une œuvre citée en tête pèse davantage. Chaque arête
+part du voisin qui la cite, jamais du membre : c'est ce qui répond à « pourquoi
+celle-là ? » sur le dessin.
+
+Le tiroir prend 88 % de la largeur, on zoome à la molette ou aux boutons, et on
+déplace en glissant — le cadre bouge, pas les nœuds, ce qui garde les
+étiquettes lisibles à toutes les échelles. « Tout revoir » recadre.
+
+Le dessin est plafonné à 12 œuvres, 4 personnes par œuvre, 10 voisins et 12
+suggestions. Les plafonds ne sont pas du confort : un membre cite jusqu'à 118
+œuvres, une œuvre populaire est citée par 13 817 membres. Sans eux, la vue est
+illisible avant d'être lente. Le pied du graphe les rappelle, pour qu'on ne
+prenne pas un extrait pour un tout.
 
 Deux détails qui ont une raison. Une personne n'est nommée que si elle relie
 **deux** œuvres — c'est ce qu'on cherche à voir, le reste encombre. Et les
