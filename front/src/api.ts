@@ -1,4 +1,5 @@
 import type {
+  Actualite,
   Account,
   CaptionResult,
   CardsResponse,
@@ -122,6 +123,9 @@ export const api = {
 
   /** ⚠️ `media` n'est pas facultatif au sens du résultat : sans lui, le film
    *  557 rendait les sources de la série 557, *Camp Lazlo*. */
+  actualite: (id: number, media: string) =>
+    request<Actualite>(`/api/catalog/works/${id}/actualite?media=${media}`),
+
   rich: (id: number, media: string) =>
     request<RichSources>(`/api/catalog/works/${id}/sources?${query({ media })}`),
 

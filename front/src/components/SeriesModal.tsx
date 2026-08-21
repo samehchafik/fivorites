@@ -31,6 +31,7 @@ import {
   IconId,
   IconLibrary,
   IconMovie,
+  IconNews,
   IconPhoto,
   IconScale,
   IconSchool,
@@ -44,6 +45,7 @@ import { api, tmdbImage } from '../api'
 import { POSTER_FALLBACK, formatDate, formatNumber } from '../display'
 import type { Language, ModalTab, Work } from '../types'
 import { AxisVector } from './AxisVector'
+import { ActualitePanel } from './ActualitePanel'
 import { RichPanel } from './RichPanel'
 import { SeasonPanel } from './SeasonPanel'
 import { VideoTab } from './VideoTab'
@@ -402,6 +404,9 @@ export function SeriesModal({
               <Tabs.Tab value="videos" leftSection={<IconMovie size={16} />}>
                 Vidéos ({data.videos?.length ?? 0})
               </Tabs.Tab>
+              <Tabs.Tab value="actualite" leftSection={<IconNews size={16} />}>
+                Actualité
+              </Tabs.Tab>
               <Tabs.Tab value="rich" leftSection={<IconLibrary size={16} />}>
                 Sources
               </Tabs.Tab>
@@ -415,6 +420,10 @@ export function SeriesModal({
                 le monde ce que peu de gens regardent. */}
             <Tabs.Panel value="rich" p="lg">
               <RichPanel id={data.id} media={media} />
+            </Tabs.Panel>
+
+            <Tabs.Panel value="actualite" p="lg">
+              <ActualitePanel id={data.id} media={media} />
             </Tabs.Panel>
 
             <Tabs.Panel value="watch" p="lg">

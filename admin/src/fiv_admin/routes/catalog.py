@@ -16,6 +16,7 @@ from fiv_admin.catalog import (
     CARD_SORTS,
     CardQuery,
     cards_state,
+    fetch_actualite,
     fetch_cards,
     fetch_rich,
     fetch_season,
@@ -226,6 +227,22 @@ async def work_sources(
     rendait les sources de la série 557, *Camp Lazlo*.
     """
     return await fetch_rich(conn, work_id, _media(media))
+
+
+@router.get("/catalog/works/{work_id}/actualite")
+async def work_actualite(
+    user: CurrentUser,
+    conn: Conn,
+    work_id: int,
+    media: str = Query(default=DEFAULT_MEDIA, max_length=16),
+) -> dict[str, Any]:
+    """L'actualité de l'œuvre — les événements que la dérivation lui a liés.
+
+    Même contrat que `/sources` : liste vide plutôt que 404, parce qu'une
+    œuvre sans actualité est l'état normal du catalogue, et `media` qui
+    qualifie l'identifiant — les deux catalogues TMDB se chevauchent.
+    """
+    return await fetch_actualite(conn, work_id, _media(media))
 
 
 @router.post("/catalog/refresh")

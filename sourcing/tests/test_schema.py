@@ -24,10 +24,15 @@ async def test_les_tables_de_collecte_sont_dans_le_schema_sourcing(conn, setting
         tables = [row[0] for row in await cur.fetchall()]
 
     assert tables == [
+        "actualite",
+        "actualite_curseur",
+        "actualite_typage",
         "fetch_state",
         "oeuvre",
+        "raw_rss_item",
         "raw_source",
         "riche_source",
+        "rss_feed",
         "tmdb_catalog",
         "video",
         "video_scan",

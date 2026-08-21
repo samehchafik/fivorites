@@ -57,6 +57,7 @@ async def conn(settings: Settings):
         await connection.execute(
             "truncate raw_source, fetch_state, tmdb_catalog, riche_source, oeuvre,"
             " video, video_scan,"
+            " rss_feed, raw_rss_item, actualite, actualite_typage, actualite_curseur,"
             # Depuis la migration 013, les tables `membre` rangent tops,
             # découvertes et avis sous `sourcing.oeuvre` : les omettre fait
             # échouer le truncate sur la contrainte, et toute la suite avec.

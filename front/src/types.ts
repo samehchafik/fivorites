@@ -525,6 +525,20 @@ export interface RichGroup {
   media: number
 }
 
+/** L'actualité d'une œuvre — `GET /catalog/works/{id}/actualite`. */
+export interface Actualite {
+  id: number
+  evenements: {
+    type: string
+    survenuLe: string
+    titre: string
+    url: string | null
+    editeur: string
+    /** null = liaison certaine (diff interne) ; sinon le score du matching. */
+    confiance: number | null
+  }[]
+}
+
 export interface RichSources {
   workId: number
   /** Le pivot d'identité, ou null : une œuvre jamais enrichie n'en a pas. */

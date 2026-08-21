@@ -1307,6 +1307,52 @@ async def cards_state(conn: psycopg.AsyncConnection, media: str = DEFAULT_MEDIA)
 EXTRAIT_CHARS = 1500
 
 
+async def fetch_actualite(
+    conn: psycopg.AsyncConnection, work_id: int, media: str = DEFAULT_MEDIA
+) -> dict[str, Any]:
+    """L'actualité d'une œuvre : les événements datés que la dérivation a liés.
+
+    Liste vide quand il n'y a rien, jamais un 404 : une œuvre sans actualité
+    est l'état normal du catalogue — les diffs ne parlent que des fiches
+    recollectées, et le RSS n'arrose que la tête. Une erreur ferait croire à
+    une panne.
+
+    `media` qualifie l'identifiant, comme partout : sans lui, le film 550
+    lirait l'actualité de la série 550.
+    """
+    univers = MEDIA[media].univers
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select a.type_evenement, a.survenu_le, a.titre, a.url, a.editeur,
+                   a.confiance_liaison, a.derive_at
+            from sourcing.actualite a
+            join sourcing.oeuvre o on o.id = a.oeuvre_id
+            where o.univers = %(univers)s and o.id_tmdb = %(id)s
+            order by a.survenu_le desc, a.derive_at desc
+            limit 50
+            """,
+            {"univers": univers, "id": work_id},
+        )
+        lignes = await cur.fetchall()
+    return {
+        "id": work_id,
+        "evenements": [
+            {
+                "type": ligne["type_evenement"],
+                "survenuLe": ligne["survenu_le"].isoformat(),
+                "titre": ligne["titre"],
+                "url": ligne["url"],
+                "editeur": ligne["editeur"],
+                # null = liaison certaine (diff interne) — le front distingue
+                # « fait maison » de « presse liée par matching ».
+                "confiance": ligne["confiance_liaison"],
+            }
+            for ligne in lignes
+        ],
+    }
+
+
 async def fetch_rich(
     conn: psycopg.AsyncConnection, work_id: int, media: str = DEFAULT_MEDIA
 ) -> dict[str, Any]:

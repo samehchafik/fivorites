@@ -122,3 +122,42 @@ async def test_refresh_route(client: httpx.AsyncClient, conn: psycopg.AsyncConne
     body = (await client.post("/api/catalog/refresh")).json()
     assert body["projected"] == 3
     assert body["stale"] is False
+
+
+async def test_l_actualite_d_une_oeuvre_distingue_les_univers(client, conn):
+    """La route rend les evenements du BON pivot — les catalogues TMDB se
+    chevauchent — et une liste vide pour une oeuvre sans actualite : c'est
+    l'etat normal du catalogue, pas une panne."""
+    await conn.execute(
+        "insert into sourcing.oeuvre (univers, id_tmdb) values ('series', 550), ('movies', 550)"
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id, univers from sourcing.oeuvre where id_tmdb = 550 order by univers"
+        )
+        (film, _), (serie, _) = await cur.fetchall()
+    await conn.execute(
+        "insert into sourcing.raw_source (source, kind, source_id, http_status, payload,"
+        " payload_sha256) values ('tmdb', 'tv', '550', 200, '{}', '\\x00')"
+    )
+    async with conn.cursor() as cur:
+        await cur.execute("select id from sourcing.raw_source where source_id = '550'")
+        raw_id = (await cur.fetchone())[0]
+    await conn.execute(
+        "insert into sourcing.actualite (oeuvre_id, type_evenement, survenu_le, titre,"
+        " editeur, raw_source_id) values (%s, 'saison_annoncee', '2026-09-01',"
+        " 'Saison 2 annoncée', 'tmdb', %s)",
+        (serie, raw_id),
+    )
+
+    reponse = await client.get("/api/catalog/works/550/actualite")
+    assert reponse.status_code == 200
+    evenements = reponse.json()["evenements"]
+    assert len(evenements) == 1
+    assert evenements[0]["type"] == "saison_annoncee"
+    assert evenements[0]["confiance"] is None, "diff interne = liaison certaine"
+
+    # Le film homonyme n'a rien — et surtout pas l'actualité de la série.
+    reponse = await client.get("/api/catalog/works/550/actualite?media=movie")
+    assert reponse.status_code == 200
+    assert reponse.json()["evenements"] == []

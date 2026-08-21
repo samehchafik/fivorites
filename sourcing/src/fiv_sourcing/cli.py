@@ -424,6 +424,49 @@ def _etat_video(etat: dict[str, int]) -> None:
     typer.echo(f"mortes               : {etat['mortes']:>8}")
 
 
+@app.command("actualite-derive")
+def actualite_derive(
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", help="Plafond de lignes de brut examinées. Défaut : tout."),
+    ] = None,
+) -> None:
+    """Dérive l'actualité des fiches recollectées — les « news TMDB », gratuites.
+
+    `raw_source` ne grandit que quand le contenu change : toute nouvelle ligne
+    de fiche est un changement réel, et la comparer à la précédente dit ce qui
+    est arrivé à l'œuvre — saison annoncée, date de diffusion, statut, sortie.
+    Aucun réseau, aucun appel payant.
+
+    La reprise est un entier (`actualite_curseur`) : relancer continue, une
+    interruption ne coûte que le lot en cours, et remettre le curseur à zéro
+    rejoue tout — le rejeu est idempotent, les clés naturelles font qu'un
+    événement déjà dérivé ne se réécrit pas.
+
+    Sa place est dans `nightly.sh`, après `backfill` : c'est lui qui fait
+    grossir le brut, donc c'est sa fin qui rend les diffs disponibles.
+    """
+    from fiv_sourcing.actualite import deriver_diffs
+
+    settings = get_settings()
+
+    async def run():
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            await _exiger_le_schema_a_jour(conn, settings)
+            return await deriver_diffs(conn, limit=limit)
+
+    report = _run_db(run)
+    typer.echo(
+        f"examinées      : {report.examines} ligne(s) de brut"
+        f"\npremières      : {report.sans_precedent}  (pas de version précédente, rien à dire)"
+        f"\névénements     : {report.evenements}"
+    )
+    for type_evt, n in sorted(report.par_type.items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  {type_evt:<20} {n}")
+    if not report.evenements and report.examines:
+        typer.echo("aucun événement — les recollectes n'ont rien changé d'annonçable.")
+
+
 @app.command("videos-check")
 def videos_check(
     limit: Annotated[
@@ -652,6 +695,7 @@ def crawl_wikidata_cmd(
     if report.interrupted:
         typer.echo("")
         typer.echo("Interrompu. Relancer la même commande reprend où on s'est arrêté.")
+    return report
 
 
 @crawl_app.command("livres")
@@ -672,10 +716,15 @@ def crawl_livres_cmd(
     Un raccourci sur `crawl wikidata --univers livres --langue <l>` — même
     reprise (le déjà-vu se saute), mêmes limiteurs. Interrompre puis relancer
     reprend où on s'est arrêté, langue par langue.
+
+    Le récapitulatif final n'est pas décoratif : WDQS est un service gratuit
+    et partagé qui refuse parfois une page de balayage. Une langue qui échoue
+    doit se voir — sinon on la croit collectée, et rien ne le dira jamais.
     """
+    bilan: list[tuple[str, int, int, int]] = []
     for langue in ("fr", "en", "es", "ar"):
         typer.echo(f"\n=== {langue} ===")
-        crawl_wikidata_cmd(
+        report = crawl_wikidata_cmd(
             univers_cle="livres",
             langue=langue,
             avec_imdb=False,
@@ -683,6 +732,20 @@ def crawl_livres_cmd(
             concurrency=concurrency,
             min_sitelinks=min_sitelinks,
             dry_run=False,
+        )
+        bilan.append((langue, report.swept, report.enriched, report.errors))
+
+    typer.echo("")
+    typer.echo("=== bilan ===")
+    for langue, balayes, enrichis, erreurs in bilan:
+        etat = f"{erreurs} erreur(s)" if erreurs else "ok"
+        typer.echo(f"{langue} : {balayes:>6} balayé(s), {enrichis:>5} enrichi(s) — {etat}")
+    fautives = [langue for langue, balayes, _, erreurs in bilan if erreurs or not balayes]
+    if fautives:
+        typer.echo("")
+        typer.echo(
+            f"⚠ à relancer : {', '.join(fautives)} — le balayage n'a pas abouti, "
+            "le classement par notoriété y est donc incomplet."
         )
 
 

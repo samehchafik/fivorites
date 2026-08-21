@@ -25,6 +25,10 @@ run tmdb changes --days 2  # les modifiées (fenêtre de 2 j : tolère un cron r
 run tmdb backfill          # collecte les nouvelles + recollecte les modifiées
 run tmdb dates             # les dates des fraîchement collectées
 run enrich --order recent  # leur enrichissement (les autres sont déjà vues)
+# L'actualité dérivée des recollectes du jour : gratuit, incrémental (curseur),
+# et APRÈS backfill — c'est lui qui fait grossir le brut, donc c'est sa fin qui
+# rend les diffs disponibles. `|| true` : rien en aval ne fait échouer la passe.
+run actualite-derive || true
 docker compose run --rm admin catalog refresh   # la grille de l'admin
 # L'index de recherche rattrape ce que la passe vient d'importer — APRÈS le
 # refresh : la synchronisation relit les métadonnées dans la projection.
