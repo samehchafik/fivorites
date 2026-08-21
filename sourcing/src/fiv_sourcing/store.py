@@ -221,6 +221,7 @@ async def attach_identifiers(
     wikidata_qid: str | None = None,
     imdb_id: str | None = None,
     tvmaze_id: int | None = None,
+    openlibrary_id: str | None = None,
 ) -> None:
     """Pose sur l'œuvre les identifiants externes appris en route.
 
@@ -235,12 +236,13 @@ async def attach_identifiers(
             await conn.execute(
                 """
                 update oeuvre set
-                    wikidata_qid = coalesce(wikidata_qid, %s),
-                    imdb_id      = coalesce(imdb_id, %s),
-                    tvmaze_id    = coalesce(tvmaze_id, %s)
+                    wikidata_qid   = coalesce(wikidata_qid, %s),
+                    imdb_id        = coalesce(imdb_id, %s),
+                    tvmaze_id      = coalesce(tvmaze_id, %s),
+                    id_openlibrary = coalesce(id_openlibrary, %s)
                 where id = %s
                 """,
-                (wikidata_qid, imdb_id, tvmaze_id, oeuvre_id),
+                (wikidata_qid, imdb_id, tvmaze_id, openlibrary_id, oeuvre_id),
             )
     except psycopg.errors.UniqueViolation as exc:
         log.warning(

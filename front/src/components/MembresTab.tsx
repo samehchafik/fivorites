@@ -46,7 +46,7 @@ const COLONNES: { cle: string; libelle: string; triable: boolean; aligne?: 'righ
   { cle: 'connexion', libelle: 'Dernière visite', triable: true },
 ]
 
-const UNIVERS: Record<string, string> = { series: 'Séries', movies: 'Films' }
+const UNIVERS: Record<string, string> = { series: 'Séries', movies: 'Films', livres: 'Livres' }
 
 /** La largeur du tiroir, en pourcentage de la fenêtre. Bornée : en deçà on ne
  *  lit plus le graphe, au-delà on perd la liste qui donne le contexte. */

@@ -591,7 +591,7 @@ class Recherche:
             return None
         bilan: dict[str, dict[str, Any]] = {}
         for media in MEDIA.values():
-            if media.catalog_table is None:
+            if not media.disponible:
                 continue
             try:
                 bilan[media.univers] = await synchroniser(conn, self._client, media)
@@ -687,7 +687,7 @@ _EXTRACTION = sql.SQL(
            ) end as titres
     from inventaire c
     left join {vue} v on v.id = c.id
-    left join oeuvre o on o.univers = %(univers)s and o.id_tmdb = c.id
+    left join oeuvre o on o.univers = %(univers)s and {oeuvre_cle} = c.id
     left join lateral (
         select r.payload
         from raw_source r
@@ -715,6 +715,9 @@ def requete_extraction(media: Media) -> sql.Composed:
     return _EXTRACTION.format(
         vue=sql.Identifier("admin", media.card_view),
         note=note_ponderee("v"),
+        # Les vignettes des livres sont keyées par le pivot, pas par un id
+        # TMDB — la jointure d'identité suit.
+        oeuvre_cle=sql.SQL("o.id") if media.pivot_card else sql.SQL("o.id_tmdb"),
     )
 
 
@@ -945,6 +948,18 @@ _IDS_CHANGES = """
     ) x
 """
 
+# La variante des univers sans inventaire TMDB (livres) : ce qui a bougé se
+# lit dans `riche_source` — c'est elle que le crawler écrit — et l'identité
+# est le pivot. `fetch_state` ne convient pas : ses `source_id` sont des QID,
+# pas des identifiants de vignette.
+_IDS_CHANGES_PIVOT = """
+    select distinct o.id
+    from oeuvre o
+    join riche_source rs on rs.oeuvre_id = o.id
+    where o.univers = %(univers)s
+      and rs.fetched_at > %(depuis)s::timestamptz
+"""
+
 
 async def synchroniser(
     conn: psycopg.AsyncConnection,
@@ -984,7 +999,7 @@ async def synchroniser(
     maintenant = await _horloge_base(conn)
     async with conn.cursor() as cur:
         await cur.execute(
-            _IDS_CHANGES,
+            _IDS_CHANGES_PIVOT if media.pivot_card else _IDS_CHANGES,
             {
                 "source": SOURCE,
                 "kind": media.kind,

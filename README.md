@@ -39,11 +39,14 @@ L'acquisition des séries est en place : le catalogue TMDB est inventorié
 notée et estimée sur la traîne. Le graphe de recommandation vient de s'ouvrir :
 les œuvres, leurs genres et leur distribution y entrent, et l'empreinte y est
 indexée pour la recherche des plus proches voisins. Les facettes d'usage
-restent à construire.
+restent à construire. **L'univers livres vient d'ouvrir** : sans TMDB, il
+entre par le crawler Wikidata + Open Library (traductions par langue
+d'édition), avec son onglet dans l'admin et ses index ES/graphe — voir
+[`doc/etude-sources-livres.md`](doc/etude-sources-livres.md).
 
 | Répertoire | Rôle |
 |---|---|
-| [`sourcing/`](sourcing) | la collecte : TMDB aujourd'hui, Wikidata et Wikipédia ensuite |
+| [`sourcing/`](sourcing) | la collecte : TMDB (séries, films), Wikidata + Open Library (livres), Wikipédia |
 | [`admin/`](admin) | le front d'administration — ce qui est collecté, ce qui reste à faire |
 | [`front/`](front) | les sources React de ce front |
 | `www/` | le résultat du build, versionné : déployer le front, c'est `git pull` |

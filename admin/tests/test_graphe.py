@@ -113,7 +113,7 @@ class TestVocabulaire:
         # Un univers servi par l'admin sans label ici ferait des nœuds sans
         # second label, donc invisibles à toute requête par univers.
         for media in MEDIA.values():
-            if media.catalog_table is not None:
+            if media.disponible:
                 assert media.univers in LABEL_UNIVERS
 
 
@@ -318,6 +318,24 @@ class TestConstruireOeuvre:
             _ligne(creation=[{"id": 7, "name": "David Simon"}, {"name": "sans id"}]), "series"
         )
         assert noeud["creation"] == [{"cle": "tmdb:7", "nom": "David Simon", "photo": None}]
+
+    def test_les_auteurs_d_un_livre_entrent_dans_la_creation(self) -> None:
+        """Même relation FIV_A_CREE que les créateurs de séries, mais une clé
+        `wd:` — la personne vient de Wikidata, pas de TMDB, et les deux
+        numérotations ne doivent jamais se rencontrer. Sans QID, pas de nœud :
+        un nom seul n'est pas une identité."""
+        noeud = construire_oeuvre(
+            _ligne(
+                auteurs=[
+                    {"qid": "Q5878", "nom": "Gabriel García Márquez"},
+                    {"nom": "sans qid"},
+                ]
+            ),
+            "livres",
+        )
+        assert noeud["creation"] == [
+            {"cle": "wd:Q5878", "nom": "Gabriel García Márquez", "photo": None}
+        ]
 
 
 class TestExtraction:

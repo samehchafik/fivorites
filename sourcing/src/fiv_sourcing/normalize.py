@@ -23,7 +23,18 @@ Le schéma (doc/architecture-sourcing.md §3) :
     diffuseur           str
     calendrier          {"jours": [str], "heure": str}
     episodes            {"total": int, "dates": int, "resumes": int}
-    ids                 {"tmdb": int, "imdb": str, "wikidata": str, "tvmaze": int}
+    auteurs             [{"qid": str?, "nom": str?}]   (livres)
+    editions            {"par_langue": [{"langue", "nombre", "isbn"?, "annee"?}],
+                         "total": int, "sans_langue": int, "tronque": bool}   (livres)
+    ids                 {"tmdb": int, "imdb": str, "wikidata": str, "tvmaze": int,
+                         "openlibrary": str}
+
+Les deux clés livres suivent la même règle que `episodes` ou `calendrier` :
+elles n'existent que pour l'univers qui les porte, jamais en remplissage.
+`editions.par_langue` est un résumé, pas un inventaire — une entrée par
+langue, un ISBN représentatif, la première année : c'est ce que la couche 1
+et le lien d'achat consomment. L'inventaire complet reste chez Open Library,
+réinterrogeable (R4).
 """
 
 from __future__ import annotations
@@ -42,6 +53,8 @@ CLES = frozenset(
         "diffuseur",
         "calendrier",
         "episodes",
+        "auteurs",
+        "editions",
         "ids",
     }
 )
@@ -72,6 +85,56 @@ def depuis_wikidata(faits: dict[str, Any]) -> dict[str, Any]:
     _si(ids, "wikidata", faits.get("qid"))
     _si(ids, "imdb", faits.get("imdb"))
     _si(ids, "tvmaze", _entier(faits.get("tvmaze")))
+    _si(canonique, "ids", ids)
+
+    return canonique
+
+
+def depuis_wikidata_livre(faits: dict[str, Any]) -> dict[str, Any]:
+    """Depuis la sortie de `wikidata.lire_lookup_livre`.
+
+    `langues` porte la langue d'origine (P407) — la même clé que pour une
+    série (P364) : la propriété diffère, le fait canonique est le même.
+    """
+    canonique: dict[str, Any] = {}
+
+    _si(canonique, "annee", faits.get("annee"))
+    _si(canonique, "pays", list(faits.get("pays") or []))
+    _si(canonique, "langues", list(faits.get("langues") or []))
+
+    auteurs = []
+    for auteur in faits.get("auteurs") or []:
+        forme: dict[str, Any] = {}
+        _si(forme, "qid", auteur.get("qid"))
+        _si(forme, "nom", auteur.get("nom"))
+        if forme:
+            auteurs.append(forme)
+    _si(canonique, "auteurs", auteurs)
+
+    ids: dict[str, Any] = {}
+    _si(ids, "wikidata", faits.get("qid"))
+    _si(ids, "openlibrary", faits.get("olid"))
+    _si(canonique, "ids", ids)
+
+    return canonique
+
+
+def depuis_openlibrary(work: dict[str, Any], editions: dict[str, Any] | None) -> dict[str, Any]:
+    """Depuis les sorties de `openlibrary.lire_work` et `lire_editions`."""
+    canonique: dict[str, Any] = {}
+
+    _si(canonique, "titre", work.get("titre"))
+
+    if editions and editions.get("total"):
+        canonique["editions"] = {
+            "par_langue": editions.get("editions") or [],
+            "total": editions["total"],
+            "sans_langue": editions.get("sans_langue", 0),
+            "tronque": bool(editions.get("tronque")),
+        }
+
+    ids: dict[str, Any] = {}
+    _si(ids, "openlibrary", work.get("olid"))
     _si(canonique, "ids", ids)
 
     return canonique

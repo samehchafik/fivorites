@@ -133,6 +133,69 @@ OFFSET %(decalage)d
 """
 
 
+# Le balayage des livres. Deux différences avec celui des séries, toutes deux
+# mesurées dans doc/etude-sources-livres.md :
+#
+#   * la sélection est isolée dans une **sous-requête** — jointe aux OPTIONAL
+#     et au service d'étiquettes, la version à plat dépasse le délai de WDQS
+#     sur les grandes langues (502 constaté sur le corpus anglais) ;
+#   * le tri est par **sitelinks décroissants**, pas par identifiant : sans
+#     export TMDB, c'est le seul proxy de notoriété gratuit, et il fait entrer
+#     d'abord les œuvres qu'un membre a une chance de citer. Le plancher
+#     `sitelinks_min` borne le périmètre — en dessous, l'item est un article
+#     unique dans une seule langue, sans matière à notation.
+#
+# `?olid` (P648) est l'identifiant Open Library : présent, il évite la
+# recherche par titre à l'enrichissement (93 % des grandes œuvres françaises
+# le portent, 23 % des arabes).
+SWEEP_LIVRES = """
+SELECT ?item ?itemLabel ?olid ?sitelinks WHERE {
+  { SELECT DISTINCT ?item ?sitelinks WHERE {
+      VALUES ?classe { %(classes)s }
+      ?item wdt:P31 ?classe ; wikibase:sitelinks ?sitelinks .
+      %(filtres)s
+      FILTER(?sitelinks >= %(sitelinks_min)d)
+    } ORDER BY DESC(?sitelinks) ?item LIMIT %(limite)d OFFSET %(decalage)d }
+  OPTIONAL { ?item wdt:P648 ?olid }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en,fr,es,ar". }
+}
+ORDER BY DESC(?sitelinks) ?item
+"""
+
+
+# Le lookup d'un livre par QID — le pendant de LOOKUP_QID, avec les faits d'un
+# livre : l'OLID (P648), les auteurs (P50), la langue d'origine (P407, là où
+# une série porte P364), le pays (P495) et l'année de publication (P577).
+#
+# Les auteurs sont concaténés en paires `QID~libellé` : deux GROUP_CONCAT
+# séparés ne se recolleraient pas (Blazegraph ne garantit pas leurs ordres
+# respectifs), et le graphe a besoin des deux — le QID comme clé de personne,
+# le libellé pour l'affichage. Libellé anglais d'abord, arabe en repli : les
+# auteurs arabes sans libellé anglais existent, l'inverse est rare.
+LOOKUP_QID_LIVRE = """
+SELECT ?item ?olid
+       (GROUP_CONCAT(DISTINCT ?auteurPaire; separator="|") AS ?auteurs)
+       (GROUP_CONCAT(DISTINCT ?langueCode; separator="|") AS ?langues)
+       (GROUP_CONCAT(DISTINCT ?paysCode; separator="|") AS ?pays)
+       (MIN(?anneePub) AS ?annee)
+WHERE {
+  BIND(wd:%(qid)s AS ?item)
+  OPTIONAL { ?item wdt:P648 ?olid }
+  OPTIONAL {
+    ?item wdt:P50 ?auteur .
+    OPTIONAL { ?auteur rdfs:label ?lEn . FILTER(lang(?lEn) = "en") }
+    OPTIONAL { ?auteur rdfs:label ?lAr . FILTER(lang(?lAr) = "ar") }
+    BIND(CONCAT(STRAFTER(STR(?auteur), "/entity/"), "~", COALESCE(?lEn, ?lAr, ""))
+         AS ?auteurPaire)
+  }
+  OPTIONAL { ?item wdt:P407 ?langueItem . ?langueItem wdt:P218 ?langueCode }
+  OPTIONAL { ?item wdt:P495 ?paysItem . ?paysItem wdt:P297 ?paysCode }
+  OPTIONAL { ?item wdt:P577 ?datePub . BIND(YEAR(?datePub) AS ?anneePub) }
+}
+GROUP BY ?item ?olid
+"""
+
+
 class WikidataClient:
     def __init__(self, fetcher: HttpFetcher) -> None:
         self._fetcher = fetcher
@@ -153,6 +216,43 @@ class WikidataClient:
         return await self._fetcher.get_json(
             SPARQL_URL, {"query": LOOKUP_QID % {"qid": propre}, "format": "json"}
         )
+
+    async def by_qid_livre(self, qid: str) -> FetchResult:
+        """Les faits d'un livre déjà identifié — l'entrée du crawler livres."""
+        propre = "".join(c for c in qid if c.isalnum())
+        return await self._fetcher.get_json(
+            SPARQL_URL, {"query": LOOKUP_QID_LIVRE % {"qid": propre}, "format": "json"}
+        )
+
+    async def sweep_livres(
+        self,
+        *,
+        classes: Sequence[str],
+        langue: str | None = None,
+        sitelinks_min: int = 5,
+        limite: int = 2000,
+        decalage: int = 0,
+    ) -> FetchResult:
+        """Une page du balayage des œuvres littéraires.
+
+        Contrairement aux séries, le tri est par notoriété décroissante
+        (sitelinks) et non par identifiant : sans export TMDB pour dire la
+        popularité, c'est le seul ordre qui fasse entrer d'abord les œuvres
+        qu'un membre a une chance de citer. `?item` départage les ex æquo pour
+        que la pagination par OFFSET reste stable.
+        """
+        filtres = []
+        if langue:
+            propre = "".join(c for c in langue if c.isalpha())[:3]
+            filtres.append(f'?item wdt:P407 ?langueF . ?langueF wdt:P218 "{propre}" .')
+        requete = SWEEP_LIVRES % {
+            "classes": " ".join(f"wd:{c}" for c in classes),
+            "filtres": "\n      ".join(filtres),
+            "sitelinks_min": int(sitelinks_min),
+            "limite": limite,
+            "decalage": decalage,
+        }
+        return await self._fetcher.get_json(SPARQL_URL, {"query": requete, "format": "json"})
 
     async def sweep_sans_tmdb(
         self,
@@ -250,8 +350,10 @@ def lire_lookup_lot(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]
     return trouves
 
 
-# Les champs agrégés par GROUP_CONCAT dans les deux requêtes de lookup.
-_CHAMPS_GROUPES = ("pays", "langues", "tournage", "action")
+# Les champs agrégés par GROUP_CONCAT dans les requêtes de lookup — séries,
+# films et livres confondus : un champ absent d'une réponse est simplement
+# ignoré.
+_CHAMPS_GROUPES = ("pays", "langues", "tournage", "action", "auteurs")
 
 
 def canonicaliser(payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -288,6 +390,66 @@ def lire_sweep(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
                 "titre": titre if titre != qid else None,
                 "imdb": ligne.get("imdb", {}).get("value") or None,
                 "tvmaze": ligne.get("tvmaze", {}).get("value") or None,
+            }
+        )
+    return items
+
+
+def lire_lookup_livre(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Aplatit la réponse de LOOKUP_QID_LIVRE. None si l'item n'existe pas.
+
+    Les auteurs reviennent en paires `QID~libellé` (voir la requête) ; une
+    paire au libellé vide garde son QID — la clé suffit au graphe, le nom
+    viendra d'une autre passe ou pas du tout.
+    """
+    lignes = ((payload or {}).get("results") or {}).get("bindings") or []
+    if not lignes:
+        return None
+    ligne = lignes[0]
+
+    def champ(nom: str) -> str:
+        return ligne.get(nom, {}).get("value", "")
+
+    def liste(nom: str) -> list[str]:
+        return [x for x in champ(nom).split("|") if x]
+
+    qid = champ("item").rsplit("/", 1)[-1]
+    if not qid:
+        return None
+    auteurs = []
+    for paire in liste("auteurs"):
+        auteur_qid, _, nom = paire.partition("~")
+        if auteur_qid.startswith("Q"):
+            auteurs.append({"qid": auteur_qid, "nom": nom or None})
+    annee = champ("annee")
+    return {
+        "qid": qid,
+        "olid": champ("olid") or None,
+        "auteurs": auteurs,
+        "langues": liste("langues"),
+        "pays": liste("pays"),
+        "annee": int(annee) if annee.lstrip("-").isdigit() and int(annee) > 0 else None,
+    }
+
+
+def lire_sweep_livres(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Une page de balayage livres → [{qid, titre, olid, sitelinks}]."""
+    items = []
+    for ligne in ((payload or {}).get("results") or {}).get("bindings") or []:
+        qid = ligne.get("item", {}).get("value", "").rsplit("/", 1)[-1]
+        if not qid.startswith("Q"):
+            continue
+        titre = ligne.get("itemLabel", {}).get("value", "")
+        sitelinks = ligne.get("sitelinks", {}).get("value", "")
+        items.append(
+            {
+                "qid": qid,
+                # Même règle que le balayage des séries : le service de labels
+                # renvoie le QID quand aucun libellé n'existe, et un QID n'est
+                # pas un titre.
+                "titre": titre if titre != qid else None,
+                "olid": ligne.get("olid", {}).get("value") or None,
+                "sitelinks": int(sitelinks) if sitelinks.isdigit() else 0,
             }
         )
     return items

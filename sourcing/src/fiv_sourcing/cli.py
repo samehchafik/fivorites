@@ -23,7 +23,7 @@ from fiv_sourcing.config import VENDOR_DIR, Settings, get_settings
 from fiv_sourcing.db import MigrationsNotFound, connect, migrate, pending_migrations, ping
 from fiv_sourcing.http import FetcherStats
 from fiv_sourcing.redact import SecretFilter, fingerprint, redact_dsn
-from fiv_sourcing.univers import Univers, kinds_de, resoudre
+from fiv_sourcing.univers import Univers, kinds_de, resoudre, resoudre_tmdb
 
 app = typer.Typer(help="Acquisition de données Fivorites V2 — séries", no_args_is_help=True)
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
@@ -234,7 +234,7 @@ def enrich(
     settings = get_settings()
     langues = settings.wikipedia_languages
     try:
-        univers = mod_univers.resoudre(univers_cle)
+        univers = mod_univers.resoudre_tmdb(univers_cle)
     except ValueError as exc:
         typer.echo(f"ERREUR : {exc}")
         raise typer.Exit(1) from exc
@@ -497,9 +497,20 @@ def videos_check(
 
 @crawl_app.command("wikidata")
 def crawl_wikidata_cmd(
+    univers_cle: Annotated[
+        str,
+        typer.Option(
+            "--univers",
+            help="series (défaut) ou livres. Les livres n'ont pas de TMDB : "
+            "ce crawler est leur flux principal.",
+        ),
+    ] = "series",
     langue: Annotated[
         str | None,
-        typer.Option("--langue", help="Code de langue originale (P364), ex. ar, tr."),
+        typer.Option(
+            "--langue",
+            help="Code de langue originale (P364 séries, P407 livres), ex. ar, fr.",
+        ),
     ] = None,
     avec_imdb: Annotated[
         bool,
@@ -515,21 +526,47 @@ def crawl_wikidata_cmd(
     concurrency: Annotated[
         int, typer.Option("--concurrency", help="Items traités en parallèle.")
     ] = 4,
+    min_sitelinks: Annotated[
+        int,
+        typer.Option(
+            "--min-sitelinks",
+            help="Livres seulement : plancher de notoriété du balayage. En "
+            "dessous, l'item est un article unique dans une seule langue, "
+            "sans matière à notation.",
+        ),
+    ] = 5,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Compter le reste à faire, sans rien écrire.")
     ] = False,
 ) -> None:
-    """Les séries qui existent dans Wikidata mais pas dans TMDB.
+    """Les œuvres qui entrent par Wikidata, pas par TMDB.
 
-    Balaye les items « série télévisée » sans identifiant TMDB — par défaut le
-    **noyau dur**, sans imdb_id non plus : injoignable par tout autre chemin.
-    Crée l'œuvre par QID (id_tmdb null), conserve le brut, enrichit via
-    Wikipédia et TVmaze. Reprenable : les items déjà regardés sont sautés.
+    Séries : balaye les items « série télévisée » sans identifiant TMDB — par
+    défaut le **noyau dur**, sans imdb_id non plus : injoignable par tout
+    autre chemin. Crée l'œuvre par QID (id_tmdb null), conserve le brut,
+    enrichit via Wikipédia et TVmaze.
+
+    Livres (`--univers livres`) : balaye les œuvres littéraires par notoriété
+    décroissante, crée l'œuvre par QID, enrichit via Wikipédia et Open
+    Library (éditions, traductions).
+
+    Reprenable dans les deux cas : les items déjà regardés sont sautés.
     """
     from fiv_sourcing.crawl import CrawlReport, crawl_wikidata, deja_regardes, sweep
     from fiv_sourcing.enrich import build_clients, build_fetcher
 
     settings = get_settings()
+    monde = _univers_crawl(univers_cle)
+    if monde.openlibrary and not langue:
+        # Le balayage toutes langues fait trier tous les items « œuvre
+        # littéraire » par WDQS, qui coupe avant la première page (mesuré).
+        # La collecte livres se pense par langue cible de toute façon.
+        typer.echo("ERREUR : --langue est requis pour les livres (fr, en, es, ar…)")
+        raise typer.Exit(2)
+    if monde.openlibrary and settings.http_timeout < 65:
+        # La première page à froid d'un corpus riche frôle 35 s ; WDQS coupe
+        # à 60 s. On s'aligne sur son couperet plutôt que d'abandonner avant.
+        settings = settings.model_copy(update={"http_timeout": 65.0})
     langues = settings.wikipedia_languages
 
     started = time.monotonic()
@@ -557,9 +594,15 @@ def crawl_wikidata_cmd(
             async with fetcher:
                 clients = build_clients(fetcher)
                 items = await sweep(
-                    clients, report, langue=langue, avec_imdb=avec_imdb, max_items=None
+                    clients,
+                    report,
+                    univers=monde,
+                    langue=langue,
+                    avec_imdb=avec_imdb,
+                    sitelinks_min=min_sitelinks,
+                    max_items=None,
                 )
-                vus = await deja_regardes(conn, [i["qid"] for i in items])
+                vus = await deja_regardes(conn, [i["qid"] for i in items], kind=monde.lookup_kind)
                 restants = [i for i in items if i["qid"] not in vus]
                 if limit is not None:
                     restants = restants[:limit]
@@ -576,6 +619,7 @@ def crawl_wikidata_cmd(
                     conn,
                     clients,
                     restants,
+                    univers=monde,
                     languages=langues,
                     concurrency=concurrency,
                     stop=stop,
@@ -584,8 +628,12 @@ def crawl_wikidata_cmd(
                 )
 
     perimetre = f"langue={langue}" if langue else "toutes langues"
-    perimetre += ", avec imdb" if avec_imdb else ", sans imdb (noyau dur)"
-    typer.echo(f"périmètre : items série sans id TMDB — {perimetre}")
+    if monde.openlibrary:
+        perimetre += f", sitelinks >= {min_sitelinks}"
+        typer.echo(f"périmètre : œuvres littéraires par notoriété — {perimetre}")
+    else:
+        perimetre += ", avec imdb" if avec_imdb else ", sans imdb (noyau dur)"
+        typer.echo(f"périmètre : items série sans id TMDB — {perimetre}")
     typer.echo(f"langues d'articles : {', '.join(langues)}")
 
     report = _run_db(run)
@@ -1194,17 +1242,33 @@ def _http_label(status: int) -> str:
 
 
 def _univers(cle: str) -> Univers:
-    """Résout `--univers`, et s'arrête sur une valeur inconnue.
+    """Résout `--univers` pour une commande TMDB, et s'arrête sur une valeur
+    inconnue — ou sans collecte TMDB (livres).
 
     Liste fermée : une faute de frappe doit échouer ici plutôt que de créer un
     troisième univers silencieux dans `tmdb_catalog` — qui ne se verrait qu'au
     moment où la grille de l'admin n'afficherait rien.
     """
     try:
-        return resoudre(cle)
+        return resoudre_tmdb(cle)
     except ValueError as exc:
         typer.echo(f"ERREUR : {exc}")
         raise typer.Exit(2) from exc
+
+
+def _univers_crawl(cle: str) -> Univers:
+    """Résout `--univers` pour le crawler : il faut des classes Wikidata à
+    balayer — les séries et les livres en ont, les films n'en ont pas (le
+    flux 1 les couvre, et leur crawler n'est pas écrit)."""
+    try:
+        monde = resoudre(cle)
+    except ValueError as exc:
+        typer.echo(f"ERREUR : {exc}")
+        raise typer.Exit(2) from exc
+    if not monde.wikidata_classes:
+        typer.echo(f"ERREUR : pas de crawler pour l'univers {monde.cle}")
+        raise typer.Exit(2)
+    return monde
 
 
 def _run_db[T](factory: Callable[[], Coroutine[object, object, T]]) -> T:

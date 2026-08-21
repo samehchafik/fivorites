@@ -513,10 +513,19 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
               </Alert>
             ) : null
           return (
-          <Tabs value={view} onChange={(next) => next && setView(next as 'cards' | 'table')}>
+          <Tabs
+            /* Un univers sans avancement ne peut pas rester sur cet onglet —
+               on retombe sur la grille plutôt que d'afficher un panneau vide. */
+            value={available?.acquisition === false ? 'cards' : view}
+            onChange={(next) => next && setView(next as 'cards' | 'table')}
+          >
             <Tabs.List mb="md">
               <Tabs.Tab value="cards">Catalogue collecté</Tabs.Tab>
-              <Tabs.Tab value="table">Avancement</Tabs.Tab>
+              {/* Pas d'onglet Avancement sans inventaire TMDB : les livres se
+                  collectent par le crawler, il n'y a pas d'export à rattraper. */}
+              {available?.acquisition !== false && (
+                <Tabs.Tab value="table">Avancement</Tabs.Tab>
+              )}
             </Tabs.List>
 
             <Tabs.Panel value="cards">

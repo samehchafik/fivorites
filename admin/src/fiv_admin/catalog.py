@@ -413,15 +413,15 @@ async def fetch_cards(
                 -- pas devenue la référence. Absent tant qu'une série n'a jamais
                 -- été notée sous ce barème : `null`, pas des zéros.
                 scores as (
-                    select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
+                    select distinct on ({pivot}, s.axe) {pivot} as id_tmdb, s.axe, s.valeur
                     from notation.score s
                     join sourcing.oeuvre o on o.id = s.oeuvre_id
                     where o.univers = %(univers)s
-                      and o.id_tmdb = any (array(select id from page))
+                      and {pivot} = any (array(select id from page))
                       and s.valeur is not null
                       and s.rubric_version = {bareme}
                       and s.modele <> 'interne-ridge' and s.modele not like 'claude%%'
-                    order by o.id_tmdb, s.axe, s.scored_at desc
+                    order by {pivot}, s.axe, s.scored_at desc
                 ),
                 vectors as (
                     select id_tmdb, jsonb_object_agg(axe, valeur) as axis_scores
@@ -431,14 +431,14 @@ async def fetch_cards(
                 -- Elle sert à afficher l'écart avec le juge : c'est la mesure
                 -- de ce que le modèle interne a appris, œuvre par œuvre.
                 internes as (
-                    select distinct on (o.id_tmdb, s.axe) o.id_tmdb, s.axe, s.valeur
+                    select distinct on ({pivot}, s.axe) {pivot} as id_tmdb, s.axe, s.valeur
                     from notation.score s
                     join sourcing.oeuvre o on o.id = s.oeuvre_id
                     where o.univers = %(univers)s
-                      and o.id_tmdb = any (array(select id from page))
+                      and {pivot} = any (array(select id from page))
                       and s.valeur is not null and s.modele = 'interne-ridge'
                       and s.rubric_version = {bareme}
-                    order by o.id_tmdb, s.axe, s.scored_at desc
+                    order by {pivot}, s.axe, s.scored_at desc
                 ),
                 vecteurs_internes as (
                     select id_tmdb, jsonb_object_agg(axe, valeur) as internal_scores
@@ -465,6 +465,9 @@ async def fetch_cards(
                 order=order,
                 order_page=order_page,
                 bareme=sql.SQL(BAREME_COURANT),
+                # Les livres n'ont pas d'id TMDB : leurs vignettes sont keyées
+                # par le pivot, et les notes se joignent donc sur `o.id`.
+                pivot=sql.SQL("o.id") if univers.pivot_card else sql.SQL("o.id_tmdb"),
                 traductions=_TRADUCTIONS if traduire else sql.SQL(""),
                 traduction=(
                     sql.SQL("coalesce(x.data, '[]'::jsonb) as traduction")
@@ -556,6 +559,144 @@ def _shape_card(row: dict[str, Any], lang: str) -> dict[str, Any]:
     }
 
 
+async def _fetch_work_livre(
+    conn: psycopg.AsyncConnection, work_id: int, lang: str
+) -> dict[str, Any] | None:
+    """La fiche d'un livre — assemblée depuis `riche_source`, pas depuis un brut.
+
+    Un livre n'a pas de fiche TMDB : sa matière vient de l'enrichissement
+    (Wikidata pour les faits, Open Library pour la description et les
+    éditions, Wikipédia pour le texte long). La forme rendue est **celle de
+    `fetch_work`**, clé pour clé — c'est ce qui permet au front d'ouvrir la
+    même modale ; ce qu'un livre n'a pas (affiche, saisons, distribution,
+    diffusion) est vide ou null, comme pour une série lacunaire.
+
+    Les traductions affichées sont les langues d'édition d'Open Library — la
+    donnée que l'univers livre existe pour porter — complétées des langues
+    d'articles Wikipédia collectées.
+    """
+    lang2 = lang.split("-")[0]
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            select id, titre, annee, wikidata_qid, id_openlibrary
+            from sourcing.oeuvre where univers = 'livres' and id = %s
+            """,
+            (work_id,),
+        )
+        oeuvre = await cur.fetchone()
+        if oeuvre is None:
+            return None
+
+        await cur.execute(
+            """
+            select source, lang, content, facts, url, fetched_at
+            from riche_source where oeuvre_id = %s
+            """,
+            (work_id,),
+        )
+        riches = await cur.fetchall()
+
+        # L'empreinte et la prédiction interne — mêmes règles que `fetch_work`,
+        # la jointure en moins : le livre EST désigné par son pivot.
+        await cur.execute(
+            f"""
+            select distinct on (s.axe) s.axe, s.valeur
+            from notation.score s
+            where s.oeuvre_id = %s and s.valeur is not null
+              and s.rubric_version = {BAREME_COURANT}
+              and s.modele <> 'interne-ridge' and s.modele not like 'claude%%'
+            order by s.axe, s.scored_at desc
+            """,
+            (work_id,),
+        )
+        axis_scores = {row["axe"]: float(row["valeur"]) for row in await cur.fetchall()}
+        await cur.execute(
+            f"""
+            select distinct on (s.axe) s.axe, s.valeur
+            from notation.score s
+            where s.oeuvre_id = %s and s.valeur is not null
+              and s.modele = 'interne-ridge' and s.rubric_version = {BAREME_COURANT}
+            order by s.axe, s.scored_at desc
+            """,
+            (work_id,),
+        )
+        internal_scores = {row["axe"]: float(row["valeur"]) for row in await cur.fetchall()}
+
+    wikipedia = {r["lang"]: r for r in riches if r["source"] == "wikipedia"}
+    wikidata = next((r for r in riches if r["source"] == "wikidata"), None)
+    openlib = next((r for r in riches if r["source"] == "openlibrary"), None)
+    faits_wd = (wikidata or {}).get("facts") or {}
+    faits_ol = (openlib or {}).get("facts") or {}
+    editions = (faits_ol.get("editions") or {}).get("par_langue") or []
+
+    # Le texte long dans la langue demandée, puis le repli — fr, en, la plus
+    # longue collectée — puis la description Open Library. On dit lequel :
+    # même contrat `translated` que les séries.
+    article = wikipedia.get(lang2)
+    repli = next(
+        (wikipedia[code] for code in ("fr", "en") if code in wikipedia),
+        max(wikipedia.values(), key=lambda r: len(r["content"] or ""), default=None),
+    )
+    overview = (
+        (article or {}).get("content")
+        or (repli or {}).get("content")
+        or ((openlib or {}).get("content"))
+    )
+
+    auteurs = [a.get("nom") for a in faits_wd.get("auteurs") or [] if a.get("nom")]
+    annee = faits_wd.get("annee") or oeuvre["annee"]
+    langues_editions = sorted({e["langue"] for e in editions} | set(wikipedia))
+
+    return {
+        "id": work_id,
+        # Le libellé Wikidata d'abord — même préférence que la vignette : le
+        # titre du work OL peut venir d'un appariement par titre, plus bruité.
+        "name": oeuvre["titre"] or faits_ol.get("titre"),
+        "originalName": oeuvre["titre"],
+        "tagline": None,
+        "overview": overview,
+        "translated": {
+            "lang": lang,
+            "name": False,
+            "overview": article is not None,
+        },
+        "posterPath": None,
+        "backdropPath": None,
+        "homepage": (openlib or {}).get("url"),
+        "status": None,
+        "type": "livre",
+        "originalLanguage": next(iter(faits_wd.get("langues") or []), None),
+        "firstAirDate": f"{annee}-01-01" if annee else None,
+        "lastAirDate": None,
+        "numberOfSeasons": None,
+        "numberOfEpisodes": None,
+        "voteAverage": None,
+        "voteCount": None,
+        "genres": [],
+        "networks": [],
+        "createdBy": auteurs,
+        "originCountry": faits_wd.get("pays") or [],
+        "externalIds": {
+            "wikidata_id": oeuvre["wikidata_qid"],
+            "openlibrary_id": oeuvre["id_openlibrary"],
+        },
+        "translations": langues_editions,
+        "gallery": {"backdrops": [], "posters": []},
+        "cast": [],
+        "watch": _shape_watch({}, [], lang),
+        "seasons": [],
+        "raw": {
+            "fetchedAt": (wikidata or openlib or {}).get("fetched_at"),
+            "httpStatus": 200 if riches else None,
+        },
+        "axisScores": axis_scores or None,
+        "internalScores": internal_scores or None,
+        "videos": [],
+        "catalog": None,
+    }
+
+
 async def fetch_work(
     conn: psycopg.AsyncConnection, work_id: int, lang: str, media: str = DEFAULT_MEDIA
 ) -> dict[str, Any] | None:
@@ -566,6 +707,10 @@ async def fetch_work(
     en afficher dix-huit.
     """
     univers = MEDIA[media]
+    if univers.pivot_card:
+        # Un livre n'a pas de brut TMDB à lire : sa fiche s'assemble depuis
+        # l'enrichissement, sous la même forme.
+        return await _fetch_work_livre(conn, work_id, lang)
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """
@@ -1048,7 +1193,7 @@ async def refresh_cards(conn: psycopg.AsyncConnection) -> int:
     """
     total = 0
     for media in MEDIA.values():
-        if media.catalog_table is None:
+        if not media.disponible:
             continue
         vue = sql.Identifier("admin", media.card_view)
         try:
@@ -1168,16 +1313,26 @@ async def fetch_rich(
         # C'est aussi ce qu'attend le panneau : il n'affiche que des liens
         # externes, et un bloc d'identité vide serait pire qu'absent.
         await cur.execute(
-            """
-            select id, univers, wikidata_qid, imdb_id, tvmaze_id, titre, annee
-            from oeuvre where univers = %(univers)s and id_tmdb = %(id)s order by id limit 1
-            """,
+            sql.SQL(
+                """
+                select id, univers, wikidata_qid, imdb_id, tvmaze_id, id_openlibrary,
+                       titre, annee
+                from oeuvre where univers = %(univers)s and {cle} = %(id)s
+                order by id limit 1
+                """
+            ).format(
+                # Un livre est désigné par son pivot — il n'a pas d'id TMDB.
+                cle=sql.SQL("id") if MEDIA[media].pivot_card else sql.SQL("id_tmdb")
+            ),
             {"id": work_id, "univers": MEDIA[media].univers},
         )
         pivot = await cur.fetchone()
         oeuvre = (
             pivot
-            if pivot and any(pivot[cle] for cle in ("wikidata_qid", "imdb_id", "tvmaze_id"))
+            if pivot
+            and any(
+                pivot[cle] for cle in ("wikidata_qid", "imdb_id", "tvmaze_id", "id_openlibrary")
+            )
             else None
         )
 
@@ -1255,6 +1410,7 @@ async def fetch_rich(
             "wikidataQid": oeuvre["wikidata_qid"],
             "imdbId": oeuvre["imdb_id"],
             "tvmazeId": oeuvre["tvmaze_id"],
+            "openlibraryId": oeuvre["id_openlibrary"],
         }
         if oeuvre
         else None,

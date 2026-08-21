@@ -41,7 +41,7 @@ import psycopg
 from fiv_sourcing import normalize, store
 from fiv_sourcing.config import Settings
 from fiv_sourcing.http import FetchResult, HttpFetcher
-from fiv_sourcing.sources import tvmaze, wikidata, wikipedia
+from fiv_sourcing.sources import openlibrary, tvmaze, wikidata, wikipedia
 from fiv_sourcing.univers import SERIES, Univers
 
 log = logging.getLogger(__name__)
@@ -67,6 +67,7 @@ class Clients:
     wikidata: wikidata.WikidataClient
     wikipedia: wikipedia.WikipediaClient
     tvmaze: tvmaze.TvmazeClient
+    openlibrary: openlibrary.OpenLibraryClient
 
 
 def build_clients(fetcher: HttpFetcher) -> Clients:
@@ -74,6 +75,7 @@ def build_clients(fetcher: HttpFetcher) -> Clients:
         wikidata=wikidata.WikidataClient(fetcher),
         wikipedia=wikipedia.WikipediaClient(fetcher),
         tvmaze=tvmaze.TvmazeClient(fetcher),
+        openlibrary=openlibrary.OpenLibraryClient(fetcher),
     )
 
 

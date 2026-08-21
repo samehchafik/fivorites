@@ -31,6 +31,11 @@ dans `facts`.
 On commence par parser les séries TMDB. `oeuvre` attache tout le reste : ses
 identifiants externes sont nullables et uniques, ce qui permet d'accueillir une
 série absente de TMDB et de la réconcilier si elle y apparaît un jour.
+*Complément du 2026-08-21 :* l'univers **livres** n'a pas de TMDB
+(doc/etude-sources-livres.md) — sa première référence est **Open Library**,
+son flux principal est le crawler Wikidata (le « flux 2 » des séries), et le
+pivot gagne un `id_openlibrary`. La règle ne change pas, seul le nom de la
+première référence change avec l'univers.
 
 **R4 — Rejouer l'enrichissement, c'est réinterroger.**
 La dérivation TMDB (couche 1) se rejoue depuis `raw_source`, hors ligne, comme
@@ -105,8 +110,13 @@ inventée. Produit exclusivement par `normalize.py`.
   "diffuseur":           "HBO",
   "calendrier":          {"jours": ["Sunday"], "heure": "21:00"},
   "episodes":            {"total": 73, "dates": 73, "resumes": 73},
+  "auteurs":             [{"qid": "Q5878", "nom": "Gabriel García Márquez"}],
+  "editions":            {"par_langue": [{"langue": "fr", "nombre": 5,
+                                          "isbn": "9782020238113", "annee": 1995}],
+                          "total": 64, "sans_langue": 15, "tronque": false},
   "ids":                 {"tmdb": 1399, "imdb": "tt0944947",
-                          "wikidata": "Q23572", "tvmaze": 82}
+                          "wikidata": "Q23572", "tvmaze": 82,
+                          "openlibrary": "OL27258W"}
 }
 ```
 
@@ -119,7 +129,9 @@ inventée. Produit exclusivement par `normalize.py`.
 | `lieux` | [{type, nom}] | Wikidata (P915/P840) |
 | `diffuseur`, `calendrier` | str, {jours, heure} | TVmaze |
 | `episodes` | {total, dates, resumes} | TVmaze, TMDB |
-| `ids` | {tmdb?, imdb?, wikidata?, tvmaze?} | toutes |
+| `auteurs` | [{qid?, nom?}] | Wikidata (P50) — livres |
+| `editions` | {par_langue, total, sans_langue, tronque} | Open Library — livres |
+| `ids` | {tmdb?, imdb?, wikidata?, tvmaze?, openlibrary?} | toutes |
 
 `content` (le texte de notation) et `media` (les visuels) restent des colonnes
 à part : ce sont des matières, pas des faits.

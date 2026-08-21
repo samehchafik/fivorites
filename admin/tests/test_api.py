@@ -140,9 +140,12 @@ async def test_meta_merges_configured_and_observed_languages(client: httpx.Async
     assert {language["code"]: language["label"] for language in body["languages"]}[
         "ar-SA"
     ] == "Arabe"
-    assert [media["key"] for media in body["media"]] == ["tv", "movie"]
-    assert [media["available"] for media in body["media"]] == [True, True], (
-        "les deux univers sont servis depuis le lot 13"
+    assert [media["key"] for media in body["media"]] == ["tv", "movie", "book"]
+    assert [media["available"] for media in body["media"]] == [True, True, True], (
+        "les trois univers sont servis — les livres depuis le lot livres"
+    )
+    assert [media["acquisition"] for media in body["media"]] == [True, True, False], (
+        "le tableau d'avancement mesure une collecte TMDB : les livres n'en ont pas"
     )
 
 

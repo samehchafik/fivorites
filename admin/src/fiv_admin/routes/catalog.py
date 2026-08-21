@@ -43,7 +43,7 @@ def _media(cle: str) -> str:
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"univers inconnu : {cle} (attendus : {', '.join(MEDIA)})",
         )
-    if MEDIA[cle].catalog_table is None:
+    if not MEDIA[cle].disponible:
         raise HTTPException(status.HTTP_409_CONFLICT, MEDIA[cle].unavailable_reason)
     return cle
 

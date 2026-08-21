@@ -128,6 +128,7 @@ LABEL_ETAT = "FivEtat"
 LABEL_UNIVERS: dict[str, str] = {
     "series": "FivSerie",
     "movies": "FivFilm",
+    "livres": "FivLivre",
 }
 
 REL_GENRE = "FIV_A_POUR_GENRE"
@@ -427,12 +428,24 @@ _EXTRACTION = sql.SQL(
            ) as distribution,
            jsonb_path_query_array(rp.payload, %(p_crew)s::jsonpath) as realisation,
            coalesce(rp.payload -> 'created_by', '[]'::jsonb) as creation,
+           au.auteurs,
            e.empreinte,
            e.empreinte_source,
            (select version from bareme) as bareme
     from oeuvres o
-    left join {vue} v on v.id = o.id_tmdb
+    left join {vue} v on v.id = {vue_cle}
     left join empreinte e on e.oeuvre_id = o.id
+    -- Les auteurs d'un livre, tels que l'enrichissement Wikidata les a
+    -- canonisés ({{qid, nom}}). Null pour les autres univers — leurs facts ne
+    -- portent pas la clé — et c'est le seul créditage d'un livre : pas de
+    -- distribution, pas de réalisation.
+    left join lateral (
+        select rs.facts -> 'auteurs' as auteurs
+        from riche_source rs
+        where rs.oeuvre_id = o.id and rs.source = 'wikidata'
+          and rs.facts ? 'auteurs'
+        limit 1
+    ) au on true
     left join lateral (
         select r.payload
         from raw_source r
@@ -455,6 +468,8 @@ def requete_extraction(media: Media) -> sql.Composed:
     return _EXTRACTION.format(
         vue=sql.Identifier("admin", media.card_view or "tv_card"),
         note=note_ponderee("v"),
+        # Les vignettes des livres sont keyées par le pivot — pas d'id TMDB.
+        vue_cle=sql.SQL("o.id") if media.pivot_card else sql.SQL("o.id_tmdb"),
     )
 
 
@@ -591,6 +606,15 @@ def construire_oeuvre(row: dict[str, Any], univers: str) -> dict[str, Any]:
         {"cle": cle, "nom": membre.get("name"), "photo": membre.get("profile_path")}
         for membre in row.get("creation") or []
         if (cle := _cle(membre.get("id"))) is not None
+    ]
+    # Les auteurs d'un livre : même relation FIV_A_CREE que les créateurs de
+    # séries — « a créé » dit exactement ce qu'un auteur fait — mais une clé
+    # `wd:` : la personne vient de Wikidata, pas de TMDB, et les deux espaces
+    # de numérotation ne doivent jamais se rencontrer.
+    creation += [
+        {"cle": f"wd:{auteur['qid']}", "nom": auteur.get("nom"), "photo": None}
+        for auteur in row.get("auteurs") or []
+        if auteur.get("qid")
     ]
 
     return {
@@ -807,6 +831,12 @@ _PIVOTS_CHANGES = """
         or exists (
             select 1 from notation.score sc
             where sc.oeuvre_id = o.id and sc.scored_at > %(depuis)s::timestamptz)
+        -- son enrichissement a bougé — la porte des livres, dont toute la
+        -- matière (auteurs compris) vit dans riche_source, et que ni
+        -- fetch_state (source_id = QID) ni tmdb_catalog ne voient
+        or exists (
+            select 1 from riche_source rs
+            where rs.oeuvre_id = o.id and rs.fetched_at > %(depuis)s::timestamptz)
       )
 """
 

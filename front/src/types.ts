@@ -90,6 +90,10 @@ export interface MediaInfo {
   label: string
   partLabel: string
   available: boolean
+  /** L'univers a-t-il un tableau d'avancement ? Il mesure une collecte TMDB
+   *  contre son export — les livres n'en ont pas : leur collecte est le
+   *  crawler Wikidata + Open Library, sans inventaire à rattraper. */
+  acquisition: boolean
   reason: string
 }
 

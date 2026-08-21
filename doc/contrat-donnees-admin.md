@@ -100,6 +100,24 @@ Trois choses à savoir, aucune ne casse l'admin actuel :
    `tmdb dates`) — si l'admin veut trier par récence sans toucher au payload,
    c'est cette colonne, pas le `jsonb`.
 
+## 5 bis. L'univers livres (2026-08-21) : le premier sans TMDB
+
+Le contrat change de nature pour cet univers, et l'admin le sait par
+`media.pivot_card` :
+
+- **la vignette est keyée par le pivot** `sourcing.oeuvre.id` — il n'y a pas
+  d'identifiant TMDB. `admin.livre_card` (migration 015) s'assemble depuis
+  `riche_source` : libellé Wikidata en nom, article Wikipédia en synopsis
+  (préférence fr, en, es, ar), faits Wikidata pour langue/pays/année ;
+- **la fiche** (`fetch_work`) s'assemble de même — pas de brut à relire ;
+- **les traductions affichées sont les langues d'édition Open Library**
+  (`facts.editions.par_langue`), la donnée que l'univers existe pour porter ;
+- le pivot gagne `id_openlibrary`, et `facts` deux clés (`auteurs`,
+  `editions`) plus `ids.openlibrary` — voir architecture-sourcing §3 ;
+- **pas de tableau d'avancement** : il mesure une collecte TMDB contre son
+  export. `/meta` porte `acquisition: false` et le front n'affiche pas
+  l'onglet.
+
 ## 6. Les invariants sur lesquels l'admin peut compter
 
 - `raw_source` est append-only : la dernière version d'un objet est

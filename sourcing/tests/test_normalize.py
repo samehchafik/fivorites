@@ -35,13 +35,41 @@ TVMAZE_COMPLET = {
 }
 
 
+WIKIDATA_LIVRE_COMPLET = {
+    "qid": "Q189378",
+    "olid": "OL27258W",
+    "auteurs": [{"qid": "Q5878", "nom": "Gabriel García Márquez"}],
+    "langues": ["es"],
+    "pays": ["CO"],
+    "annee": 1967,
+}
+
+OPENLIBRARY_WORK = {
+    "olid": "OL27258W",
+    "titre": "Cien años de soledad",
+    "description": "Un roman.",
+}
+
+OPENLIBRARY_EDITIONS = {
+    "editions": [
+        {"langue": "es", "nombre": 7, "isbn": "9780307474728", "annee": 1967},
+        {"langue": "fr", "nombre": 5, "isbn": "9782020238113", "annee": 1995},
+    ],
+    "total": 64,
+    "sans_langue": 15,
+    "tronque": False,
+}
+
+
 @pytest.mark.parametrize(
     "canonique",
     [
         normalize.depuis_wikidata(WIKIDATA_COMPLET),
         normalize.depuis_tvmaze(TVMAZE_COMPLET),
+        normalize.depuis_wikidata_livre(WIKIDATA_LIVRE_COMPLET),
+        normalize.depuis_openlibrary(OPENLIBRARY_WORK, OPENLIBRARY_EDITIONS),
     ],
-    ids=["wikidata", "tvmaze"],
+    ids=["wikidata", "tvmaze", "wikidata-livre", "openlibrary"],
 )
 def test_aucune_cle_hors_schema(canonique):
     """La règle qui rend le JSON uniforme : une source qui veut une clé nouvelle
@@ -96,3 +124,38 @@ def test_un_statut_incertain_reste_absent():
 def test_l_annee_vient_de_la_date_de_premiere():
     assert normalize.depuis_tvmaze({"id": 1, "premiere": "1999-01-10"})["annee"] == 1999
     assert "annee" not in normalize.depuis_tvmaze({"id": 1, "premiere": "????"})
+
+
+def test_wikidata_livre_produit_les_faits_attendus():
+    canonique = normalize.depuis_wikidata_livre(WIKIDATA_LIVRE_COMPLET)
+
+    assert canonique == {
+        "annee": 1967,
+        "pays": ["CO"],
+        "langues": ["es"],
+        "auteurs": [{"qid": "Q5878", "nom": "Gabriel García Márquez"}],
+        "ids": {"wikidata": "Q189378", "openlibrary": "OL27258W"},
+    }
+
+
+def test_openlibrary_produit_les_faits_attendus():
+    canonique = normalize.depuis_openlibrary(OPENLIBRARY_WORK, OPENLIBRARY_EDITIONS)
+
+    assert canonique == {
+        "titre": "Cien años de soledad",
+        "editions": {
+            "par_langue": OPENLIBRARY_EDITIONS["editions"],
+            "total": 64,
+            "sans_langue": 15,
+            "tronque": False,
+        },
+        "ids": {"openlibrary": "OL27258W"},
+    }
+
+
+def test_openlibrary_sans_editions_reste_sans_cle():
+    """Un work trouvé mais sans inventaire d'éditions (réponse en échec) ne
+    fabrique pas une clé `editions` vide."""
+    canonique = normalize.depuis_openlibrary(OPENLIBRARY_WORK, None)
+
+    assert "editions" not in canonique

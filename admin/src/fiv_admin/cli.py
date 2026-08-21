@@ -859,7 +859,7 @@ def training_validite(
 @notation_app.command("devis")
 def notation_devis(
     univers: Annotated[
-        str, typer.Option("--univers", help="series, movies, ou tous (défaut).")
+        str, typer.Option("--univers", help="series, movies, livres, ou tous (défaut).")
     ] = "tous",
     encodeur: Annotated[
         str | None, typer.Option("--encodeur", help="Défaut : celui de production.")
@@ -948,7 +948,7 @@ def notation_devis(
 @notation_app.command("generer")
 def training_generer(
     univers: Annotated[
-        str, typer.Option("--univers", help="series, movies, ou tous (défaut).")
+        str, typer.Option("--univers", help="series, movies, livres, ou tous (défaut).")
     ] = "tous",
     limit: Annotated[
         int | None,
@@ -1212,7 +1212,7 @@ def catalog_refresh() -> None:
 def search_reindex(
     univers: Annotated[
         str,
-        typer.Option("--univers", help="series, movies, ou all (défaut)."),
+        typer.Option("--univers", help="series, movies, livres, ou all (défaut)."),
     ] = "all",
     lot: Annotated[
         int, typer.Option("--lot", min=50, max=5000, help="Documents par envoi bulk.")
@@ -1241,7 +1241,7 @@ def search_reindex(
         typer.echo("ERREUR : ES_URL est vide — la recherche est désactivée.")
         raise typer.Exit(1)
 
-    cibles = [m for m in MEDIA.values() if m.catalog_table is not None]
+    cibles = [m for m in MEDIA.values() if m.disponible]
     if univers != "all":
         cibles = [m for m in cibles if m.univers == univers]
         if not cibles:
@@ -1298,7 +1298,7 @@ def search_reindex(
 def search_sync(
     univers: Annotated[
         str,
-        typer.Option("--univers", help="series, movies, ou all (défaut)."),
+        typer.Option("--univers", help="series, movies, livres, ou all (défaut)."),
     ] = "all",
     lot: Annotated[
         int, typer.Option("--lot", min=50, max=5000, help="Documents par envoi bulk.")
@@ -1327,7 +1327,7 @@ def search_sync(
         typer.echo("ERREUR : ES_URL est vide — la recherche est désactivée.")
         raise typer.Exit(1)
 
-    cibles = [m for m in MEDIA.values() if m.catalog_table is not None]
+    cibles = [m for m in MEDIA.values() if m.disponible]
     if univers != "all":
         cibles = [m for m in cibles if m.univers == univers]
         if not cibles:
@@ -1464,7 +1464,7 @@ def graphe_schema() -> None:
 @graphe_app.command("projeter")
 def graphe_projeter(
     univers: Annotated[
-        str, typer.Option("--univers", help="series, movies, ou all (défaut).")
+        str, typer.Option("--univers", help="series, movies, livres, ou all (défaut).")
     ] = "all",
     lot: Annotated[int, typer.Option("--lot", min=50, max=5000, help="Œuvres par envoi.")] = 500,
 ) -> None:
@@ -1484,7 +1484,7 @@ def graphe_projeter(
     from fiv_admin.media import MEDIA
 
     settings = get_settings()
-    cibles = [m for m in MEDIA.values() if m.catalog_table is not None]
+    cibles = [m for m in MEDIA.values() if m.disponible]
     if univers != "all":
         cibles = [m for m in cibles if m.univers == univers]
         if not cibles:
@@ -1571,7 +1571,7 @@ def graphe_projeter_membres(
 @graphe_app.command("sync")
 def graphe_sync(
     univers: Annotated[
-        str, typer.Option("--univers", help="series, movies, ou all (défaut).")
+        str, typer.Option("--univers", help="series, movies, livres, ou all (défaut).")
     ] = "all",
     lot: Annotated[int, typer.Option("--lot", min=50, max=5000, help="Œuvres par envoi.")] = 500,
 ) -> None:
@@ -1592,7 +1592,7 @@ def graphe_sync(
     from fiv_admin.media import MEDIA
 
     settings = get_settings()
-    cibles = [m for m in MEDIA.values() if m.catalog_table is not None]
+    cibles = [m for m in MEDIA.values() if m.disponible]
     if univers != "all":
         cibles = [m for m in cibles if m.univers == univers]
         if not cibles:

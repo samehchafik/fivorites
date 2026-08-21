@@ -25,7 +25,7 @@ from fiv_admin.queries import (
 
 router = APIRouter()
 
-MediaKey = Annotated[str, Query(pattern="^(tv|movie)$")]
+MediaKey = Annotated[str, Query(pattern="^(tv|movie|book)$")]
 
 
 def _media(key: str) -> Media:
@@ -56,8 +56,7 @@ async def meta(user: CurrentUser, conn: Conn, settings: Config) -> dict[str, Any
     languages: list[str] = list(settings.languages)
 
     for media in MEDIA.values():
-        available = media.catalog_table is not None
-        if available:
+        if media.disponible:
             for code in await observed_languages(conn, media):
                 if code not in languages:
                     languages.append(code)
@@ -66,7 +65,11 @@ async def meta(user: CurrentUser, conn: Conn, settings: Config) -> dict[str, Any
                 "key": media.key,
                 "label": media.label,
                 "partLabel": media.part_label,
-                "available": available,
+                "available": media.disponible,
+                # Le tableau d'avancement mesure une collecte TMDB contre son
+                # export : les livres n'en ont pas, et le front doit le savoir
+                # sans essuyer un 409.
+                "acquisition": media.catalog_table is not None,
                 "reason": media.unavailable_reason,
             }
         )
