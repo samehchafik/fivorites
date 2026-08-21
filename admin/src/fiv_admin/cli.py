@@ -856,6 +856,95 @@ def training_validite(
     _run(run())
 
 
+@notation_app.command("devis")
+def notation_devis(
+    univers: Annotated[
+        str, typer.Option("--univers", help="series, movies, ou tous (défaut).")
+    ] = "tous",
+    encodeur: Annotated[
+        str | None, typer.Option("--encodeur", help="Défaut : celui de production.")
+    ] = None,
+    bareme: Annotated[
+        str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
+    ] = None,
+) -> None:
+    """Ce que coûterait la notation, palier de popularité par palier.
+
+    La question à trancher n'est pas « combien coûte le catalogue » mais **où
+    placer la frontière**. Une œuvre sans note n'est pas consultable, donc il en
+    faut une partout ; mais payer le gros modèle pour le millionième film par
+    popularité n'a aucun sens — personne ne l'ouvrira, et s'il l'est un jour, la
+    promotion le rattrapera.
+
+    Chaque palier donne les trois nombres qui décident : combien d'œuvres, ce
+    qui est déjà fait, et ce qu'il reste à payer. La part de dossiers réellement
+    encodables est mesurée par échantillon, parce que la traîne est pleine de
+    fiches trop maigres pour être notées et que les compter ferait renoncer à un
+    traitement abordable.
+
+    Gratuit, aucun appel — tout se lit en base.
+    """
+    from fiv_admin.llm import LlmError
+    from fiv_admin.routes.training import _rubric, devis_par_palier
+
+    settings = get_settings()
+    univers_demandes = ["series", "movies"] if univers == "tous" else [univers]
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            if bareme:
+                rubric = await _rubric(conn, bareme)
+            else:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "select version, prompt, axes from notation.rubric"
+                        " order by created_at desc limit 1"
+                    )
+                    rubric = await cur.fetchone()
+                if rubric is None:
+                    typer.echo("aucun barème en base.")
+                    raise typer.Exit(1)
+
+            total = 0.0
+            for nom in univers_demandes:
+                try:
+                    bilan = await devis_par_palier(
+                        conn, rubric, univers=nom, encodeur=encodeur or settings.embedder
+                    )
+                except LlmError as exc:
+                    typer.echo(f"ERREUR : {exc}")
+                    raise typer.Exit(1) from exc
+
+                typer.echo(
+                    f"\n{nom.upper()} · encodeur {bilan['encodeur']}"
+                    f"\n{bilan['partUtilisable']:.0%} des dossiers sont assez fournis pour"
+                    f" être notés (échantillon de {bilan['echantillon']})\n"
+                )
+                typer.echo(
+                    f"  {'palier':>10}{'œuvres':>10}{'déjà fait':>11}"
+                    f"{'à faire':>10}{'à encoder':>11}{'coût':>10}"
+                )
+                for p in bilan["paliers"]:
+                    nom_palier = (
+                        "tout" if p["palier"] is None else f"top {p['palier']:,}".replace(",", " ")
+                    )
+                    cout = "gratuit" if p["cout"] == 0 else f"{p['cout']:.2f} $"
+                    typer.echo(
+                        f"  {nom_palier:>10}{p['oeuvres']:>10,}{p['dejaNotees']:>11,}"
+                        f"{p['aFaire']:>10,}{p['aEncoder']:>11,}{cout:>10}".replace(",", " ")
+                    )
+                total += float(bilan["paliers"][-1]["cout"])
+
+            typer.echo(
+                f"\nCatalogue entier, les deux univers : ~{total:.2f} $"
+                "\n\nLes paliers se cumulent : chaque ligne inclut celles du dessus."
+                "\nLa stratégie qui tient — le gros modèle jusqu'à un palier, l'élève"
+                "\ndistillé au-delà, et la promotion quand une œuvre devient consultée."
+            )
+
+    _run(run())
+
+
 @notation_app.command("generer")
 def training_generer(
     univers: Annotated[

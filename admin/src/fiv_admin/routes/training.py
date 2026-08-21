@@ -2756,3 +2756,126 @@ async def generer_vecteurs(
         "maigres": maigres,
         "noncollectees": noncollectees,
     }
+
+
+# Les paliers du devis, en nombre d'œuvres par ordre de popularité. Ils vont
+# du très resserré au catalogue entier parce que c'est exactement l'arbitrage à
+# rendre : jusqu'où le gros modèle payant, à partir d'où l'élève gratuit.
+PALIERS = (1_000, 5_000, 20_000, 50_000, 100_000, None)
+
+
+async def devis_par_palier(
+    conn: Any, rubric: dict[str, Any], *, univers: str, encodeur: str
+) -> dict[str, Any]:
+    """Ce que coûterait la notation interne, palier de popularité par palier.
+
+    La question à trancher n'est pas « combien coûte le catalogue » mais « où
+    placer la frontière ». Une œuvre sans note n'est pas consultable, donc il en
+    faut une partout ; mais payer le gros modèle pour le millionième film par
+    popularité n'a aucun sens — personne ne l'ouvrira, et s'il est ouvert un
+    jour, la promotion le rattrapera.
+
+    Chaque palier donne les trois nombres qui décident : combien d'œuvres, ce
+    qui est déjà fait, et ce qu'il reste à payer. La part de dossiers
+    réellement encodables est mesurée par échantillon — la traîne est pleine de
+    fiches trop maigres pour être notées, et les compter dans le devis ferait
+    renoncer à un traitement abordable.
+
+    Aucun appel payant : tout se lit en base.
+    """
+    carte = CARTE_PAR_UNIVERS.get(univers)
+    if carte is None:
+        raise LlmError(f"univers inconnu : {univers}")
+    label = etiquette(encodeur)
+
+    lignes: list[dict[str, Any]] = []
+    part_mesuree: float | None = None
+    for palier in PALIERS:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            # Une seule requête par palier : le total, ce qui est déjà noté par
+            # CET encodeur, et ce qui a déjà un vecteur payé. Les trois se
+            # comptent sur la même page pour rester cohérents entre eux.
+            await cur.execute(
+                f"""
+                with page as (
+                    select v.id as id_tmdb, o.id as oeuvre_id
+                    from {carte} v
+                    join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
+                    join sourcing.oeuvre o on o.univers = %(univers)s and o.id_tmdb = v.id
+                    order by c.popularity desc nulls last
+                    limit %(palier)s
+                )
+                select
+                    count(*) as oeuvres,
+                    count(*) filter (where exists (
+                        select 1 from notation.score s
+                        where s.oeuvre_id = page.oeuvre_id
+                          and s.rubric_version = %(rubric)s and s.modele = %(interne)s
+                          and s.encodeur is not distinct from %(label)s
+                    )) as deja_notees,
+                    count(*) filter (where exists (
+                        select 1 from notation.embedding e
+                        where e.oeuvre_id = page.oeuvre_id and e.embedder = %(label)s
+                    )) as avec_vecteur
+                from page
+                """,  # noqa: S608
+                {
+                    "univers": univers,
+                    "palier": palier,
+                    "rubric": rubric["version"],
+                    "interne": INTERNAL_MODEL,
+                    "label": label,
+                },
+            )
+            compte = await cur.fetchone()
+
+        # L'échantillon se mesure une fois, sur le palier le plus large : la
+        # part de dossiers utilisables ne dépend pas du découpage, et la
+        # remesurer six fois coûterait six fois le temps pour le même chiffre.
+        if part_mesuree is None:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    f"""
+                    select v.id as id_tmdb, o.id as oeuvre_id
+                    from {carte} v
+                    join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
+                    join sourcing.oeuvre o on o.univers = %(univers)s and o.id_tmdb = v.id
+                    order by c.popularity desc nulls last
+                    """,  # noqa: S608
+                    {"univers": univers},
+                )
+                toutes = list(await cur.fetchall())
+            pas = max(len(toutes) // TAILLE_ECHANTILLON, 1)
+            echantillon = toutes[::pas][:TAILLE_ECHANTILLON]
+            bons = 0
+            for ligne in echantillon:
+                built = await build_dossier(
+                    conn, ligne["id_tmdb"], oeuvre_id=ligne["oeuvre_id"], univers=univers
+                )
+                if built is not None and built["enough"]:
+                    bons += 1
+            part_mesuree = bons / len(echantillon) if echantillon else 0.0
+
+        reste = compte["oeuvres"] - compte["deja_notees"]
+        a_encoder = round(
+            max(reste - (compte["avec_vecteur"] - compte["deja_notees"]), 0) * part_mesuree
+        )
+        lignes.append(
+            {
+                "palier": palier,
+                "oeuvres": compte["oeuvres"],
+                "dejaNotees": compte["deja_notees"],
+                "avecVecteur": compte["avec_vecteur"],
+                "aFaire": reste,
+                "aEncoder": a_encoder,
+                "cout": round(a_encoder * COUT_ENCODAGE_OEUVRE, 2),
+            }
+        )
+
+    return {
+        "univers": univers,
+        "encodeur": label,
+        "partUtilisable": round(part_mesuree or 0.0, 3),
+        "echantillon": TAILLE_ECHANTILLON,
+        "paliers": lignes,
+    }
