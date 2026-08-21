@@ -1179,12 +1179,14 @@ async def genres_disponibles(
         return [{"name": row["name"], "count": int(row["count"])} for row in await cur.fetchall()]
 
 
-async def refresh_cards(conn: psycopg.AsyncConnection) -> int:
-    """Recalcule **toutes** les projections et renvoie le nombre de vignettes.
+async def refresh_cards(conn: psycopg.AsyncConnection, univers: str | None = None) -> int:
+    """Recalcule les projections et renvoie le nombre de vignettes.
 
-    Toutes, et non celle de l'univers courant : le bouton de l'admin n'a pas
-    d'univers, et un rafraîchissement qui n'en couvrirait qu'un laisserait
-    l'autre en retard sans que rien ne le dise.
+    **Toutes** par défaut, et non celle de l'univers courant : le bouton de
+    l'admin n'a pas d'univers, et un rafraîchissement qui n'en couvrirait
+    qu'un laisserait l'autre en retard sans que rien ne le dise. `univers`
+    restreint depuis la ligne de commande — recalculer le million de vignettes
+    de `movie_card` parce que deux livres ont été crawlés serait du gâchis.
 
     `concurrently` : le rafraîchissement ne prend pas de verrou exclusif, donc
     la grille reste consultable pendant qu'il tourne. Il exige l'index unique
@@ -1193,7 +1195,7 @@ async def refresh_cards(conn: psycopg.AsyncConnection) -> int:
     """
     total = 0
     for media in MEDIA.values():
-        if not media.disponible:
+        if not media.disponible or (univers is not None and media.univers != univers):
             continue
         vue = sql.Identifier("admin", media.card_view)
         try:

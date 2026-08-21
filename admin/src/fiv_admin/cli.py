@@ -1190,7 +1190,16 @@ def training_diagnostic(
 
 
 @catalog_app.command("refresh")
-def catalog_refresh() -> None:
+def catalog_refresh(
+    univers: Annotated[
+        str,
+        typer.Option(
+            "--univers",
+            help="series, movies, livres, ou tous (défaut). Restreindre évite "
+            "de recalculer le million de vignettes films pour deux livres.",
+        ),
+    ] = "tous",
+) -> None:
     """Recalcule les vignettes depuis le brut.
 
     À lancer après une passe de collecte : la grille de cartes lit cette
@@ -1198,14 +1207,22 @@ def catalog_refresh() -> None:
     série, lui, relit toujours le brut.
     """
     from fiv_admin.catalog import refresh_cards
+    from fiv_admin.media import MEDIA
 
     settings = get_settings()
+    cible = None if univers in ("tous", "all") else univers
+    if cible is not None and not any(m.univers == cible and m.disponible for m in MEDIA.values()):
+        typer.echo(f"ERREUR : univers inconnu ou sans projection : {univers}")
+        raise typer.Exit(1)
 
     async def run() -> int:
         async with connect(settings.database_url, settings.sourcing_schema) as conn:
-            return await refresh_cards(conn)
+            return await refresh_cards(conn, univers=cible)
 
-    typer.echo(f"{_run(run()):,} vignette(s) dans la projection".replace(",", " "))
+    perimetre = cible or "toutes les projections"
+    typer.echo(
+        f"{_run(run()):,} vignette(s) dans la projection ({perimetre})".replace(",", " ")
+    )
 
 
 @search_app.command("reindex")
