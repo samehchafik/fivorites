@@ -633,10 +633,20 @@ export interface GrapheArete {
   periode?: string
 }
 
+/** Un univers présent dans le graphe, tel que le serveur le nomme. Le front
+ *  n'a aucune liste en dur : un univers ajouté côté serveur apparaît ici, donc
+ *  dans les filtres. */
+export interface GrapheUnivers {
+  code: string
+  label: string
+  oeuvres: number
+}
+
 export interface GrapheMembreData {
   membre: { id: number; pseudo?: string | null }
   noeuds: GrapheNoeud[]
   aretes: GrapheArete[]
+  univers: GrapheUnivers[]
   /** Faux quand le membre n'a aucun nœud dans le graphe — projection jamais
    *  lancée, ou membre qui ne cite rien. */
   projete: boolean

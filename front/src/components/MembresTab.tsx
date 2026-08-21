@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Alert,
   Badge,
+  Box,
   Center,
   Drawer,
   Group,
@@ -46,6 +47,15 @@ const COLONNES: { cle: string; libelle: string; triable: boolean; aligne?: 'righ
 ]
 
 const UNIVERS: Record<string, string> = { series: 'Séries', movies: 'Films' }
+
+/** La largeur du tiroir, en pourcentage de la fenêtre. Bornée : en deçà on ne
+ *  lit plus le graphe, au-delà on perd la liste qui donne le contexte. */
+const LARGEUR_MIN = 30
+const LARGEUR_MAX = 95
+const LARGEUR_DEFAUT = 62
+// Retenue d'une fois sur l'autre : régler la largeur à chaque ouverture serait
+// un réglage qu'on ne fait qu'une fois, donc un réglage raté.
+const CLE_LARGEUR = 'fivorites.membres.largeurTiroir'
 const PERIODES: Record<string, string> = { life: 'de toujours', moment: 'du moment', year: "de l'année" }
 
 /** La liste des membres, et leurs tops au clic.
@@ -63,6 +73,47 @@ export function MembresTab() {
   const [ordre, setOrdre] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(1)
   const [ouvert, setOuvert] = useState<Membre | null>(null)
+  const [largeur, setLargeur] = useState(() => {
+    const garde = Number(localStorage.getItem(CLE_LARGEUR))
+    return garde >= LARGEUR_MIN && garde <= LARGEUR_MAX ? garde : LARGEUR_DEFAUT
+  })
+  const tire = useRef(false)
+
+  // Les écouteurs vivent sur la fenêtre, pas sur la poignée : une souris qui
+  // sort du tiroir pendant le glissement doit continuer à le redimensionner,
+  // et le relâchement compte même s'il a lieu ailleurs.
+  useEffect(() => {
+    const bouger = (e: MouseEvent) => {
+      if (!tire.current) return
+      const pourcent = ((window.innerWidth - e.clientX) / window.innerWidth) * 100
+      setLargeur(Math.min(LARGEUR_MAX, Math.max(LARGEUR_MIN, Math.round(pourcent))))
+    }
+    const lacher = () => {
+      if (!tire.current) return
+      tire.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', bouger)
+    window.addEventListener('mouseup', lacher)
+    return () => {
+      window.removeEventListener('mousemove', bouger)
+      window.removeEventListener('mouseup', lacher)
+    }
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem(CLE_LARGEUR, String(largeur))
+  }, [largeur])
+
+  const saisir = useCallback(() => {
+    tire.current = true
+    // Le curseur et la sélection sont posés sur le document le temps du
+    // glissement : sans cela, passer sur du texte le surligne, et le curseur
+    // redevient une flèche dès qu'on quitte la poignée de trois pixels.
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
 
   const pageSize = 50
   const liste = useQuery({
@@ -259,10 +310,14 @@ export function MembresTab() {
         opened={ouvert !== null}
         onClose={() => setOuvert(null)}
         position="right"
-        // Large : le voisinage d'un membre, c'est quatre-vingts nœuds. Dans un
-        // tiroir étroit, ils se marchent dessus quel que soit le réglage de la
-        // simulation.
-        size="88%"
+        // La largeur appartient à celui qui regarde : la liste des tops se lit
+        // bien à l'étroit, le graphe de quatre-vingts nœuds demande de la
+        // place. La poignée ci-dessous la règle, et le choix est retenu.
+        size={`${largeur}%`}
+        // `position: relative` sur le contenu : la poignée s'y ancre en
+        // absolu. Et pas de transition de largeur — pendant un glissement,
+        // elle ferait traîner le bord derrière la souris.
+        styles={{ content: { position: 'relative', transition: 'none' } }}
         title={
           <Group gap="xs">
             <Title order={4}>{ouvert?.pseudo ?? 'Membre sans pseudo'}</Title>
@@ -272,6 +327,34 @@ export function MembresTab() {
           </Group>
         }
       >
+        {/* La poignée : trois pixels de large, une zone de saisie de neuf.
+            Elle est posée sur le bord gauche du tiroir, là où l'œil la
+            cherche. */}
+        <Box
+          onMouseDown={saisir}
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 9,
+            cursor: 'col-resize',
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Box
+            style={{
+              width: 3,
+              height: 42,
+              borderRadius: 3,
+              background: 'var(--mantine-color-gray-4)',
+            }}
+          />
+        </Box>
+
         {/* Deux lectures du même membre : la liste de ses tops, et le
             voisinage qu'ils dessinent. Le graphe n'est chargé qu'à l'ouverture
             de son onglet — il interroge Neo4j, ce que la fiche ne fait pas. */}

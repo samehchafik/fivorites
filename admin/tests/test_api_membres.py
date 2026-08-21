@@ -315,6 +315,17 @@ async def test_le_voisin_porte_ses_oeuvres_communes(client_graphe: httpx.AsyncCl
     assert voisins["bob"]["communes"] == 2
 
 
+async def test_les_univers_presents_sont_nommes(client_graphe: httpx.AsyncClient) -> None:
+    """Le front construit ses filtres là-dessus, et ne connaît aucune liste.
+
+    Le jour où les livres entrent dans `MEDIA`, le bouton doit apparaître sans
+    qu'une ligne du front change — d'où le libellé rendu par le serveur.
+    """
+    body = (await client_graphe.get("/api/membres/1/graphe")).json()
+
+    assert body["univers"] == [{"code": "series", "label": "Séries", "oeuvres": 3}]
+
+
 async def test_la_suggestion_vient_des_voisins_et_pas_de_lui(
     client_graphe: httpx.AsyncClient,
 ) -> None:

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon,
   Alert,
+  Badge,
   Box,
+  Chip,
   Center,
   Group,
   Loader,
@@ -15,12 +17,13 @@ import { useQuery } from '@tanstack/react-query'
 import {
   IconAlertTriangle,
   IconFocusCentered,
+  IconX,
   IconZoomIn,
   IconZoomOut,
 } from '@tabler/icons-react'
 
 import { api } from '../api'
-import type { GrapheArete, GrapheNoeud } from '../types'
+import type { GrapheArete, GrapheMembreData, GrapheNoeud } from '../types'
 
 /**
  * Le voisinage d'un membre, dessiné.
@@ -41,7 +44,10 @@ const COULEURS: Record<GrapheNoeud['type'], string> = {
   oeuvre: 'var(--mantine-color-violet-5)',
   personne: 'var(--mantine-color-teal-5)',
   voisin: 'var(--mantine-color-orange-5)',
-  suggestion: 'var(--mantine-color-pink-5)',
+  // Rouge, et non un violet plus clair : la suggestion doit se distinguer des
+  // œuvres du membre au premier coup d'œil, y compris à une pastille de huit
+  // pixels. Deux teintes voisines auraient demandé de comparer.
+  suggestion: 'var(--mantine-color-red-6)',
 }
 
 const LIBELLES: Record<GrapheNoeud['type'], string> = {
@@ -164,6 +170,123 @@ function disposer(noeuds: GrapheNoeud[], aretes: GrapheArete[], moi: string): Po
   return points
 }
 
+/** Le détail d'un nœud, tiré des arêtes déjà en mémoire.
+ *
+ *  Aucune requête : tout ce qu'on peut dire d'un nœud — qui le cite, sur quoi
+ *  il joue, ce qu'il partage — est déjà dans le graphe qu'on a dessiné. Un
+ *  aller-retour de plus n'apporterait qu'une latence.
+ */
+interface Detail {
+  titre: string
+  type: GrapheNoeud['type']
+  lignes: { cle: string; valeur: string }[]
+  liste?: { titre: string; entrees: string[] }
+}
+
+function detailler(
+  noeud: GrapheNoeud,
+  noeuds: GrapheNoeud[],
+  aretes: GrapheArete[],
+  moi: string,
+): Detail {
+  const index = new Map(noeuds.map((n) => [n.id, n]))
+  const nom = (id: string) => index.get(id)?.libelle ?? id
+  const lignes: { cle: string; valeur: string }[] = []
+
+  if (noeud.annee) lignes.push({ cle: 'Année', valeur: String(noeud.annee) })
+  if (noeud.univers) {
+    lignes.push({ cle: 'Univers', valeur: noeud.univers === 'series' ? 'série' : 'film' })
+  }
+
+  if (noeud.type === 'oeuvre') {
+    const sienne = aretes.find((a) => a.de === moi && a.vers === noeud.id)
+    if (sienne?.rang) lignes.push({ cle: 'Rang dans son top', valeur: String(sienne.rang) })
+    if (sienne?.periode) lignes.push({ cle: 'Période', valeur: sienne.periode })
+    const partagee = aretes.filter((a) => a.vers === noeud.id && a.de !== moi && a.type === 'cite')
+    lignes.push({ cle: 'Voisins qui la citent', valeur: String(partagee.length) })
+    const gens = aretes.filter((a) => a.vers === noeud.id && a.type !== 'cite')
+    return {
+      titre: noeud.libelle,
+      type: noeud.type,
+      lignes,
+      liste: gens.length
+        ? { titre: 'Au générique', entrees: gens.map((a) => nom(a.de)) }
+        : undefined,
+    }
+  }
+
+  if (noeud.type === 'suggestion') {
+    if (noeud.voisins) lignes.push({ cle: 'Voisins qui la citent', valeur: String(noeud.voisins) })
+    if (noeud.force != null) {
+      // 5 = tous l'ont mise première, 1 = tous cinquième. Dit tel quel, le
+      // chiffre n'évoque rien ; avec ses bornes, il se lit.
+      lignes.push({ cle: 'Rang moyen chez eux', valeur: `${noeud.force} / 5` })
+    }
+    const par = aretes.filter((a) => a.vers === noeud.id).map((a) => nom(a.de))
+    return {
+      titre: noeud.libelle,
+      type: noeud.type,
+      lignes,
+      liste: par.length ? { titre: 'Citée par', entrees: par } : undefined,
+    }
+  }
+
+  if (noeud.type === 'personne') {
+    const oeuvres = aretes.filter((a) => a.de === noeud.id)
+    lignes.push({ cle: 'Œuvres du graphe', valeur: String(oeuvres.length) })
+    return {
+      titre: noeud.libelle,
+      type: noeud.type,
+      lignes,
+      liste: { titre: 'Présent sur', entrees: oeuvres.map((a) => nom(a.vers)) },
+    }
+  }
+
+  if (noeud.type === 'voisin') {
+    const citees = aretes.filter((a) => a.de === noeud.id)
+    const communes = citees.filter((a) => index.get(a.vers)?.type === 'oeuvre')
+    const apporte = citees.filter((a) => index.get(a.vers)?.type === 'suggestion')
+    lignes.push({ cle: 'Œuvres en commun', valeur: String(communes.length) })
+    lignes.push({ cle: 'Œuvres qu\'il apporte', valeur: String(apporte.length) })
+    return {
+      titre: noeud.libelle,
+      type: noeud.type,
+      lignes,
+      liste: {
+        titre: 'En commun',
+        entrees: communes.map((a) => nom(a.vers)),
+      },
+    }
+  }
+
+  const siennes = aretes.filter((a) => a.de === noeud.id && a.type === 'cite')
+  lignes.push({ cle: 'Œuvres citées (dans le graphe)', valeur: String(siennes.length) })
+  return { titre: noeud.libelle, type: noeud.type, lignes }
+}
+
+/** Le graphe débarrassé des univers écartés.
+ *
+ *  Trois passes, et l'ordre compte : les œuvres d'abord, puis les arêtes
+ *  devenues pendantes, puis les nœuds que plus aucune arête ne relie. Sauter la
+ *  troisième laisserait une nuée d'acteurs flottants — ceux qui ne jouaient que
+ *  dans les films quand on ne garde que les séries.
+ *
+ *  Le membre reste toujours : c'est son graphe, même vide.
+ */
+function garder(data: GrapheMembreData, exclus: string[], moi: string): GrapheMembreData {
+  if (exclus.length === 0) return data
+
+  const retires = new Set(
+    data.noeuds
+      .filter((n) => n.univers && exclus.includes(n.univers))
+      .map((n) => n.id),
+  )
+  const aretes = data.aretes.filter((a) => !retires.has(a.de) && !retires.has(a.vers))
+  const relies = new Set([moi, ...aretes.flatMap((a) => [a.de, a.vers])])
+  const noeuds = data.noeuds.filter((n) => !retires.has(n.id) && relies.has(n.id))
+  return { ...data, noeuds, aretes }
+}
+
 interface Cadre {
   x: number
   y: number
@@ -178,7 +301,14 @@ export function GrapheMembre({ id }: { id: number }) {
   // tailles de texte restent alors constantes à l'écran, ce qu'un `transform`
   // sur un groupe ne donne pas.
   const [vue, setVue] = useState<Cadre | null>(null)
-  const glisse = useRef<{ x: number; y: number; vue: Cadre } | null>(null)
+  const glisse = useRef<{ x: number; y: number; vue: Cadre; fond: boolean } | null>(null)
+  // Le nœud dont on lit le détail. Un clic sur le fond le lâche — sinon le
+  // panneau resterait sur un nœud qu'on ne regarde plus.
+  const [choisi, setChoisi] = useState<string | null>(null)
+  // Les univers écartés, par leur code. On garde les EXCLUS et non les
+  // inclus : c'est ce qui fait qu'un univers ajouté demain — livres, BD — est
+  // visible d'office plutôt qu'invisible jusqu'à ce qu'on y pense.
+  const [exclus, setExclus] = useState<string[]>([])
 
   const graphe = useQuery({
     queryKey: ['membre-graphe', id],
@@ -186,10 +316,18 @@ export function GrapheMembre({ id }: { id: number }) {
     staleTime: 60_000,
   })
 
+  // Le graphe filtré. Retirer un univers retire ses œuvres, puis les arêtes
+  // qui y menaient, puis les acteurs et les voisins que plus rien ne relie —
+  // sinon ils flotteraient sans lien, ce qui est pire que leur absence.
+  const filtre = useMemo(
+    () => (graphe.data ? garder(graphe.data, exclus, `membre:${id}`) : null),
+    [graphe.data, exclus, id],
+  )
+
   const dispose = useMemo(() => {
-    if (!graphe.data?.noeuds.length) return null
+    if (!filtre?.noeuds.length) return null
     const moi = `membre:${id}`
-    const points = disposer(graphe.data.noeuds, graphe.data.aretes, moi)
+    const points = disposer(filtre.noeuds, filtre.aretes, moi)
     const index = new Map(points.map((p) => [p.id, p]))
     const marge = 60
     const xs = points.map((p) => p.x)
@@ -204,13 +342,14 @@ export function GrapheMembre({ id }: { id: number }) {
         h: Math.max(...ys) - Math.min(...ys) + 2 * marge,
       },
     }
-  }, [graphe.data, id])
+  }, [filtre, id])
 
   // Le cadre d'origine dès que la disposition change, et à chaque changement
   // de membre : sans cela, ouvrir un second membre garderait le zoom du
   // premier, cadré sur un endroit qui n'a plus de sens.
   useEffect(() => {
     setVue(dispose ? { ...dispose.cadre } : null)
+    setChoisi(null)
   }, [dispose])
 
   function zoomer(facteur: number, ancre?: { x: number; y: number }) {
@@ -265,9 +404,36 @@ export function GrapheMembre({ id }: { id: number }) {
 
   const { points, index } = dispose
   const cadre = vue ?? dispose.cadre
+  const vus = filtre ?? graphe.data
+  const noeudChoisi = choisi ? vus.noeuds.find((n) => n.id === choisi) : undefined
+  const detail = noeudChoisi
+    ? detailler(noeudChoisi, vus.noeuds, vus.aretes, `membre:${id}`)
+    : null
 
   return (
     <Stack gap="xs">
+      {graphe.data.univers.length > 1 && (
+        <Group gap="xs">
+          <Text size="xs" c="dimmed">
+            Univers
+          </Text>
+          {graphe.data.univers.map((u) => (
+            <Chip
+              key={u.code}
+              size="xs"
+              checked={!exclus.includes(u.code)}
+              onChange={(actif) =>
+                setExclus((liste) =>
+                  actif ? liste.filter((c) => c !== u.code) : [...liste, u.code],
+                )
+              }
+            >
+              {u.label} ({u.oeuvres})
+            </Chip>
+          ))}
+        </Group>
+      )}
+
       <Paper withBorder p={0} style={{ overflow: 'hidden', position: 'relative' }}>
         <Group gap={4} style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}>
           <Tooltip label="Zoomer — ou la molette">
@@ -300,7 +466,15 @@ export function GrapheMembre({ id }: { id: number }) {
           }}
           onPointerDown={(e: React.PointerEvent<SVGSVGElement>) => {
             if (!vue) return
-            glisse.current = { x: e.clientX, y: e.clientY, vue }
+            // `fond` est retenu ICI et pas au relâchement : la capture du
+            // pointeur fait que tous les événements suivants sont adressés au
+            // SVG, y compris quand la souris est partie d'un nœud.
+            glisse.current = {
+              x: e.clientX,
+              y: e.clientY,
+              vue,
+              fond: e.target === e.currentTarget,
+            }
             e.currentTarget.setPointerCapture(e.pointerId)
           }}
           onPointerMove={(e: React.PointerEvent<SVGSVGElement>) => {
@@ -316,8 +490,15 @@ export function GrapheMembre({ id }: { id: number }) {
             })
           }}
           onPointerUp={(e: React.PointerEvent<SVGSVGElement>) => {
+            const depart = glisse.current
             glisse.current = null
             e.currentTarget.releasePointerCapture(e.pointerId)
+            // Lâcher la sélection au clic sur le fond — mais pas au bout d'un
+            // déplacement : on vient de recadrer, pas de désigner le vide.
+            const bouge = depart
+              ? Math.hypot(e.clientX - depart.x, e.clientY - depart.y)
+              : 0
+            if (depart?.fond && bouge < 4) setChoisi(null)
           }}
           style={{
             width: '100%',
@@ -327,7 +508,7 @@ export function GrapheMembre({ id }: { id: number }) {
             touchAction: 'none',
           }}
         >
-          {graphe.data.aretes.map((a, i) => {
+          {vus.aretes.map((a, i) => {
             const de = index.get(a.de)
             const vers = index.get(a.vers)
             if (!de || !vers) return null
@@ -342,18 +523,47 @@ export function GrapheMembre({ id }: { id: number }) {
                 y2={vers.y}
                 stroke={
                   propose
-                    ? 'var(--mantine-color-pink-3)'
+                    ? 'var(--mantine-color-red-3)'
                     : role
                       ? 'var(--mantine-color-gray-4)'
                       : 'var(--mantine-color-gray-5)'
                 }
-                strokeWidth={a.de === `membre:${id}` ? 1.6 : 0.8}
+                strokeWidth={
+                  choisi && (a.de === choisi || a.vers === choisi)
+                    ? 2.4
+                    : a.de === `membre:${id}`
+                      ? 1.6
+                      : 0.8
+                }
+                strokeOpacity={choisi && a.de !== choisi && a.vers !== choisi ? 0.25 : 1}
                 strokeDasharray={role ? '3 3' : undefined}
               />
             )
           })}
           {points.map((p) => (
-            <g key={p.id}>
+            <g
+              key={p.id}
+              // Au `pointerdown`, et non au `click` : le SVG capture le
+              // pointeur pour le déplacement, ce qui réadresse le `click` au
+              // fond — le nœud ne le verrait jamais. `stopPropagation` évite
+              // au passage de déplacer la vue quand on voulait désigner.
+              onPointerDown={(e: React.PointerEvent<SVGGElement>) => {
+                e.stopPropagation()
+                setChoisi(p.id)
+              }}
+              style={{ cursor: 'pointer' }}
+            >
+              {p.id === choisi && (
+                <circle
+                  cx={p.x}
+                  cy={p.y}
+                  r={RAYONS[p.type] + 5}
+                  fill="none"
+                  stroke={COULEURS[p.type]}
+                  strokeWidth={2}
+                  opacity={0.5}
+                />
+              )}
               <circle cx={p.x} cy={p.y} r={RAYONS[p.type]} fill={COULEURS[p.type]} />
               <title>
                 {p.libelle}
@@ -364,7 +574,7 @@ export function GrapheMembre({ id }: { id: number }) {
               {/* On n'étiquette pas tout : une personne qui ne relie qu'une
                   seule œuvre n'apprend rien et encombre. Celles qui en relient
                   deux sont exactement ce qu'on cherche à voir. */}
-              {etiquetable(p, graphe.data.aretes) && (
+              {etiquetable(p, vus.aretes) && (
                 <text
                   x={p.x}
                   y={p.y - RAYONS[p.type] - 4}
@@ -389,6 +599,41 @@ export function GrapheMembre({ id }: { id: number }) {
           ))}
         </Box>
       </Paper>
+
+      {detail && (
+        <Paper withBorder p="sm">
+          <Group justify="space-between" align="flex-start" wrap="nowrap">
+            <Stack gap={4} style={{ flex: 1 }}>
+              <Group gap="xs">
+                <Box
+                  w={10}
+                  h={10}
+                  style={{ borderRadius: 5, background: COULEURS[detail.type] }}
+                />
+                <Text fw={600}>{detail.titre}</Text>
+                <Badge size="xs" variant="light">
+                  {LIBELLES[detail.type]}
+                </Badge>
+              </Group>
+              <Group gap="lg">
+                {detail.lignes.map((l) => (
+                  <Text key={l.cle} size="xs" c="dimmed">
+                    {l.cle} : <b>{l.valeur}</b>
+                  </Text>
+                ))}
+              </Group>
+              {detail.liste && detail.liste.entrees.length > 0 && (
+                <Text size="xs" c="dimmed">
+                  {detail.liste.titre} : {detail.liste.entrees.join(' · ')}
+                </Text>
+              )}
+            </Stack>
+            <ActionIcon variant="subtle" size="sm" onClick={() => setChoisi(null)}>
+              <IconX size={15} />
+            </ActionIcon>
+          </Group>
+        </Paper>
+      )}
 
       <Group gap="lg" justify="space-between">
         <Group gap="md">

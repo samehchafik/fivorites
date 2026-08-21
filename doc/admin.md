@@ -153,9 +153,28 @@ une cinquième à 1, donc une œuvre citée en tête pèse davantage. Chaque ar�
 part du voisin qui la cite, jamais du membre : c'est ce qui répond à « pourquoi
 celle-là ? » sur le dessin.
 
-Le tiroir prend 88 % de la largeur, on zoome à la molette ou aux boutons, et on
-déplace en glissant — le cadre bouge, pas les nœuds, ce qui garde les
-étiquettes lisibles à toutes les échelles. « Tout revoir » recadre.
+**Le tiroir se redimensionne** : une poignée sur son bord gauche, entre 30 et
+95 % de la fenêtre, et la largeur choisie est retenue d'une fois sur l'autre —
+un réglage qu'on refait à chaque ouverture est un réglage raté. La liste des
+tops se lit bien à l'étroit, le graphe demande de la place ; c'est à celui qui
+regarde de trancher.
+
+**On zoome** à la molette ou aux boutons, **on déplace** en glissant : c'est le
+cadre qui bouge, pas les nœuds, ce qui garde traits et étiquettes à taille
+constante quelle que soit l'échelle. « Tout revoir » recadre.
+
+**Un clic sur un nœud en donne le détail**, sous le dessin : pour une œuvre son
+rang dans le top et son générique présent au graphe, pour une suggestion le
+nombre de voisins qui la citent et leur rang moyen, pour un voisin ce qu'il a en
+commun et ce qu'il apporte. Rien n'est rechargé — tout est déjà dans le graphe
+affiché.
+
+**Les filtres d'univers** sont construits depuis la réponse du serveur, jamais
+depuis une liste écrite dans le front : `GET /api/membres/{id}/graphe` rend les
+univers présents avec leur libellé, tirés du registre `MEDIA`. Le jour où les
+livres y entrent, le bouton apparaît sans qu'une ligne du front change. Retirer
+un univers retire ses œuvres, puis les arêtes devenues pendantes, puis les
+acteurs et voisins que plus rien ne relie.
 
 Le dessin est plafonné à 12 œuvres, 4 personnes par œuvre, 10 voisins et 12
 suggestions. Les plafonds ne sont pas du confort : un membre cite jusqu'à 118

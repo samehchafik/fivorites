@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from fiv_admin.deps import Conn, CurrentUser, GrapheOpt
 from fiv_admin.graphe import une_ligne
+from fiv_admin.media import MEDIA
 
 router = APIRouter()
 
@@ -469,6 +470,10 @@ async def graphe_du_membre(
         "membre": {"id": membre_id, "pseudo": pseudos.get(membre_id)},
         "noeuds": noeuds,
         "aretes": aretes,
+        # Les univers réellement présents dans ce graphe, nommés. Le front
+        # construit ses filtres là-dessus et ne connaît aucune liste : le jour
+        # où les livres entrent dans `MEDIA`, le bouton apparaît tout seul.
+        "univers": _univers_presents(noeuds),
         "projete": True,
         "plafonds": {
             "oeuvres": OEUVRES_MAX,
@@ -477,6 +482,25 @@ async def graphe_du_membre(
             "suggestions": SUGGESTIONS_MAX,
         },
     }
+
+
+def _univers_presents(noeuds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Les univers du graphe, avec leur libellé et leur compte.
+
+    Le libellé vient de `MEDIA`, seul endroit où un univers se déclare. Un
+    univers inconnu du registre sort quand même — sous son code brut plutôt
+    que caché : une œuvre qu'on ne sait pas nommer reste une œuvre qu'on doit
+    pouvoir filtrer.
+    """
+    libelles = {m.univers: m.label for m in MEDIA.values()}
+    comptes: dict[str, int] = {}
+    for n in noeuds:
+        if n["type"] in ("oeuvre", "suggestion") and n.get("univers"):
+            comptes[n["univers"]] = comptes.get(n["univers"], 0) + 1
+    return [
+        {"code": code, "label": libelles.get(code, code), "oeuvres": comptes[code]}
+        for code in sorted(comptes, key=lambda c: (-comptes[c], c))
+    ]
 
 
 async def _pseudos(conn: Any, ids: list[int]) -> dict[int, str | None]:
