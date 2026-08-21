@@ -868,6 +868,10 @@ def training_generer(
     bareme: Annotated[
         str | None, typer.Option("--bareme", help="Version du barème. Défaut : la plus récente.")
     ] = None,
+    encodeur: Annotated[
+        str | None,
+        typer.Option("--encodeur", help="Forcer un encodeur. Défaut : celui de production."),
+    ] = None,
     refaire: Annotated[
         bool, typer.Option("--refaire", help="Régénérer même ce qui est déjà à jour.")
     ] = False,
@@ -896,6 +900,18 @@ def training_generer(
     chacune — chiffre mesuré, pas estimé. **Toujours lancer `--apercu`
     d'abord** : sur le catalogue entier c'est quelques dizaines de dollars, et
     ça se voit avant, pas sur la facture.
+
+    `--encodeur` est la réponse au prix. La tête du catalogue mérite le gros
+    modèle payant ; le million d'œuvres que personne ne comparera jamais au
+    dixième près se contente de l'élève distillé, gratuit et local :
+
+        --encodeur local:/opt/models/eleve-distille
+
+    Les poids suivent l'encodeur, obligatoirement — deux espaces vectoriels
+    demandent deux régressions. Il faut donc avoir lancé une fois
+    `EMBEDDER=<encodeur> training poids`, sans quoi la commande refuse plutôt
+    que d'appliquer des poids d'un autre espace : ça ne lèverait aucune erreur,
+    ça rendrait six nombres qui ne veulent rien dire.
 
     Long : comptez plusieurs heures pour tout le catalogue. À détacher.
     """
@@ -936,6 +952,7 @@ def training_generer(
                         limit=limit,
                         refaire=refaire,
                         apercu=apercu,
+                        encodeur=encodeur,
                         progres=montrer,
                     )
                 except LlmError as exc:
@@ -949,7 +966,12 @@ def training_generer(
                     f"\n  à générer     : {bilan['candidates']}"
                 )
                 if apercu:
-                    typer.echo(f"  à encoder     : {bilan['aEncoder']}  (~{bilan['cout']:.2f} $)")
+                    typer.echo(
+                        f"  sans vecteur  : {bilan['sansVecteur']}"
+                        f"\n  échantillon   : {bilan['partUtilisable']:.0%} de dossiers"
+                        f" utilisables (sur {bilan['echantillon']} assemblés)"
+                        f"\n  à encoder     : ~{bilan['aEncoder']}  (~{bilan['cout']:.2f} $)"
+                    )
                 else:
                     typer.echo(
                         f"  générées      : {bilan['generes']}"

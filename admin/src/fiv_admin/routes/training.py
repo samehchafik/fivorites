@@ -2459,6 +2459,11 @@ async def mesurer_validite(conn: Any, rubric: dict[str, Any]) -> dict[str, Any]:
 # — un devis qui sous-estime est pire qu'un devis prudent.
 COUT_ENCODAGE_OEUVRE = 0.0002
 
+# Combien de dossiers l'aperçu assemble pour estimer la part d'œuvres
+# réellement encodables. Deux cents suffisent à situer une proportion à
+# quelques points près, et se construisent en quelques secondes.
+TAILLE_ECHANTILLON = 200
+
 
 async def _poids_courants(conn: Any, rubric_version: str, etiquette_encodeur: str) -> dict | None:
     """Les poids les plus récents du barème, pour cet encodeur.
@@ -2488,6 +2493,7 @@ async def generer_vecteurs(
     limit: int | None = None,
     refaire: bool = False,
     apercu: bool = False,
+    encodeur: str | None = None,
     progres: Any = None,
 ) -> dict[str, Any]:
     """Applique les poids à TOUT le catalogue — la note interne de masse.
@@ -2518,12 +2524,22 @@ async def generer_vecteurs(
     if carte is None:
         raise LlmError(f"univers inconnu : {univers} — attendus {sorted(CARTE_PAR_UNIVERS)}")
 
-    label = etiquette(settings.embedder)
+    # L'encodeur de ce passage, qui n'est pas forcément celui de production.
+    # C'est ce qui rend la traîne abordable : la tête du catalogue mérite le
+    # gros modèle payant, le million d'œuvres que personne ne comparera jamais
+    # au dixième près se contente de l'élève distillé, gratuit.
+    #
+    # Les poids suivent l'encodeur, obligatoirement. Deux espaces vectoriels
+    # différents demandent deux régressions différentes — appliquer les uns aux
+    # autres ne lève aucune erreur, ça rend six nombres qui ne veulent rien
+    # dire.
+    spec = encodeur or settings.embedder
+    label = etiquette(spec)
     poids = await _poids_courants(conn, rubric["version"], label)
     if poids is None:
         raise LlmError(
             f"aucun poids entraîné pour {rubric['version']} avec l'encodeur {label}"
-            " — lancer `training poids` d'abord."
+            f" — lancer `EMBEDDER={spec} training poids` d'abord."
         )
     weights_json: dict[str, Any] = poids["weights"]
 
@@ -2557,10 +2573,6 @@ async def generer_vecteurs(
         candidates = list(await cur.fetchall())
 
     if apercu:
-        # Le devis se calcule sans reconstruire un seul dossier : on compte les
-        # œuvres qui n'ont AUCUN vecteur sous l'étiquette courante. C'est une
-        # borne haute — celles dont le dossier a changé depuis seront réencodées
-        # aussi — mais elle ne coûte qu'une requête.
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -2572,21 +2584,46 @@ async def generer_vecteurs(
                 """,
                 ([c["oeuvre_id"] for c in candidates], label),
             )
-            a_encoder = (await cur.fetchone())[0]
+            sans_vecteur = (await cur.fetchone())[0]
+
+        # Le devis brut compte toutes les œuvres sans vecteur, et il ment par
+        # excès : la traîne est pleine de fiches dont le dossier n'atteint pas
+        # `MIN_CHARS` et qui ne seront JAMAIS encodées — le filtre tombe avant
+        # l'appel. Annoncer 245 $ quand la moitié des œuvres seront écartées est
+        # le genre de chiffre qui fait renoncer à un traitement abordable.
+        #
+        # D'où l'échantillon : on assemble quelques centaines de dossiers, on
+        # regarde la part qui passe le seuil, et on extrapole. Ça coûte quelques
+        # secondes et aucun appel.
+        echantillon = candidates[:: max(len(candidates) // TAILLE_ECHANTILLON, 1)][
+            :TAILLE_ECHANTILLON
+        ]
+        utilisables = 0
+        for ligne in echantillon:
+            built = await build_dossier(
+                conn, ligne["id_tmdb"], oeuvre_id=ligne["oeuvre_id"], univers=univers
+            )
+            if built is not None and built["enough"]:
+                utilisables += 1
+        part = utilisables / len(echantillon) if echantillon else 0.0
+        estime = round(sans_vecteur * part)
         return {
             "univers": univers,
             "encodeur": label,
             "poidsDu": poids["trained_at"],
             "candidates": len(candidates),
-            "aEncoder": a_encoder,
-            "cout": round(a_encoder * COUT_ENCODAGE_OEUVRE, 2),
+            "sansVecteur": sans_vecteur,
+            "echantillon": len(echantillon),
+            "partUtilisable": round(part, 3),
+            "aEncoder": estime,
+            "cout": round(estime * COUT_ENCODAGE_OEUVRE, 2),
             "generes": 0,
             "maigres": 0,
             "noncollectees": 0,
         }
 
     prompt_sha = _prompt_sha(rubric["prompt"])
-    api = _encodeur_api(settings.embedder)
+    api = _encodeur_api(spec)
     generes = maigres = noncollectees = payees = 0
 
     for depart in range(0, len(candidates), LOT_EMBEDDING):
@@ -2611,7 +2648,7 @@ async def generer_vecteurs(
         manquants = [o for o in dossiers if o not in connus]
         if manquants and api is not None:
             if not settings.openai_api_key:
-                raise LlmError(f"{settings.embedder} demande OPENAI_API_KEY, absente du .env")
+                raise LlmError(f"{spec} demande OPENAI_API_KEY, absente du .env")
             nom, dims = api
             async with httpx.AsyncClient() as http:
                 frais = await embed_openai(
@@ -2639,7 +2676,7 @@ async def generer_vecteurs(
                 embed_texts,
                 [dossiers[o]["text"] for o in manquants],
                 cache_dir=settings.embed_cache_dir,
-                model=settings.embedder,
+                model=spec,
             )
             async with conn.cursor() as cur:
                 await cur.executemany(
