@@ -1265,7 +1265,9 @@ async def cards_state(conn: psycopg.AsyncConnection, media: str = DEFAULT_MEDIA)
             where source = %(source)s and kind = %(kind)s
               and http_status between 200 and 299 and payload is not null
             """,
-            {"source": SOURCE, "kind": univers.kind},
+            # La fiche d'un livre est le lookup Wikidata du crawler : c'est
+            # `media.raw_source` qui dit où compter, pas la constante TMDB.
+            {"source": univers.raw_source, "kind": univers.kind},
         )
         projetables = await cur.fetchone() or {}
 
@@ -1277,7 +1279,7 @@ async def cards_state(conn: psycopg.AsyncConnection, media: str = DEFAULT_MEDIA)
             from fetch_state
             where source = %(source)s and kind = %(kind)s and last_success_at is not null
             """,
-            {"source": SOURCE, "kind": univers.kind},
+            {"source": univers.raw_source, "kind": univers.kind},
         )
         collected = await cur.fetchone() or {}
 

@@ -293,3 +293,32 @@ def test_le_filtre_de_langue_entre_dans_le_corps_es() -> None:
     assert not any("langues" in f.get("term", {}) for f in corps["query"]["bool"]["filter"]), (
         "sans langue, pas de clause — les séries et films ne filtrent jamais là-dessus"
     )
+
+
+async def test_le_bandeau_de_projection_voit_les_livres(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Le bouton « rafraîchir la projection » ne sert que si `cards_state`
+    sait compter les livres : leur fiche est le lookup Wikidata du crawler
+    (source wikidata, kind lookup_book), pas un brut TMDB."""
+    from fiv_admin.catalog import cards_state
+
+    oeuvre_id = await seed_livre(conn)
+    # Le brut du crawler — la fiche d'identité du livre (R1).
+    await conn.execute(
+        """
+        insert into raw_source (source, kind, source_id, http_status,
+                                payload, payload_sha256)
+        values ('wikidata', 'lookup_book', 'Q189378', 200, '{}'::jsonb, '\\x01'),
+               ('wikidata', 'lookup_book', 'Q999999', 200, '{}'::jsonb, '\\x02')
+        """
+    )
+
+    etat = await cards_state(conn, "book")
+
+    assert etat["projected"] == 1, "seul le livre seedé est projeté"
+    assert etat["projectable"] == 2, "deux lookups en brut"
+    assert etat["pending"] == 1 and etat["stale"] is True, (
+        "le second livre attend un refresh — c'est ce que le bandeau affiche"
+    )
+    assert oeuvre_id  # le pivot existe, la projection le porte

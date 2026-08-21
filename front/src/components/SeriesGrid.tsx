@@ -287,7 +287,7 @@ export function SeriesGrid({
         <Alert color="orange" variant="light" icon={<IconAlertTriangle size={18} />}>
           <Group justify="space-between" wrap="wrap" gap="sm">
             <Text size="sm">
-              {formatNumber(projection.pending)} série(s) collectée(s) depuis le dernier calcul
+              {formatNumber(projection.pending)} œuvre(s) collectée(s) depuis le dernier calcul
               des vignettes.{' '}
               {/* Sans cette phrase, un compteur qui ne retombe jamais à zéro
                   ressemble à une panne. Il en est l'inverse : c'est la collecte

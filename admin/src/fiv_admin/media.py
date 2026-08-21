@@ -44,6 +44,11 @@ class Media:
     kind: str
     part_kind: str | None
     part_label: str
+    # `source` de `raw_source` pour la fiche : `tmdb` pour les univers
+    # collectés chez TMDB, `wikidata` pour les livres — leur fiche est le
+    # lookup du crawler. C'est ce que `cards_state` compte pour dire si la
+    # projection est en retard.
+    raw_source: str = "tmdb"
     # Ce qui est affiché quand l'univers n'a pas de catalogue.
     unavailable_reason: str = ""
     # Les vignettes sont keyées par le pivot `sourcing.oeuvre.id` plutôt que
@@ -98,6 +103,7 @@ MEDIA: dict[str, Media] = {
         kind="lookup_book",
         part_kind=None,
         part_label="",
+        raw_source="wikidata",
         pivot_card=True,
     ),
 }
