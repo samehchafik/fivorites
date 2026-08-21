@@ -1220,9 +1220,7 @@ def catalog_refresh(
             return await refresh_cards(conn, univers=cible)
 
     perimetre = cible or "toutes les projections"
-    typer.echo(
-        f"{_run(run()):,} vignette(s) dans la projection ({perimetre})".replace(",", " ")
-    )
+    typer.echo(f"{_run(run()):,} vignette(s) dans la projection ({perimetre})".replace(",", " "))
 
 
 @search_app.command("reindex")
