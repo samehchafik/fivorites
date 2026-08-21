@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  Alert,
   Badge,
   Center,
   Drawer,
@@ -22,7 +23,13 @@ import {
 } from '@mantine/core'
 import { useDebouncedValue } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { IconArrowDown, IconArrowUp, IconArrowsSort, IconSearch } from '@tabler/icons-react'
+import {
+  IconAlertTriangle,
+  IconArrowDown,
+  IconArrowUp,
+  IconArrowsSort,
+  IconSearch,
+} from '@tabler/icons-react'
 
 import { api } from '../api'
 import { GrapheMembre } from './GrapheMembre'
@@ -95,6 +102,17 @@ export function MembresTab() {
 
   return (
     <Stack gap="md">
+      {/* Sans ceci, une API qui répond 500 donnait un tableau vide et aucun
+          message : on cherchait la panne du côté des données, alors qu'elle
+          est du côté du serveur. Le détail porte le code HTTP et le message de
+          l'API — c'est ce qui distingue une migration oubliée d'un Neo4j
+          absent. */}
+      {liste.isError && (
+        <Alert color="red" variant="light" icon={<IconAlertTriangle size={18} />}>
+          La liste des membres n'a pas pu être chargée. {(liste.error as Error).message}
+        </Alert>
+      )}
+
       <Paper withBorder p="md">
         <Group justify="space-between" align="flex-end">
           <TextInput
@@ -224,7 +242,7 @@ export function MembresTab() {
           </Table>
         </ScrollArea>
 
-        {!liste.isLoading && liste.data?.items.length === 0 && (
+        {!liste.isLoading && !liste.isError && liste.data?.items.length === 0 && (
           <Center p="xl">
             <Text c="dimmed">Aucun membre pour cette recherche.</Text>
           </Center>
