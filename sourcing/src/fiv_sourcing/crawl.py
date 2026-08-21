@@ -365,6 +365,9 @@ async def _openlibrary(
         source_id=olid,
         url=f"{openlibrary.BASE_URL}/works/{olid}",
         content=work.get("description"),
+        # La couverture du work, sinon celle d'une édition — un livre sans
+        # aucun visuel rend la grille imprésentable, c'est mesuré.
+        media=openlibrary.images(work) or openlibrary.images(editions or {}),
         facts=normalize.depuis_openlibrary(work, editions),
         resolved_by=voie,
     )

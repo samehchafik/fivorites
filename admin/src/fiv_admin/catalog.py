@@ -344,6 +344,11 @@ async def fetch_cards(
                     " select 1 from jsonb_array_elements(coalesce(v.genres, '[]'::jsonb)) g"
                     " where g ->> 'name' = any (%(genres)s)))"
                 ),
+                # Livres : la langue d'affichage filtre — écrit ou traduit
+                # dans la langue de la grille, sinon la carte est illisible
+                # pour son lecteur. Les autres projections n'ont pas la
+                # colonne, et leur langue n'est pas un filtre.
+                sql.SQL("v.langues ? %(lang2)s") if univers.pivot_card else sql.SQL("true"),
             ]
         )
 
@@ -596,7 +601,7 @@ async def _fetch_work_livre(
 
         await cur.execute(
             """
-            select source, lang, content, facts, url, fetched_at
+            select source, lang, content, facts, media, url, fetched_at
             from riche_source where oeuvre_id = %s
             """,
             (work_id,),
@@ -653,6 +658,14 @@ async def _fetch_work_livre(
     auteurs = [a.get("nom") for a in faits_wd.get("auteurs") or [] if a.get("nom")]
     annee = faits_wd.get("annee") or oeuvre["annee"]
     langues_editions = sorted({e["langue"] for e in editions} | set(wikipedia))
+    # Les couvertures Open Library — des URL complètes, que `tmdbImage` côté
+    # front laisse passer telles quelles. La première en affiche, le reste en
+    # galerie.
+    couvertures = [
+        image["url"]
+        for image in (openlib or {}).get("media") or []
+        if image.get("type") == "poster" and image.get("url")
+    ]
 
     return {
         "id": work_id,
@@ -667,7 +680,7 @@ async def _fetch_work_livre(
             "name": False,
             "overview": article is not None,
         },
-        "posterPath": None,
+        "posterPath": couvertures[0] if couvertures else None,
         "backdropPath": None,
         "homepage": (openlib or {}).get("url"),
         "status": None,
@@ -688,7 +701,7 @@ async def _fetch_work_livre(
             "openlibrary_id": oeuvre["id_openlibrary"],
         },
         "translations": langues_editions,
-        "gallery": {"backdrops": [], "posters": []},
+        "gallery": {"backdrops": [], "posters": couvertures},
         "cast": [],
         "watch": _shape_watch({}, [], lang),
         "seasons": [],

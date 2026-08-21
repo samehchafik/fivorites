@@ -244,5 +244,9 @@ export interface CardsParams extends Record<string, QueryValue> {
 const TMDB_IMAGES = 'https://image.tmdb.org/t/p'
 
 export function tmdbImage(path: string | null | undefined, size: string): string | null {
-  return path ? `${TMDB_IMAGES}/${size}${path}` : null
+  if (!path) return null
+  // Les livres portent des URL complètes (couvertures Open Library) : elles
+  // passent telles quelles, seul un chemin TMDB se préfixe.
+  if (path.startsWith('http')) return path
+  return `${TMDB_IMAGES}/${size}${path}`
 }

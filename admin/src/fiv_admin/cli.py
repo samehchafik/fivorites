@@ -42,6 +42,9 @@ training_app = typer.Typer(help="Réglage du système de notation", no_args_is_h
 notation_app = typer.Typer(help="Production des notes du catalogue", no_args_is_help=True)
 search_app = typer.Typer(help="Recherche plein texte (Elasticsearch)", no_args_is_help=True)
 graphe_app = typer.Typer(help="Graphe de recommandation (Neo4j)", no_args_is_help=True)
+livres_app = typer.Typer(
+    help="L'univers livres — publication et purge, en un geste chacun", no_args_is_help=True
+)
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
 app.add_typer(catalog_app, name="catalog")
@@ -49,6 +52,7 @@ app.add_typer(training_app, name="training")
 app.add_typer(notation_app, name="notation")
 app.add_typer(search_app, name="search")
 app.add_typer(graphe_app, name="graphe")
+app.add_typer(livres_app, name="livres")
 
 
 @training_app.command("note")
@@ -2075,6 +2079,123 @@ def _require_admin_schema() -> None:
         typer.echo("   la collecte n'a pas encore migré cette base :")
         typer.echo("     docker compose run --rm sourcing db migrate")
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# L'univers livres : les gestes d'exploitation, en une commande chacun
+# ---------------------------------------------------------------------------
+
+
+@livres_app.command("publier")
+def livres_publier(
+    lot: Annotated[
+        int, typer.Option("--lot", min=50, max=5000, help="Documents par envoi bulk.")
+    ] = 500,
+) -> None:
+    """La projection puis l'index de recherche, pour les livres seuls.
+
+    Le geste qui suit chaque passe de crawl : `catalog refresh --univers
+    livres` + `search reindex --univers livres`, sans recalculer le million
+    de vignettes films ni toucher aux index des autres univers.
+    """
+    import httpx
+
+    from fiv_admin.catalog import refresh_cards
+    from fiv_admin.media import MEDIA
+    from fiv_admin.search import reindexer
+
+    settings = get_settings()
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            total = await refresh_cards(conn, univers="livres")
+            typer.echo(f"{total:,} vignette(s) dans la projection (livres)".replace(",", " "))
+
+            if not settings.es_url:
+                typer.echo("ES_URL est vide — pas d'index à reconstruire.")
+                return
+            async with httpx.AsyncClient(
+                base_url=settings.es_url, timeout=httpx.Timeout(600.0, connect=5.0)
+            ) as http:
+                try:
+                    await http.get("/")
+                except httpx.HTTPError as exc:
+                    typer.echo(f"ERREUR : Elasticsearch injoignable sur {settings.es_url} : {exc}")
+                    raise typer.Exit(1) from exc
+                stats = await reindexer(conn, http, MEDIA["book"], lot=lot)
+                compte = f"{stats['documents']:,}".replace(",", " ")
+                typer.echo(f"{compte} documents -> {stats['index']} (alias {stats['alias']})")
+
+    _run(run())
+
+
+@livres_app.command("purge")
+def livres_purge(
+    oui: Annotated[
+        bool,
+        typer.Option("--oui", help="Ne pas demander confirmation (scripts)."),
+    ] = False,
+) -> None:
+    """Vide l'univers livres, et lui seul : les œuvres et leurs notes, tout
+    l'enrichissement, le brut et l'état de reprise du crawler, la projection,
+    l'index de recherche. Les séries et les films ne sont pas touchés.
+
+    C'est le geste de remise à zéro avant un recrawl propre — quand le
+    protocole d'appariement ou les faits collectés ont changé.
+    """
+    import httpx
+
+    from fiv_admin.catalog import refresh_cards
+
+    settings = get_settings()
+    if not oui and not typer.confirm(
+        "Effacer TOUS les livres (œuvres, enrichissement, notes, index) ?"
+    ):
+        raise typer.Exit(0)
+
+    async def run() -> None:
+        async with connect(settings.database_url, settings.sourcing_schema, "admin") as conn:
+            async with conn.cursor() as cur:
+                # Les notes d'abord : leur clé étrangère protège le pivot.
+                await cur.execute(
+                    "delete from notation.score where oeuvre_id in"
+                    " (select id from oeuvre where univers = 'livres')"
+                )
+                notes = cur.rowcount
+                await cur.execute("delete from oeuvre where univers = 'livres'")
+                oeuvres = cur.rowcount  # riche_source et video suivent (cascade)
+                await cur.execute(
+                    "delete from raw_source where source = 'wikidata' and kind = 'lookup_book'"
+                )
+                brut = cur.rowcount
+                # L'état de reprise : sans ce delete, un recrawl sauterait
+                # tout ce qu'il vient d'effacer.
+                await cur.execute(
+                    "delete from fetch_state where kind = 'lookup_book'"
+                    " or (source = 'openlibrary' and kind = 'work')"
+                )
+                etat = cur.rowcount
+            total = await refresh_cards(conn, univers="livres")
+        typer.echo(
+            f"effacé : {oeuvres} œuvre(s), {notes} note(s), {brut} ligne(s) de brut, "
+            f"{etat} état(s) de reprise — projection : {total} vignette(s)"
+        )
+
+        if not settings.es_url:
+            return
+        async with httpx.AsyncClient(base_url=settings.es_url, timeout=60.0) as http:
+            try:
+                lignes = (
+                    await http.get("/_cat/indices/catalog-livres-*?format=json&h=index")
+                ).json()
+            except httpx.HTTPError as exc:
+                typer.echo(f"ES injoignable ({exc}) — index non purgé, `livres publier` le refera.")
+                return
+            for ligne in lignes:
+                await http.delete(f"/{ligne['index']}")
+                typer.echo(f"index effacé : {ligne['index']}")
+
+    _run(run())
 
 
 def _run[T](coro: Coroutine[Any, Any, T]) -> T:

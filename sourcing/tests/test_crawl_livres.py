@@ -40,6 +40,8 @@ def _work(olid: str) -> dict:
         "key": f"/works/{olid}",
         "title": "Cien años de soledad",
         "description": "La saga des Buendía à Macondo.",
+        # -1 est le marqueur « couverture retirée » d'Open Library.
+        "covers": [283860, -1, 1008523],
     }
 
 
@@ -127,6 +129,14 @@ async def test_un_livre_nait_par_qid_dans_son_univers(conn, settings: Settings):
     assert ("openlibrary", "", "p648") in lignes
     assert ("wikidata", "", "sweep") in lignes
     assert ("wikipedia", "fr", "sitelink") in lignes
+
+    async with conn.cursor() as cur:
+        await cur.execute("select media from riche_source where source = 'openlibrary'")
+        media = (await cur.fetchone())[0]
+    assert media == [
+        {"type": "poster", "url": "https://covers.openlibrary.org/b/id/283860-L.jpg"},
+        {"type": "poster", "url": "https://covers.openlibrary.org/b/id/1008523-L.jpg"},
+    ], "les couvertures entrent en media, l'id retiré (-1) est écarté"
 
 
 @respx.mock

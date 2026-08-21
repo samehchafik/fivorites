@@ -38,6 +38,12 @@ from fiv_sourcing.http import FetchResult, HttpFetcher
 
 SOURCE = "openlibrary"
 BASE_URL = "https://openlibrary.org"
+COVERS_URL = "https://covers.openlibrary.org/b/id"
+
+# Les couvertures retenues par work. La vignette n'en montre qu'une ; la
+# fiche peut en montrer quelques-unes — au-delà, c'est la galerie d'Open
+# Library qu'on recopierait.
+COUVERTURES_MAX = 4
 
 # Au-delà, l'inventaire est tronqué — Le Petit Prince ou 1984 dépassent. On
 # le note dans les faits (`editions.tronque`) plutôt que de paginer : la
@@ -120,11 +126,27 @@ def lire_work(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     if isinstance(description, dict):
         # Open Library rend tantôt une chaîne, tantôt {type, value}.
         description = description.get("value", "")
+    couvertures = [
+        int(c)
+        for c in payload.get("covers") or []
+        # Un id négatif (-1) est le marqueur « couverture retirée » d'OL.
+        if isinstance(c, int) and c > 0
+    ]
     return {
         "olid": payload["key"].rsplit("/", 1)[-1],
         "titre": payload.get("title"),
         "description": description.strip() or None,
+        "couvertures": couvertures[:COUVERTURES_MAX],
     }
+
+
+def images(work: dict[str, Any]) -> list[dict[str, str]]:
+    """Les couvertures du work, au format `riche_source.media` — même forme
+    que `tvmaze.images` : des URL servies par la source, jamais recopiées.
+    `-L` est la grande taille ; l'affichage réduit lui-même."""
+    return [
+        {"type": "poster", "url": f"{COVERS_URL}/{c}-L.jpg"} for c in work.get("couvertures") or []
+    ]
 
 
 def lire_editions(payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -143,7 +165,13 @@ def lire_editions(payload: dict[str, Any] | None) -> dict[str, Any] | None:
 
     par_langue: dict[str, dict[str, Any]] = {}
     sans_langue = 0
+    couvertures: list[int] = []
     for edition in entrees:
+        couvertures.extend(
+            int(c)
+            for c in edition.get("covers") or []
+            if isinstance(c, int) and c > 0 and len(couvertures) < COUVERTURES_MAX
+        )
         codes = [
             (langue.get("key") or "").rsplit("/", 1)[-1]
             for langue in edition.get("languages") or []
@@ -169,6 +197,11 @@ def lire_editions(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         "total": total,
         "sans_langue": sans_langue,
         "tronque": payload.get("size", total) > total,
+        # Le repli visuel : beaucoup de works n'ont pas de champ `covers`
+        # alors que leurs éditions en portent. Ces ids ne vont PAS dans les
+        # facts (ce sont des visuels, pas des faits) — ils nourrissent
+        # `images` quand le work est nu.
+        "couvertures": couvertures,
     }
 
 

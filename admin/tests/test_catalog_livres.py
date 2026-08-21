@@ -60,18 +60,36 @@ async def seed_livre(conn: psycopg.AsyncConnection) -> int:
         )
         oeuvre_id = (await cur.fetchone())[0]
 
-    for source, lang, source_id, content, facts, resolved in (
-        ("wikidata", "", "Q189378", None, FACTS_WIKIDATA, "sweep"),
-        ("openlibrary", "", "OL27258W", "La saga des Buendía.", FACTS_OPENLIBRARY, "p648"),
-        ("wikipedia", "fr", "Cent ans de solitude", "Le roman de Macondo.", {}, "sitelink"),
+    couverture = [{"type": "poster", "url": "https://covers.openlibrary.org/b/id/283860-L.jpg"}]
+    for source, lang, source_id, content, facts, media, resolved in (
+        ("wikidata", "", "Q189378", None, FACTS_WIKIDATA, [], "sweep"),
+        (
+            "openlibrary",
+            "",
+            "OL27258W",
+            "La saga des Buendía.",
+            FACTS_OPENLIBRARY,
+            couverture,
+            "p648",
+        ),
+        ("wikipedia", "fr", "Cent ans de solitude", "Le roman de Macondo.", {}, [], "sitelink"),
     ):
         await conn.execute(
             """
             insert into riche_source (oeuvre_id, source, lang, source_id,
-                                      content, facts, resolved_by, fetched_at)
-            values (%s, %s, %s, %s, %s, %s::jsonb, %s, now())
+                                      content, facts, media, resolved_by, fetched_at)
+            values (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, now())
             """,
-            (oeuvre_id, source, lang, source_id, content, json.dumps(facts), resolved),
+            (
+                oeuvre_id,
+                source,
+                lang,
+                source_id,
+                content,
+                json.dumps(facts),
+                json.dumps(media),
+                resolved,
+            ),
         )
     await refresh_cards(conn)
     return oeuvre_id
@@ -92,7 +110,9 @@ async def test_la_vignette_livre_s_assemble_depuis_riche_source(
     assert carte["originalLanguage"] == "es"
     assert carte["originCountry"] == ["CO"]
     assert carte["year"] == 1967
-    assert carte["posterPath"] is None
+    assert carte["posterPath"] == "https://covers.openlibrary.org/b/id/283860-L.jpg", (
+        "la couverture Open Library, en URL complète — pas un chemin TMDB"
+    )
 
 
 async def test_les_notes_du_livre_se_joignent_par_le_pivot(
@@ -137,6 +157,8 @@ async def test_la_fiche_livre_s_assemble_sans_brut(conn: psycopg.AsyncConnection
         "openlibrary_id": "OL27258W",
     }
     assert fiche["seasons"] == [] and fiche["cast"] == []
+    assert fiche["posterPath"] == "https://covers.openlibrary.org/b/id/283860-L.jpg"
+    assert fiche["gallery"]["posters"] == ["https://covers.openlibrary.org/b/id/283860-L.jpg"]
 
 
 async def test_les_sources_du_livre_se_lisent_par_le_pivot(
@@ -224,3 +246,50 @@ async def test_l_hydratation_es_respecte_l_ordre_et_le_pivot_bigint(
 
     assert total == 1
     assert rows[0]["id"] == oeuvre_id
+
+
+async def test_la_grille_ne_montre_que_la_langue_lisible(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """« Sur Français, des livres français ou traduits en français. » L'œuvre
+    seedée est écrite en espagnol et traduite en français : elle se lit en
+    fr et en es, pas en arabe — la grille arabe ne la montre pas."""
+    await seed_livre(conn)
+
+    _, total_fr = await fetch_cards(conn, CardQuery(lang="fr-FR", media="book"))
+    _, total_es = await fetch_cards(conn, CardQuery(lang="es-ES", media="book"))
+    _, total_ar = await fetch_cards(conn, CardQuery(lang="ar-SA", media="book"))
+
+    assert (total_fr, total_es, total_ar) == (1, 1, 0)
+
+
+async def test_le_document_es_porte_les_langues_lisibles(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    from psycopg.rows import dict_row
+
+    from fiv_admin.media import MEDIA
+    from fiv_admin.search import construire_doc, parametres_extraction, requete_extraction
+
+    await seed_livre(conn)
+    media = MEDIA["book"]
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(requete_extraction(media), parametres_extraction(media))
+        rows = await cur.fetchall()
+    doc = construire_doc(rows[0], media.univers)
+    assert sorted(doc["langues"]) == ["es", "fr"]
+
+
+def test_le_filtre_de_langue_entre_dans_le_corps_es() -> None:
+    from fiv_admin.search import corps_liste, corps_recherche
+
+    corps = corps_liste([("air_date", True)], tiebreak_descendant=True, langue="fr", taille=24)
+    assert {"term": {"langues": "fr"}} in corps["query"]["bool"]["filter"]
+    corps = corps_recherche("macondo", langue="ar", taille=24)
+    # La recherche enveloppe son bool dans un function_score (note bayésienne).
+    filtres = corps["query"]["function_score"]["query"]["bool"]["filter"]
+    assert {"term": {"langues": "ar"}} in filtres
+    corps = corps_liste([("air_date", True)], tiebreak_descendant=True, taille=24)
+    assert not any("langues" in f.get("term", {}) for f in corps["query"]["bool"]["filter"]), (
+        "sans langue, pas de clause — les séries et films ne filtrent jamais là-dessus"
+    )

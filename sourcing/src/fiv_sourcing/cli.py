@@ -654,6 +654,38 @@ def crawl_wikidata_cmd(
         typer.echo("Interrompu. Relancer la même commande reprend où on s'est arrêté.")
 
 
+@crawl_app.command("livres")
+def crawl_livres_cmd(
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", help="Nombre d'items par langue. Défaut : tous."),
+    ] = None,
+    min_sitelinks: Annotated[
+        int, typer.Option("--min-sitelinks", help="Plancher de notoriété du balayage.")
+    ] = 5,
+    concurrency: Annotated[
+        int, typer.Option("--concurrency", help="Items traités en parallèle.")
+    ] = 4,
+) -> None:
+    """Les quatre langues cibles, l'une après l'autre : fr, en, es, ar.
+
+    Un raccourci sur `crawl wikidata --univers livres --langue <l>` — même
+    reprise (le déjà-vu se saute), mêmes limiteurs. Interrompre puis relancer
+    reprend où on s'est arrêté, langue par langue.
+    """
+    for langue in ("fr", "en", "es", "ar"):
+        typer.echo(f"\n=== {langue} ===")
+        crawl_wikidata_cmd(
+            univers_cle="livres",
+            langue=langue,
+            avec_imdb=False,
+            limit=limit,
+            concurrency=concurrency,
+            min_sitelinks=min_sitelinks,
+            dry_run=False,
+        )
+
+
 @tmdb_app.command("export")
 def tmdb_export(
     day: Annotated[

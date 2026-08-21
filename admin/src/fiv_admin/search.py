@@ -177,6 +177,10 @@ def definition_index(univers: str) -> dict[str, Any]:
                 "fetched_at": {"type": "date"},
                 "status": {"type": "keyword"},
                 "original_language": {"type": "keyword"},
+                # Livres : langue d'origine + langues d'édition. C'est le
+                # filtre du sélecteur de langue — absent des documents des
+                # autres univers, où la langue d'affichage n'est pas un filtre.
+                "langues": {"type": "keyword"},
                 "genres": {"type": "keyword"},
                 "origin_country": {"type": "keyword"},
                 # La moyenne bayésienne de `catalog.py`, figée à l'indexation :
@@ -211,12 +215,18 @@ def _filtres(
     with_overview: bool = False,
     min_popularity: float | None = None,
     genres: Sequence[str] | None = None,
+    langue: str | None = None,
 ) -> list[dict[str, Any]]:
     """Les filtres communs à la recherche et au parcours — les mêmes clauses
     que le `where` SQL qu'ils remplacent."""
     filtres: list[dict[str, Any]] = []
     if fiche is not None:
         filtres.append({"term": {"fiche": fiche}})
+    if langue:
+        # Livres : la grille en français ne montre que ce qui se lit en
+        # français — écrit ou traduit. Les autres univers ne passent jamais
+        # cette clause : leur langue d'affichage n'est pas un filtre.
+        filtres.append({"term": {"langues": langue}})
     if genres:
         # `terms` = un OU : « comédie OU drame ». C'est ce qu'on attend d'une
         # liste à cocher — un ET vide la liste dès le deuxième genre coché,
@@ -254,6 +264,7 @@ def corps_liste(
     with_overview: bool = False,
     min_popularity: float | None = None,
     genres: Sequence[str] | None = None,
+    langue: str | None = None,
     taille: int,
     depuis: int = 0,
 ) -> dict[str, Any]:
@@ -284,6 +295,7 @@ def corps_liste(
                     with_overview=with_overview,
                     min_popularity=min_popularity,
                     genres=genres,
+                    langue=langue,
                 )
             }
         },
@@ -303,6 +315,7 @@ def corps_recherche(
     with_overview: bool = False,
     min_popularity: float | None = None,
     genres: Sequence[str] | None = None,
+    langue: str | None = None,
     taille: int,
     depuis: int = 0,
 ) -> dict[str, Any]:
@@ -324,6 +337,7 @@ def corps_recherche(
         with_overview=with_overview,
         min_popularity=min_popularity,
         genres=genres,
+        langue=langue,
     )
 
     devrait: list[dict[str, Any]] = [
@@ -426,6 +440,7 @@ class Recherche:
         with_overview: bool = False,
         min_popularity: float | None = None,
         genres: Sequence[str] | None = None,
+        langue: str | None = None,
         page: int,
         page_size: int,
     ) -> PageIds | None:
@@ -446,6 +461,7 @@ class Recherche:
                 with_overview=with_overview,
                 min_popularity=min_popularity,
                 genres=genres,
+                langue=langue,
                 taille=page_size,
                 depuis=depuis,
             ),
@@ -486,6 +502,7 @@ class Recherche:
         with_overview: bool = False,
         min_popularity: float | None = None,
         genres: Sequence[str] | None = None,
+        langue: str | None = None,
         page: int,
         page_size: int,
     ) -> PageIds | None:
@@ -506,6 +523,7 @@ class Recherche:
                 with_overview=with_overview,
                 min_popularity=min_popularity,
                 genres=genres,
+                langue=langue,
                 taille=page_size,
                 depuis=depuis,
             ),
@@ -662,6 +680,7 @@ _EXTRACTION = sql.SQL(
                where nullif(btrim(g ->> 'name'), '') is not null
            ) as genres,
            v.origin_country,
+           {langues} as langues,
            case when rp.payload is null then null else array(
                select distinct btrim(t.titre)
                from (
@@ -718,6 +737,8 @@ def requete_extraction(media: Media) -> sql.Composed:
         # Les vignettes des livres sont keyées par le pivot, pas par un id
         # TMDB — la jointure d'identité suit.
         oeuvre_cle=sql.SQL("o.id") if media.pivot_card else sql.SQL("o.id_tmdb"),
+        # Seule la projection des livres porte des langues de lecture.
+        langues=sql.SQL("v.langues") if media.pivot_card else sql.SQL("null::jsonb"),
     )
 
 
@@ -767,6 +788,7 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
         "fetched_at": fetched_at.isoformat() if fetched_at else None,
         "status": row.get("status"),
         "original_language": row.get("original_language"),
+        "langues": list(row.get("langues") or []) or None,
         "genres": row.get("genres") or None,
         "origin_country": list(row.get("origin_country") or []) or None,
         "note_bayes": round(float(note), 2) if note is not None else None,

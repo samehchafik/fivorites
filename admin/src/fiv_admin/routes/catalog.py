@@ -99,6 +99,10 @@ async def cards(
     # payait un `count(*)` complet à chaque affichage. Dans les deux cas ES ne
     # rend que des ids : Postgres hydrate les vignettes, comme toujours. ES
     # muet = tout en SQL, comme avant.
+    # Livres : la langue d'affichage devient un filtre — « sur Français, des
+    # livres français ou traduits en français ». Les autres univers montrent
+    # tout et traduisent ce qu'ils peuvent.
+    langue_filtre = q.lang.split("-")[0] if MEDIA[q.media].pivot_card else None
     if q.search:
         page_es = await recherche.page_cards(
             MEDIA[q.media],
@@ -107,6 +111,7 @@ async def cards(
             with_overview=q.with_overview,
             min_popularity=q.min_popularity,
             genres=q.genres,
+            langue=langue_filtre,
             page=q.page,
             page_size=q.page_size,
         )
@@ -118,6 +123,7 @@ async def cards(
             with_overview=q.with_overview,
             min_popularity=q.min_popularity,
             genres=q.genres,
+            langue=langue_filtre,
             page=q.page,
             page_size=q.page_size,
         )
