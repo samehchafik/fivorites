@@ -60,3 +60,4 @@ restent à construire.
 | [`doc/dictionnaire-donnees.md`](doc/dictionnaire-donnees.md) | **la donnée en détail** — chaque table, chaque colonne, les payloads |
 | [`doc/etude-couverture-marche-arabe.md`](doc/etude-couverture-marche-arabe.md) | ce que valent les catalogues arabe, golfe et turc |
 | [`doc/etude-sources-complementaires.md`](doc/etude-sources-complementaires.md) | ce qu'apportent Wikidata et TVmaze — et pourquoi IMDb est écartée |
+| [`doc/etude-sources-livres.md`](doc/etude-sources-livres.md) | l'univers livre — Open Library, Wikidata, UNESCO, BnF, et l'angle mort arabe |
