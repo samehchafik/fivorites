@@ -1587,3 +1587,68 @@ async def test_la_generation_de_masse_saute_ce_qui_est_deja_a_jour(
         )
     ).fetchone()
     assert ligne[0] >= 2, "une ligne par axe attendue"
+
+
+async def test_une_note_de_l_eleve_redevient_eligible_pour_le_gros_modele(
+    conn: psycopg.AsyncConnection, settings: Settings
+) -> None:
+    """La promotion n'est pas un mecanisme a part : c'est le meme passage.
+
+    Le catalogue compte 1,2 million de films. Les encoder tous avec le gros
+    modele coute des centaines de dollars pour des oeuvres que personne
+    n'ouvrira ; on note donc la traine avec l'eleve distille — pour que TOUT
+    soit consultable — et on repasse au bon encodeur celles qui deviennent
+    consultees.
+
+    Ce qui rend ca possible est une seule colonne : sans `encodeur`, deux
+    notes de qualites tres differentes (0,83 contre 0,94 de MAE) se
+    ressemblent trait pour trait et rien ne dirait laquelle refaire.
+    """
+    from fiv_admin.catalog import refresh_cards
+    from fiv_admin.embed import DIMENSIONS, MODEL_NAME, etiquette
+    from fiv_admin.routes.training import generer_vecteurs
+
+    await seed_series(conn, 1399)
+    await refresh_cards(conn)
+
+    poids = {
+        axe: {"intercept": 5.0, "coef": [0.0] * DIMENSIONS, "trainedOn": 10, "maeFit": 0.5}
+        for axe in ("joie", "reve")
+    }
+    # Deux jeux de poids, un par espace vectoriel — c'est la regle : appliquer
+    # les poids d'un espace aux vecteurs d'un autre ne leve aucune erreur.
+    for n, spec in enumerate(("autre-encodeur", MODEL_NAME)):
+        await conn.execute(
+            "insert into notation.training_weights"
+            " (rubric_version, prompt, prompt_sha256, embedder, weights, works)"
+            " values ('v1', %s, %s, %s, %s, 10)",
+            ("p" * 60, f"sha-{n}", etiquette(spec), Jsonb(poids)),
+        )
+
+    rubric = {"version": "v1", "prompt": "p" * 60, "axes": ["joie", "reve"]}
+    reglage = settings.model_copy(update={"embedder": MODEL_NAME})
+
+    premier = await generer_vecteurs(conn, reglage, rubric, univers="series")
+    assert premier["generes"] == 1
+
+    # Meme encodeur : plus rien a faire.
+    assert (await generer_vecteurs(conn, reglage, rubric, univers="series"))["candidates"] == 0
+
+    # Un AUTRE encodeur : l'oeuvre redevient candidate, sans --refaire.
+    promu = await generer_vecteurs(
+        conn, reglage, rubric, univers="series", encodeur="autre-encodeur", apercu=True
+    )
+    assert promu["candidates"] == 1, "une note d'un autre encodeur doit etre eligible"
+    # Promouvoir coute un encodage : l'oeuvre n'a pas de vecteur dans l'espace
+    # vise, donc elle tombe du cote payant. C'est la regle, pas une exception —
+    # changer d'encodeur, c'est refaire le vecteur.
+    assert promu["vecteurEnCache"] == 0
+
+    # Et la provenance est bien inscrite, sinon rien de tout ca ne se repere.
+    ligne = await (
+        await conn.execute(
+            "select distinct encodeur from notation.score"
+            " where modele = 'interne-ridge' and encodeur is not null"
+        )
+    ).fetchall()
+    assert [r[0] for r in ligne] == [etiquette(MODEL_NAME)]

@@ -2554,9 +2554,20 @@ async def generer_vecteurs(
             join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
             join sourcing.oeuvre o on o.univers = %(univers)s and o.id_tmdb = v.id
             where %(refaire)s or not exists (
+                -- Trois façons d'être éligible, et la troisième est la
+                -- promotion : jamais notée, notée avant le dernier
+                -- entraînement, ou notée par un AUTRE encodeur. Une œuvre que
+                -- l'élève a traitée redevient donc candidate dès qu'on relance
+                -- avec le gros modèle — la promotion n'est pas un mécanisme à
+                -- part, c'est la même commande avec un autre encodeur.
+                --
+                -- `is not distinct from` et non `=` : l'encodeur est null sur
+                -- les notes d'avant la migration 014, et null = null serait
+                -- faux. L'inconnu doit compter comme « à refaire ».
                 select 1 from notation.score s
                 where s.oeuvre_id = o.id and s.rubric_version = %(rubric)s
                   and s.modele = %(interne)s and s.scored_at > %(depuis)s
+                  and s.encodeur is not distinct from %(label)s
             )
             order by c.popularity desc nulls last
             limit %(limit)s
@@ -2568,6 +2579,7 @@ async def generer_vecteurs(
                 "depuis": poids["trained_at"],
                 "refaire": refaire,
                 "limit": limit,
+                "label": label,
             },
         )
         candidates = list(await cur.fetchall())
@@ -2613,6 +2625,11 @@ async def generer_vecteurs(
             "poidsDu": poids["trained_at"],
             "candidates": len(candidates),
             "sansVecteur": sans_vecteur,
+            # Le partage qui compte pour la facture : une œuvre dont le
+            # vecteur est déjà en cache ne coûte qu'une multiplication, une
+            # œuvre nue coûte un appel. La promotion tombe du côté payant —
+            # promouvoir, c'est réencoder avec l'autre modèle.
+            "vecteurEnCache": len(candidates) - sans_vecteur,
             "echantillon": len(echantillon),
             "partUtilisable": round(part, 3),
             "aEncoder": estime,
@@ -2710,6 +2727,7 @@ async def generer_vecteurs(
                         INTERNAL_MODEL,
                         built["sha256"],
                         prompt_sha,
+                        label,
                     )
                 )
             generes += 1
@@ -2719,8 +2737,8 @@ async def generer_vecteurs(
                     """
                     insert into notation.score
                         (oeuvre_id, axe, valeur, confiance, rubric_version, modele,
-                         input_sha256, prompt_sha256)
-                    values (%s, %s, %s, %s, %s, %s, %s, %s)
+                         input_sha256, prompt_sha256, encodeur)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     lignes_scores,
                 )

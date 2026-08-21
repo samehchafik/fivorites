@@ -967,7 +967,8 @@ def training_generer(
                 )
                 if apercu:
                     typer.echo(
-                        f"  sans vecteur  : {bilan['sansVecteur']}"
+                        f"  vecteur en cache: {bilan['vecteurEnCache']}  (gratuit)"
+                        f"\n  à encoder       : {bilan['sansVecteur']} avant filtre"
                         f"\n  échantillon   : {bilan['partUtilisable']:.0%} de dossiers"
                         f" utilisables (sur {bilan['echantillon']} assemblés)"
                         f"\n  à encoder     : ~{bilan['aEncoder']}  (~{bilan['cout']:.2f} $)"
