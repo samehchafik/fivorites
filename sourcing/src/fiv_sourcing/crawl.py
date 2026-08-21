@@ -102,9 +102,16 @@ async def sweep(
     """Tous les items du périmètre, par pages SPARQL ordonnées.
 
     L'ordre stable n'est pas cosmétique : sans lui, la pagination par OFFSET
-    saute ou répète des items d'une page à l'autre. Les séries s'ordonnent par
-    `?item` ; les livres par sitelinks décroissants avec `?item` en départage
-    (voir `SWEEP_LIVRES` pour le pourquoi).
+    saute ou répète des items d'une page à l'autre. Les deux univers
+    s'ordonnent donc par `?item`.
+
+    **Les livres sont ensuite classés par notoriété, ici et pas chez WDQS**
+    (voir `SWEEP_LIVRES`) : le tri global côté serveur y rendait 504 sur le
+    corpus anglais. Conséquence assumée : `max_items` ne peut plus arrêter la
+    pagination en cours de route pour eux — on ne saurait pas qu'on tronque
+    les plus notables. On balaye tout le périmètre, puis on classe, puis on
+    coupe. Les corpus sont petits (mesuré : fr 1 193, es 325, ar 220 œuvres),
+    c'est quelques pages.
     """
     items: list[dict[str, Any]] = []
     decalage = 0
@@ -133,8 +140,17 @@ async def sweep(
             page = wikidata.lire_sweep(resultat.payload)
         items.extend(page)
         decalage += taille
-        if len(page) < taille or (max_items is not None and len(items) >= max_items):
+        if len(page) < taille:
             break
+        # Pour les séries, `max_items` arrête la pagination : leur ordre est
+        # celui de la sortie, tronquer en route ne change rien. Pour les
+        # livres, le classement n'existe pas encore — voir la docstring.
+        if max_items is not None and not univers.openlibrary and len(items) >= max_items:
+            break
+    if univers.openlibrary:
+        # Les plus notables d'abord, `qid` en départage pour que deux passes
+        # sur le même corpus rendent le même ordre.
+        items.sort(key=lambda i: (-(i.get("sitelinks") or 0), i["qid"]))
     report.swept = len(items)
     return items[:max_items] if max_items is not None else items
 

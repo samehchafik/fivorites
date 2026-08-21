@@ -133,21 +133,30 @@ OFFSET %(decalage)d
 """
 
 
-# Le balayage des livres. Deux différences avec celui des séries, toutes deux
-# mesurées dans doc/etude-sources-livres.md :
+# Le balayage des livres.
 #
-#   * la sélection est isolée dans une **sous-requête** — jointe aux OPTIONAL
-#     et au service d'étiquettes, la version à plat dépasse le délai de WDQS
-#     sur les grandes langues (502 constaté sur le corpus anglais) ;
-#   * le tri est par **sitelinks décroissants**, pas par identifiant : sans
-#     export TMDB, c'est le seul proxy de notoriété gratuit, et il fait entrer
-#     d'abord les œuvres qu'un membre a une chance de citer. Le plancher
-#     `sitelinks_min` borne le périmètre — en dessous, l'item est un article
-#     unique dans une seule langue, sans matière à notation.
+# **`ORDER BY ?item`, et le tri par notoriété se fait chez nous.** La version
+# triée par `DESC(?sitelinks)` côté serveur paraissait plus naturelle — elle
+# fait entrer d'abord les œuvres qu'un membre a une chance de citer — mais
+# elle étrangle WDQS : mesuré le 2026-08-21, le corpus anglais rend 504 après
+# 65 s, et même en bandes de notoriété (« 30 à 60 sitelinks ») une requête sur
+# deux échoue. Ce n'est pas le volume qui coûte — les corpus filtrés sont
+# petits (fr 1 193, es 325, ar 220 œuvres à 5 sitelinks et plus) — c'est le
+# **tri global** sur un ensemble que le moteur doit d'abord matérialiser.
 #
-# `?olid` (P648) est l'identifiant Open Library : présent, il évite la
-# recherche par titre à l'enrichissement (93 % des grandes œuvres françaises
-# le portent, 23 % des arabes).
+# `ORDER BY ?item` est l'ordre du crawler des séries, éprouvé sur 44 700
+# items : la pagination par OFFSET y est stable et chaque page se sert par
+# index. `sweep()` récupère toutes les pages, puis classe par notoriété
+# décroissante avant de rendre — le résultat est le même, sans la fragilité.
+#
+# La sous-requête reste : jointe aux OPTIONAL et au service d'étiquettes, la
+# version à plat dépasse le délai même ainsi.
+#
+# `sitelinks_min` borne le périmètre — en dessous, l'item est un article
+# unique dans une seule langue, sans matière à notation. `?olid` (P648) est
+# l'identifiant Open Library : présent, il évite la recherche par titre à
+# l'enrichissement (93 % des grandes œuvres françaises le portent, 23 % des
+# arabes).
 SWEEP_LIVRES = """
 SELECT ?item ?itemLabel ?olid ?sitelinks WHERE {
   { SELECT DISTINCT ?item ?sitelinks WHERE {
@@ -155,11 +164,11 @@ SELECT ?item ?itemLabel ?olid ?sitelinks WHERE {
       ?item wdt:P31 ?classe ; wikibase:sitelinks ?sitelinks .
       %(filtres)s
       FILTER(?sitelinks >= %(sitelinks_min)d)
-    } ORDER BY DESC(?sitelinks) ?item LIMIT %(limite)d OFFSET %(decalage)d }
+    } ORDER BY ?item LIMIT %(limite)d OFFSET %(decalage)d }
   OPTIONAL { ?item wdt:P648 ?olid }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en,fr,es,ar". }
 }
-ORDER BY DESC(?sitelinks) ?item
+ORDER BY ?item
 """
 
 
@@ -233,13 +242,11 @@ class WikidataClient:
         limite: int = 2000,
         decalage: int = 0,
     ) -> FetchResult:
-        """Une page du balayage des œuvres littéraires.
+        """Une page du balayage des œuvres littéraires, par identifiant.
 
-        Contrairement aux séries, le tri est par notoriété décroissante
-        (sitelinks) et non par identifiant : sans export TMDB pour dire la
-        popularité, c'est le seul ordre qui fasse entrer d'abord les œuvres
-        qu'un membre a une chance de citer. `?item` départage les ex æquo pour
-        que la pagination par OFFSET reste stable.
+        L'ordre est celui du crawler des séries, et le classement par
+        notoriété se fait dans `sweep()` — voir `SWEEP_LIVRES` pour la mesure
+        qui a tranché.
         """
         filtres = []
         if langue:
