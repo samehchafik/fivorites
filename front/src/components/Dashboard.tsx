@@ -534,6 +534,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
                 data={cards.data}
                 genres={genres.data?.items ?? []}
                 loading={cards.isLoading}
+                media={media}
                 state={grid}
                 onState={setGrid}
                 languages={languages}

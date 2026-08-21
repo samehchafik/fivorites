@@ -124,6 +124,7 @@ export function SeriesGrid({
   data,
   genres,
   loading,
+  media,
   state,
   onState,
   languages,
@@ -138,6 +139,9 @@ export function SeriesGrid({
   data: CardsResponse | undefined
   genres: GenreFacet[]
   loading: boolean
+  /** L'univers affiché — décide du message de grille vide : les livres ne se
+   *  collectent pas chez TMDB. */
+  media: string
   state: GridState
   onState: (next: GridState) => void
   languages: Language[]
@@ -316,7 +320,11 @@ export function SeriesGrid({
           ))}
         </SimpleGrid>
       ) : data && data.items.length === 0 ? (
-        <EmptyGrid projected={projection?.projected ?? 0} searching={state.search.length > 0} />
+        <EmptyGrid
+          projected={projection?.projected ?? 0}
+          searching={state.search.length > 0}
+          media={media}
+        />
       ) : (
         <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }} spacing="md">
           {data?.items.map((card) => (
@@ -378,17 +386,51 @@ export function SeriesGrid({
 /** Une grille vide a deux causes très différentes, et les confondre coûte une
  *  demi-heure de recherche : rien ne correspond au filtre, ou rien n'a encore
  *  été collecté. */
-function EmptyGrid({ projected, searching }: { projected: number; searching: boolean }) {
+function EmptyGrid({
+  projected,
+  searching,
+  media,
+}: {
+  projected: number
+  searching: boolean
+  media: string
+}) {
+  const livres = media === 'book'
   if (searching || projected > 0) {
     return (
       <Center p="xl">
         <Stack gap={4} align="center">
-          <Text fw={600}>Aucune série ne correspond</Text>
+          <Text fw={600}>{livres ? 'Aucun livre ne correspond' : 'Aucune série ne correspond'}</Text>
           <Text size="sm" c="dimmed">
             Élargir la recherche, ou vider le champ.
           </Text>
         </Stack>
       </Center>
+    )
+  }
+
+  if (livres) {
+    // Les livres n'ont pas de TMDB : leur collecte est le crawler Wikidata +
+    // Open Library, par langue cible (doc/etude-sources-livres.md).
+    return (
+      <Alert color="yellow" variant="light" title="Aucun livre collecté" icon={<IconAlertTriangle size={18} />}>
+        <Stack gap={6}>
+          <Text size="sm">
+            Les vignettes s'assemblent depuis l'enrichissement (Wikidata, Wikipédia, Open
+            Library) — il n'y a pas de catalogue TMDB du livre. Lancer le crawler par langue
+            cible, puis rafraîchir la projection :
+          </Text>
+          <Text size="sm" ff="monospace">
+            .venv/bin/fiv-sourcing crawl wikidata --univers livres --langue fr
+            <br />
+            .venv/bin/fiv-admin catalog refresh
+          </Text>
+          <Text size="xs" c="dimmed">
+            Puis fr, en, es, ar… — et « search reindex --univers livres » pour la recherche.
+            Sur le serveur : les mêmes commandes via docker compose run (doc/exploitation.md).
+          </Text>
+        </Stack>
+      </Alert>
     )
   }
 
