@@ -303,9 +303,15 @@ async def fetch_cards(
         params["ids"] = list(ids)
         params["limit"] = len(ids)
         params["offset"] = 0
-        where = sql.SQL("v.id = any(%(ids)s)")
-        order = sql.SQL("array_position(%(ids)s, v.id)")
-        order_page = sql.SQL("array_position(%(ids)s, p.id)")
+        # `::bigint[]` et `::bigint` des deux côtés : les ids d'ES arrivent en
+        # integer[], et `v.id` est un int pour les séries mais un BIGINT pour
+        # les livres (le pivot). Postgres 13 — celui du serveur — refuse
+        # array_position(integer[], bigint) ; les versions récentes unifient
+        # silencieusement, ce qui a caché le bug en local. Le cast explicite
+        # est vrai partout.
+        where = sql.SQL("v.id = any(%(ids)s::bigint[])")
+        order = sql.SQL("array_position(%(ids)s::bigint[], v.id::bigint)")
+        order_page = sql.SQL("array_position(%(ids)s::bigint[], p.id::bigint)")
     else:
         where = sql.SQL(" and ").join(
             [

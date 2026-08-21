@@ -209,3 +209,18 @@ async def test_l_extraction_graphe_porte_les_auteurs(
         {"cle": "wd:Q5878", "nom": "Gabriel García Márquez", "photo": None}
     ]
     assert noeud["distribution"] == [] and noeud["realisation"] == []
+
+
+async def test_l_hydratation_es_respecte_l_ordre_et_le_pivot_bigint(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Le chemin ES→SQL : ES rend des ids, le SQL hydrate dans cet ordre.
+    Les ids des livres sont des BIGINT (le pivot) là où ES les transmet en
+    integer[] — Postgres 13 refusait array_position sans cast explicite,
+    et le serveur a affiché une grille vide (2026-08-21)."""
+    oeuvre_id = await seed_livre(conn)
+
+    rows, total = await fetch_cards(conn, CardQuery(lang="fr-FR", media="book"), ids=[oeuvre_id])
+
+    assert total == 1
+    assert rows[0]["id"] == oeuvre_id
