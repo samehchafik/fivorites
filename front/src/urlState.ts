@@ -97,6 +97,7 @@ function ecrireTri(tri: Tri): string {
 const UNIVERS = {
   series: 'tv',
   films: 'movie',
+  livres: 'book',
 } as const
 
 type NomUnivers = keyof typeof UNIVERS
