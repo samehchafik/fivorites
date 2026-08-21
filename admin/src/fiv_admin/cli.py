@@ -29,13 +29,24 @@ app = typer.Typer(help="Administration Fivorites V2 — suivi de l'acquisition",
 db_app = typer.Typer(help="Base de données", no_args_is_help=True)
 user_app = typer.Typer(help="Comptes d'administration", no_args_is_help=True)
 catalog_app = typer.Typer(help="Projection d'affichage du catalogue", no_args_is_help=True)
-training_app = typer.Typer(help="Entraînement de la notation", no_args_is_help=True)
+# Deux groupes, et la frontière est celle de l'intention : `notation` PRODUIT
+# les notes du catalogue — le juge, puis la régression à l'échelle — tandis que
+# `training` RÈGLE le système qui les produit : entraîner les poids, comparer
+# des encodeurs, diagnostiquer, valider.
+#
+# La distinction n'est pas cosmétique. `notation generer` écrit deux cent mille
+# empreintes et coûte de l'argent ; `training modeles` ne fait que mesurer et
+# n'écrit rien. Les ranger ensemble laissait croire que tout ce répertoire est
+# de l'outillage d'atelier.
+training_app = typer.Typer(help="Réglage du système de notation", no_args_is_help=True)
+notation_app = typer.Typer(help="Production des notes du catalogue", no_args_is_help=True)
 search_app = typer.Typer(help="Recherche plein texte (Elasticsearch)", no_args_is_help=True)
 graphe_app = typer.Typer(help="Graphe de recommandation (Neo4j)", no_args_is_help=True)
 app.add_typer(db_app, name="db")
 app.add_typer(user_app, name="user")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(training_app, name="training")
+app.add_typer(notation_app, name="notation")
 app.add_typer(search_app, name="search")
 app.add_typer(graphe_app, name="graphe")
 
@@ -845,7 +856,7 @@ def training_validite(
     _run(run())
 
 
-@training_app.command("generer")
+@notation_app.command("generer")
 def training_generer(
     univers: Annotated[
         str, typer.Option("--univers", help="series, movies, ou tous (défaut).")
