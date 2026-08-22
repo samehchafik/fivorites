@@ -268,6 +268,29 @@ _TRADUCTIONS = sql.SQL(
 """
 )
 
+# La même chose pour les livres, depuis leur vraie source de titres traduits :
+# les articles Wikipédia. `riche_source.source_id` d'une ligne wikipedia EST le
+# titre de l'article dans sa langue — « Cent ans de solitude » sur frwiki,
+# « مائة عام من العزلة » sur arwiki — et son `content` le texte. Même interface
+# que `_TRADUCTIONS` (sid, data) pour que la jointure ne change pas.
+#
+# L'aperçu est tronqué en SQL : un article courant pèse cent kilooctets, et la
+# grille n'en montre que quelques lignes — transporter vingt-quatre articles
+# entiers pour ça ferait des pages de plusieurs mégaoctets.
+_TRADUCTIONS_LIVRES = sql.SQL(
+    """
+                , traductions as (
+                    select r.oeuvre_id::text as sid,
+                           jsonb_build_array(jsonb_build_object(
+                               'name', r.source_id,
+                               'overview', left(r.content, 1200))) as data
+                    from riche_source r
+                    where r.source = 'wikipedia' and r.lang = %(lang2)s
+                      and r.oeuvre_id = any (array(select id from page))
+                )
+"""
+)
+
 
 def _order_by(
     criteria: tuple[tuple[str, bool], ...],
@@ -311,8 +334,13 @@ async def fetch_cards(
     # payloads pour retrouver ce qu'on a sous la main. C'est aussi la langue par
     # défaut, donc le cas le plus fréquent — la page d'accueil reste aussi
     # rapide qu'avant.
+    #
+    # Sauf pour les livres : leur `name` projeté est le libellé Wikidata, servi
+    # avec une préférence anglaise — le seul choix stable pour une projection
+    # sans langue. Le titre d'affichage vient donc TOUJOURS de la traduction
+    # (le titre d'article Wikipédia de la langue demandée), français compris.
     langue = q.lang.split("-")[0]
-    traduire = langue != "fr"
+    traduire = langue != "fr" or univers.pivot_card
 
     params: dict[str, Any] = {
         "source": SOURCE,
@@ -421,7 +449,7 @@ async def fetch_cards(
             sql.SQL(
                 """
                 with page as (
-                    select v.id, v.name, v.original_name, v.overview, v.poster_path,
+                    select v.id, v.name, v.original_name, {apercu} as overview, v.poster_path,
                            v.backdrop_path, v.status, v.original_language,
                            v.first_air_date, v.last_air_date, v.number_of_seasons,
                            v.number_of_episodes, v.vote_average, v.vote_count,
@@ -527,7 +555,18 @@ async def fetch_cards(
                 popularite=(
                     sql.SQL("v.popularity") if univers.pivot_card else sql.SQL("c.popularity")
                 ),
-                traductions=_TRADUCTIONS if traduire else sql.SQL(""),
+                # L'aperçu d'un livre est un article Wikipédia entier ; la
+                # grille n'en montre que quelques lignes.
+                apercu=(
+                    sql.SQL("left(v.overview, 1200)")
+                    if univers.pivot_card
+                    else sql.SQL("v.overview")
+                ),
+                traductions=(
+                    (_TRADUCTIONS_LIVRES if univers.pivot_card else _TRADUCTIONS)
+                    if traduire
+                    else sql.SQL("")
+                ),
                 traduction=(
                     sql.SQL("coalesce(x.data, '[]'::jsonb) as traduction")
                     if traduire
@@ -649,7 +688,7 @@ async def _fetch_work_livre(
 
         await cur.execute(
             """
-            select source, lang, content, facts, media, url, fetched_at
+            select source, lang, source_id, content, facts, media, url, fetched_at
             from riche_source where oeuvre_id = %s
             """,
             (work_id,),
@@ -692,6 +731,11 @@ async def _fetch_work_livre(
     # Le texte long dans la langue demandée, puis le repli — fr, en, la plus
     # longue collectée — puis la description Open Library. On dit lequel :
     # même contrat `translated` que les séries.
+    #
+    # Le titre suit la même règle : le `source_id` d'une ligne wikipedia EST
+    # le titre de l'article dans sa langue — c'est lui qu'on affiche, jamais
+    # le libellé Wikidata (servi avec une préférence anglaise) tant qu'un
+    # article existe dans la langue demandée.
     article = wikipedia.get(lang2)
     repli = next(
         (wikipedia[code] for code in ("fr", "en") if code in wikipedia),
@@ -717,15 +761,13 @@ async def _fetch_work_livre(
 
     return {
         "id": work_id,
-        # Le libellé Wikidata d'abord — même préférence que la vignette : le
-        # titre du work OL peut venir d'un appariement par titre, plus bruité.
-        "name": oeuvre["titre"] or faits_ol.get("titre"),
+        "name": (article or {}).get("source_id") or oeuvre["titre"] or faits_ol.get("titre"),
         "originalName": oeuvre["titre"],
         "tagline": None,
         "overview": overview,
         "translated": {
             "lang": lang,
-            "name": False,
+            "name": article is not None,
             "overview": article is not None,
         },
         "posterPath": couvertures[0] if couvertures else None,
@@ -760,7 +802,20 @@ async def _fetch_work_livre(
         "axisScores": axis_scores or None,
         "internalScores": internal_scores or None,
         "videos": [],
-        "catalog": None,
+        # Le pendant du bloc `tmdb_catalog` des autres univers : la fiche
+        # affiche « Popularité » depuis `catalog.popularity`, et un livre la
+        # tient de sa notoriété Wikipédia (facts.sitelinks) — la même valeur
+        # que la vignette et le tri. Absent tant que le crawl ne l'a pas
+        # collectée : `—` à l'écran, pas un zéro inventé.
+        "catalog": (
+            {
+                "popularity": float(faits_wd["sitelinks"]),
+                "adult": None,
+                "exportedOn": None,
+            }
+            if faits_wd.get("sitelinks") is not None
+            else None
+        ),
     }
 
 

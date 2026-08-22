@@ -19,12 +19,16 @@ export function SeriesCard({
   card,
   languages,
   lang,
+  media,
   onOpen,
   onTraining,
 }: {
   card: CardData
   languages: Language[]
   lang: string
+  /** L'univers affiché — décide du libellé du badge de popularité : la
+   *  notoriété Wikipédia d'un livre n'est pas la popularité TMDB. */
+  media: string
   onOpen: () => void
   /** Ouvre l'atelier d'entraînement de la notation sur cette série. */
   onTraining: (phase: 1 | 2) => void
@@ -73,7 +77,13 @@ export function SeriesCard({
                 ce tri invérifiable, et l'étoile — la note des votants — servait
                 de substitut trompeur. Les deux sont là, nommés. */}
             <Group gap={8} wrap="nowrap" c="dimmed">
-              <Tooltip label="Popularité TMDB — le critère de tri">
+              <Tooltip
+                label={
+                  media === 'book'
+                    ? 'Notoriété — le nombre de Wikipédias qui portent l’œuvre, le critère de tri'
+                    : 'Popularité TMDB — le critère de tri'
+                }
+              >
                 <Text size="xs" ff="monospace">
                   {card.popularity === null ? 'pop. —' : `pop. ${card.popularity.toFixed(1)}`}
                 </Text>

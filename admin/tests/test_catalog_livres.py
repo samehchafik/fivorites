@@ -106,7 +106,12 @@ async def test_la_vignette_livre_s_assemble_depuis_riche_source(
     assert total == 1
     carte = rows[0]
     assert carte["id"] == oeuvre_id, "la clé est le pivot, pas un id TMDB"
-    assert carte["name"] == "Cien años de soledad"
+    # Le titre d'affichage est celui de l'article Wikipédia de la langue
+    # demandée — jamais le libellé Wikidata, servi avec une préférence
+    # anglaise. C'est ce qui affichait tout en anglais quelle que soit la
+    # langue (constaté en production le 2026-08-22).
+    assert carte["name"] == "Cent ans de solitude"
+    assert carte["originalName"] == "Cien años de soledad"
     assert carte["overview"] == "Le roman de Macondo."
     assert carte["originalLanguage"] == "es"
     assert carte["originCountry"] == ["CO"]
@@ -144,9 +149,9 @@ async def test_la_fiche_livre_s_assemble_sans_brut(conn: psycopg.AsyncConnection
     fiche = await fetch_work(conn, oeuvre_id, "fr-FR", "book")
 
     assert fiche is not None
-    assert fiche["name"] == "Cien años de soledad"
+    assert fiche["name"] == "Cent ans de solitude", "le titre de l'article fr"
     assert fiche["overview"] == "Le roman de Macondo."
-    assert fiche["translated"] == {"lang": "fr-FR", "name": False, "overview": True}
+    assert fiche["translated"] == {"lang": "fr-FR", "name": True, "overview": True}
     assert fiche["createdBy"] == ["Gabriel García Márquez"]
     assert fiche["originalLanguage"] == "es"
     assert fiche["firstAirDate"] == "1967-01-01"
@@ -158,6 +163,9 @@ async def test_la_fiche_livre_s_assemble_sans_brut(conn: psycopg.AsyncConnection
         "openlibrary_id": "OL27258W",
     }
     assert fiche["seasons"] == [] and fiche["cast"] == []
+    # La fiche affiche « Popularité » depuis catalog.popularity, comme les
+    # autres univers — pour un livre c'est sa notoriété Wikipédia.
+    assert fiche["catalog"] == {"popularity": 99.0, "adult": None, "exportedOn": None}
     assert fiche["posterPath"] == "https://covers.openlibrary.org/b/id/283860-L.jpg"
     assert fiche["gallery"]["posters"] == ["https://covers.openlibrary.org/b/id/283860-L.jpg"]
 
@@ -364,3 +372,51 @@ async def test_la_popularite_du_livre_est_sa_notoriete_wikipedia(
 
     _, gardes = await fetch_cards(conn, CardQuery(lang="fr-FR", media="book", min_popularity=50))
     assert gardes == 1
+
+
+async def test_le_titre_suit_la_langue_demandee(conn: psycopg.AsyncConnection) -> None:
+    """Le titre affiché est celui de l'article de la langue demandée quand il
+    existe, le libellé sinon — sans inventer. (La grille arabe, elle,
+    n'affiche pas ce livre du tout : un article arabe n'est pas une
+    traduction arabe — c'est le filtre de langue, testé plus haut.)"""
+    oeuvre_id = await seed_livre(conn)
+    await conn.execute(
+        """
+        insert into riche_source (oeuvre_id, source, lang, source_id,
+                                  content, facts, resolved_by, fetched_at)
+        values (%s, 'wikipedia', 'ar', %s, %s, '{}'::jsonb, 'sitelink', now())
+        """,
+        (oeuvre_id, "مائة عام من العزلة", "رواية ماكوندو."),
+    )
+
+    # La fiche s'ouvre dans toutes les langues — elle ne filtre pas.
+    fiche = await fetch_work(conn, oeuvre_id, "ar-SA", "book")
+    assert fiche["name"] == "مائة عام من العزلة"
+    assert fiche["overview"] == "رواية ماكوندو."
+
+    # Pas d'article espagnol dans le seed : le libellé reste, sans mensonge.
+    rows, _ = await fetch_cards(conn, CardQuery(lang="es-ES", media="book"))
+    assert rows[0]["name"] == "Cien años de soledad"
+    assert rows[0]["overview"] == "Le roman de Macondo.", (
+        "le texte retombe sur l'aperçu projeté (préférence fr) — pas de vide"
+    )
+
+
+async def test_les_titres_wikipedia_entrent_dans_l_index(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Chercher « Cent ans de solitude » doit trouver le livre : le libellé
+    projeté est à préférence anglaise, les titres des autres langues vivent
+    dans les articles."""
+    from psycopg.rows import dict_row
+
+    from fiv_admin.media import MEDIA
+    from fiv_admin.search import construire_doc, parametres_extraction, requete_extraction
+
+    await seed_livre(conn)
+    media = MEDIA["book"]
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(requete_extraction(media), parametres_extraction(media))
+        rows = await cur.fetchall()
+    doc = construire_doc(rows[0], media.univers)
+    assert "Cent ans de solitude" in doc["titres"]

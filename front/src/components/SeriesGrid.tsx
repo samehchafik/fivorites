@@ -346,6 +346,7 @@ export function SeriesGrid({
               card={card}
               languages={languages}
               lang={lang}
+              media={media}
               onOpen={() => onOpen(card.id)}
               onTraining={(phase) => onTraining(card.id, phase)}
             />

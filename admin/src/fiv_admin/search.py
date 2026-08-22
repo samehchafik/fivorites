@@ -728,6 +728,7 @@ _EXTRACTION = sql.SQL(
            ) as genres,
            v.origin_country,
            {langues} as langues,
+           {titres_wiki} as titres_wiki,
            case when rp.payload is null then null else array(
                select distinct btrim(t.titre)
                from (
@@ -789,6 +790,18 @@ def requete_extraction(media: Media) -> sql.Composed:
         # Les livres n'ont pas d'inventaire : leur popularité — le nombre de
         # Wikipédias qui les portent — vit dans la projection.
         popularite_vue=sql.SQL("v.popularity") if media.pivot_card else sql.SQL("null"),
+        # Les titres d'articles Wikipédia, toutes langues — c'est là que
+        # dorment « Cent ans de solitude » et « مائة عام من العزلة » : le
+        # libellé projeté est à préférence anglaise, et sans eux la recherche
+        # dans les autres langues ne trouverait rien.
+        titres_wiki=(
+            sql.SQL(
+                "(select array_agg(distinct rs.source_id) from riche_source rs"
+                " where rs.oeuvre_id = o.id and rs.source = 'wikipedia')"
+            )
+            if media.pivot_card
+            else sql.SQL("null")
+        ),
     )
 
 
@@ -815,6 +828,7 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
     """Une ligne d'extraction → un document. Les absences sont omises, pas
     envoyées à `null` : c'est autant de place gagnée dans `_source`."""
     titres: list[str] = list(row.get("titres") or [])
+    titres += [titre for titre in row.get("titres_wiki") or [] if titre not in titres]
     for titre in (row.get("name"), row.get("original_name"), row.get("nom_inventaire")):
         if titre and titre not in titres:
             titres.append(titre)

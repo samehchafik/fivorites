@@ -343,8 +343,40 @@ export function SeriesModal({
                   )}
 
                 <Group gap="lg">
+                  {/* Les liens sortants suivent l'univers : un livre n'existe
+                      pas chez TMDB — son id est le pivot interne, et le lien
+                      pointerait une série au hasard. Ses référentiels sont
+                      Wikidata et Open Library. */}
+                  {media === 'book' ? (
+                    <>
+                      {data.externalIds?.wikidata_id && (
+                        <Anchor
+                          href={`https://www.wikidata.org/wiki/${data.externalIds.wikidata_id}`}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          size="sm"
+                        >
+                          <Group gap={4}>
+                            Wikidata <IconExternalLink size={14} />
+                          </Group>
+                        </Anchor>
+                      )}
+                      {data.externalIds?.openlibrary_id && (
+                        <Anchor
+                          href={`https://openlibrary.org/works/${data.externalIds.openlibrary_id}`}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          size="sm"
+                        >
+                          <Group gap={4}>
+                            Open Library <IconExternalLink size={14} />
+                          </Group>
+                        </Anchor>
+                      )}
+                    </>
+                  ) : (
                   <Anchor
-                    href={`https://www.themoviedb.org/tv/${data.id}`}
+                    href={`https://www.themoviedb.org/${media === 'movie' ? 'movie' : 'tv'}/${data.id}`}
                     target="_blank"
                     rel="noreferrer noopener"
                     size="sm"
@@ -353,6 +385,7 @@ export function SeriesModal({
                       TMDB <IconExternalLink size={14} />
                     </Group>
                   </Anchor>
+                  )}
                   {data.externalIds?.imdb_id && (
                     <Anchor
                       href={`https://www.imdb.com/title/${data.externalIds.imdb_id}/`}
@@ -568,7 +601,7 @@ export function SeriesModal({
             <Tabs.Panel value="technical" p="lg">
               <Table variant="vertical" withTableBorder>
                 <Table.Tbody>
-                  <Field label="Id TMDB" value={String(data.id)} />
+                  <Field label={media === 'book' ? 'Id pivot' : 'Id TMDB'} value={String(data.id)} />
                   <Field label="Type" value={data.type ?? '—'} />
                   <Field label="Langue originale" value={data.originalLanguage ?? '—'} />
                   <Field label="Pays d'origine" value={data.originCountry.join(', ') || '—'} />
@@ -585,7 +618,10 @@ export function SeriesModal({
                     label="Traductions annoncées"
                     value={data.translations.join(', ') || 'aucune'}
                   />
-                  <Field label="Popularité" value={data.catalog?.popularity.toFixed(2) ?? '—'} />
+                  <Field
+                    label={media === 'book' ? 'Notoriété (Wikipédias)' : 'Popularité'}
+                    value={data.catalog?.popularity.toFixed(media === 'book' ? 0 : 2) ?? '—'}
+                  />
                   <Field
                     label="Brut lu"
                     value={`${formatDate(data.raw.fetchedAt)} · HTTP ${data.raw.httpStatus}`}
@@ -593,9 +629,9 @@ export function SeriesModal({
                 </Table.Tbody>
               </Table>
               <Text size="xs" c="dimmed" mt="sm">
-                Une traduction annoncée par TMDB ne dit rien des synopsis d'épisode : ceux-là
-                n'existent que dans les langues effectivement redemandées à la collecte. C'est
-                toute la raison d'un appel par langue et par saison.
+                {media === 'book'
+                  ? "Les traductions annoncées sont les langues d'édition connues d'Open Library, complétées des articles Wikipédia collectés."
+                  : "Une traduction annoncée par TMDB ne dit rien des synopsis d'épisode : ceux-là n'existent que dans les langues effectivement redemandées à la collecte. C'est toute la raison d'un appel par langue et par saison."}
               </Text>
             </Tabs.Panel>
           </Tabs>
