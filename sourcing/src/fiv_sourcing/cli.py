@@ -424,6 +424,136 @@ def _etat_video(etat: dict[str, int]) -> None:
     typer.echo(f"mortes               : {etat['mortes']:>8}")
 
 
+@app.command("rss-add")
+def rss_add(
+    url: Annotated[str, typer.Argument(help="L'URL du flux RSS ou Atom.")],
+    editeur: Annotated[str, typer.Option("--editeur", help="'telerama', 'variety'…")],
+    univers: Annotated[
+        list[str] | None,
+        typer.Option("--univers", help="Univers concernés (répétable). Défaut : tous."),
+    ] = None,
+) -> None:
+    """Ajoute un flux au registre — après l'avoir sondé.
+
+    La sonde n'est pas du zèle : les URLs de flux périment, et un flux mort
+    inscrit sans vérification échouerait en silence à chaque passage horaire.
+    Ici il échoue tout de suite, devant celui qui peut corriger l'URL.
+
+    Le registre vit en base (`rss_feed`) : ajouter un flux est ce geste-ci ou
+    une ligne SQL, jamais un déploiement.
+    """
+    from fiv_sourcing.enrich import build_fetcher
+    from fiv_sourcing.sources import rss
+
+    settings = get_settings()
+    for u in univers or []:
+        if u not in ("series", "movies", "livres"):
+            typer.echo(f"ERREUR : univers inconnu : {u}")
+            raise typer.Exit(1)
+
+    async def run() -> int:
+        fetcher = build_fetcher(settings)
+        async with fetcher:
+            statut, corps, _, _ = await fetcher.get_conditional_text(url)
+        if statut < 200 or statut >= 300 or not corps:
+            typer.echo(f"ERREUR : le flux répond {statut or 'rien'} — non inscrit.")
+            raise typer.Exit(1)
+        items = rss.parser_flux(corps)
+        if not items:
+            typer.echo("ERreur : la réponse ne contient aucun item lisible — non inscrit.")
+            raise typer.Exit(1)
+
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            await _exiger_le_schema_a_jour(conn, settings)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    insert into rss_feed (url, editeur, univers) values (%s, %s, %s)
+                    on conflict (url) do update set editeur = excluded.editeur,
+                        univers = excluded.univers, actif = true
+                    returning id
+                    """,
+                    (url, editeur, univers or None),
+                )
+                feed_id = (await cur.fetchone())[0]
+        typer.echo(f"flux #{feed_id} inscrit — {len(items)} item(s) lisibles au sondage.")
+        typer.echo(f"  dernier : {items[0]['title'][:70]}")
+        return 0
+
+    _run_db(run)
+
+
+@app.command("rss-list")
+def rss_list() -> None:
+    """Le registre des flux, avec l'état du dernier passage."""
+    settings = get_settings()
+
+    async def run():
+        async with (
+            connect(settings.database_url, schema=settings.db_schema) as conn,
+            conn.cursor() as cur,
+        ):
+            await cur.execute(
+                """
+                select f.id, f.editeur, f.actif, f.last_status, f.last_success_at,
+                       f.last_error, f.url,
+                       (select count(*) from raw_rss_item i where i.feed_id = f.id)
+                from rss_feed f order by f.id
+                """
+            )
+            return await cur.fetchall()
+
+    lignes = _run_db(run)
+    if not lignes:
+        typer.echo("aucun flux inscrit — `rss-add <url> --editeur <nom>` pour commencer.")
+        return
+    for fid, editeur, actif, statut, succes, erreur, url, items in lignes:
+        etat = "·" if actif else "⏸"
+        quand = f"{succes:%d/%m %H:%M}" if succes else "jamais"
+        typer.echo(
+            f"{etat} #{fid:<3} {editeur:<14} {statut or '—':>4}  {quand:>12}"
+            f"  {items:>5} item(s)  {url[:60]}"
+        )
+        if erreur:
+            typer.echo(f"        ⚠ {erreur}")
+
+
+@app.command("rss-sweep")
+def rss_sweep() -> None:
+    """Un passage sur tous les flux actifs — collecte brute, aucune dérivation.
+
+    En rythme de croisière, la réponse dominante est le 304 : le GET est
+    conditionnel, et un flux inchangé coûte quelques octets. C'est ce qui rend
+    le passage horaire défendable vis-à-vis des éditeurs.
+
+    La liaison aux œuvres et le typage sont une autre commande
+    (`actualite-derive`, étape suivante de l'architecture) : collecter et
+    interpréter dans le même geste est exactement ce que ce pipeline s'interdit.
+    """
+    from fiv_sourcing.actualite import balayer_flux
+    from fiv_sourcing.enrich import build_fetcher
+
+    settings = get_settings()
+
+    async def run():
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            await _exiger_le_schema_a_jour(conn, settings)
+            fetcher = build_fetcher(settings)
+            async with fetcher:
+                return await balayer_flux(conn, fetcher)
+
+    report = _run_db(run)
+    typer.echo(
+        f"flux visités  : {report.flux}"
+        f"\ninchangés     : {report.inchanges}  (304 — le passage normal)"
+        f"\nitems vus     : {report.items_vus}"
+        f"\nnouveaux      : {report.items_nouveaux}"
+        f"\nerreurs       : {report.erreurs}"
+    )
+    if not report.flux:
+        typer.echo("aucun flux actif — `rss-add` d'abord.")
+
+
 @app.command("actualite-derive")
 def actualite_derive(
     limit: Annotated[

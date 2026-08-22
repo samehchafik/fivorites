@@ -161,6 +161,59 @@ class HttpFetcher:
                 await asyncio.sleep(_backoff(attempt))
         return last_status, b""
 
+    async def get_conditional_text(
+        self,
+        url: str,
+        *,
+        etag: str | None = None,
+        last_modified: str | None = None,
+        timeout: float | None = None,
+    ) -> tuple[int, str, str | None, str | None]:
+        """Un GET conditionnel de texte : (statut, corps, etag, last_modified).
+
+        Écrit pour les flux RSS, et pour eux seuls : on repasse toutes les
+        heures sur des documents qui changent quelques fois par jour, et le
+        contrat avec l'éditeur est précisément `If-None-Match` /
+        `If-Modified-Since` — un 304 coûte quelques octets là où un 200
+        renverrait tout le flux. Honorer ce contrat n'est pas une politesse,
+        c'est ce qui rend le passage horaire défendable.
+
+        Le corps est vide sur 304 et sur échec ; les validateurs rendus sont
+        ceux de la réponse, à ranger tels quels pour le prochain passage —
+        ils sont opaques, on ne les interprète jamais.
+        """
+        entetes = {}
+        if etag:
+            entetes["If-None-Match"] = etag
+        if last_modified:
+            entetes["If-Modified-Since"] = last_modified
+
+        last_status = 0
+        for attempt in range(1, self._max_attempts + 1):
+            await self._limiter_for(url).acquire()
+            self.stats.requests += 1
+            self.stats.retries += int(attempt > 1)
+            try:
+                response = await self._client.get(url, headers=entetes, timeout=timeout)
+            except httpx.HTTPError as exc:
+                self.stats.transport_errors += 1
+                log.warning("échec du flux %s : %s", url, exc)
+            else:
+                last_status = response.status_code
+                self.stats.rate_limited += int(last_status == 429)
+                if response.is_success or last_status == 304:
+                    return (
+                        last_status,
+                        response.text if response.is_success else "",
+                        response.headers.get("ETag"),
+                        response.headers.get("Last-Modified"),
+                    )
+                if last_status not in RETRYABLE_STATUS:
+                    return last_status, "", None, None
+            if attempt < self._max_attempts:
+                await asyncio.sleep(_backoff(attempt))
+        return last_status, "", None, None
+
     async def get_json(self, url: str, params: dict[str, Any] | None = None) -> FetchResult:
         last_error: str | None = None
         status = 0

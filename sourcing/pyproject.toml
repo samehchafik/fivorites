@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Acquisition de données pour Fivorites V2 — séries"
 requires-python = "==3.12.*"
 dependencies = [
+    "feedparser>=6.0.14",
     "httpx>=0.28",
     "psycopg[binary,pool]>=3.2",
     "pydantic>=2.10",

@@ -25,6 +25,7 @@ from datetime import date, datetime
 from typing import Any
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from fiv_sourcing import store
 
@@ -269,5 +270,107 @@ async def deriver_diffs(
                     """,
                     (curseur, kind),
                 )
+
+    return report
+
+
+# ------------------------------------------------------------------ flux RSS
+
+
+@dataclass(slots=True)
+class SweepReport:
+    flux: int = 0  # flux actifs visités
+    inchanges: int = 0  # 304 — le passage normal, et le moins cher
+    items_vus: int = 0
+    items_nouveaux: int = 0  # lignes réellement écrites (dédup par empreinte)
+    erreurs: int = 0
+
+
+async def balayer_flux(conn: psycopg.AsyncConnection, fetcher: Any) -> SweepReport:
+    """Un passage sur tous les flux actifs — le cœur de `rss-sweep`.
+
+    Trois règles, chacune tirée du contrat d'un agrégateur correct :
+
+    * **le GET est conditionnel** : les validateurs du dernier passage partent
+      avec la requête, et un 304 clôt le flux pour quelques octets. En rythme
+      de croisière, c'est la réponse dominante — un flux de presse change
+      quelques fois par jour, on passe toutes les heures ;
+    * **un flux en erreur ne bloque pas les autres** : l'erreur se note sur SA
+      ligne (`last_error`), la passe continue. Un éditeur qui tombe un samedi
+      ne doit pas éteindre la collecte du week-end entier ;
+    * **un item ré-émis à l'identique n'écrit rien** : l'empreinte du payload
+      normalisé fait partie de la clé, comme dans `raw_source`. Les flux
+      ré-émettent leurs vingt derniers items à chaque réponse — sans la dédup,
+      chaque 200 multiplierait le brut par vingt.
+    """
+    from fiv_sourcing.sources import rss
+
+    report = SweepReport()
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id, url, etag, last_modified from rss_feed where actif order by id"
+        )
+        flux = await cur.fetchall()
+
+    for feed_id, url, etag, last_modified in flux:
+        report.flux += 1
+        try:
+            statut, corps, nouvel_etag, nouveau_lm = await fetcher.get_conditional_text(
+                url, etag=etag, last_modified=last_modified
+            )
+        except Exception as exc:  # noqa: BLE001 — un flux ne tue pas la passe
+            statut, corps, nouvel_etag, nouveau_lm = 0, "", None, None
+            log.warning("flux %s : %s", url, exc)
+
+        if statut == 304:
+            report.inchanges += 1
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "update rss_feed set last_status = 304, last_success_at = now(),"
+                    " last_error = null where id = %s",
+                    (feed_id,),
+                )
+            continue
+
+        if statut < 200 or statut >= 300 or not corps:
+            report.erreurs += 1
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "update rss_feed set last_status = %s, last_error = %s where id = %s",
+                    (statut, f"HTTP {statut}" if statut else "injoignable", feed_id),
+                )
+            continue
+
+        items = rss.parser_flux(corps)
+        report.items_vus += len(items)
+        async with conn.cursor() as cur:
+            for payload in items:
+                await cur.execute(
+                    """
+                    insert into raw_rss_item (feed_id, guid, digest, payload)
+                    values (%s, %s, %s, %s)
+                    on conflict (feed_id, guid, digest) do nothing
+                    returning id
+                    """,
+                    (
+                        feed_id,
+                        payload["guid"],
+                        store.payload_digest(payload),
+                        Jsonb(payload),
+                    ),
+                )
+                if await cur.fetchone() is not None:
+                    report.items_nouveaux += 1
+            # Les validateurs se rangent tels quels — ils sont opaques, c'est
+            # le serveur de l'éditeur qui les relira au prochain passage.
+            await cur.execute(
+                """
+                update rss_feed
+                set etag = %s, last_modified = %s, last_status = %s,
+                    last_success_at = now(), last_error = null
+                where id = %s
+                """,
+                (nouvel_etag, nouveau_lm, statut, feed_id),
+            )
 
     return report
