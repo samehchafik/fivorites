@@ -66,6 +66,11 @@ SOURCE = "tmdb"
 # délai : la grille retombe sur le SQL sans retenter à chaque frappe.
 DISJONCTEUR_SECONDES = 30.0
 
+# Au-delà, un index absent ne se reconstruit pas depuis un bouton : les
+# 1,2 M de films tiennent plusieurs minutes et feraient expirer la requête.
+# Les livres et les séries hors TMDB passent largement dessous.
+REINDEX_AUTO_MAX = 50_000
+
 # ES refuse de paginer au-delà de `from + size = 10 000` (et il a raison :
 # personne ne lit la 400e page d'une recherche). Au-delà, on laisse le SQL
 # faire — sans compter ça comme une panne.
@@ -602,7 +607,16 @@ class Recherche:
     ) -> dict[str, dict[str, Any]] | None:
         """La synchronisation best-effort des routes : chaque univers rattrapé,
         aucune exception ne sort — un refresh de projection ne doit jamais
-        échouer parce qu'ES tousse."""
+        échouer parce qu'ES tousse.
+
+        **Un univers sans index se le fait construire ici**, plutôt que de
+        renvoyer « lancer `search reindex` » à quelqu'un qui vient de cliquer
+        sur un bouton. Le cas se produit vraiment : après un `livres purge`,
+        ou au premier crawl d'un univers, l'alias n'existe pas et la
+        synchronisation incrémentale n'a rien à rattraper. La construction est
+        bornée par `REINDEX_AUTO_MAX` — au-delà, c'est une opération de ligne
+        de commande, pas un effet de bord de bouton.
+        """
         from fiv_admin.media import MEDIA
 
         if self._client is None or not self.active:
@@ -612,12 +626,45 @@ class Recherche:
             if not media.disponible:
                 continue
             try:
-                bilan[media.univers] = await synchroniser(conn, self._client, media)
+                if await _indices_de(self._client, alias_de(media)):
+                    bilan[media.univers] = await synchroniser(conn, self._client, media)
+                else:
+                    bilan[media.univers] = await self._construire_index(conn, media)
             except (httpx.HTTPError, RuntimeError) as exc:
                 self._coupe_jusqua = time.monotonic() + DISJONCTEUR_SECONDES
                 log.warning("synchronisation %s en échec : %s", media.univers, exc)
                 bilan[media.univers] = {"alias": alias_de(media), "erreur": str(exc)}
         return bilan
+
+    async def _construire_index(
+        self, conn: psycopg.AsyncConnection, media: Media
+    ) -> dict[str, Any]:
+        """Le premier index d'un univers, construit depuis une route.
+
+        Refuse au-delà de `REINDEX_AUTO_MAX` vignettes : reconstruire 1,2 M
+        de films tient plusieurs minutes et ferait expirer la requête du
+        bouton. Le message dit alors quoi lancer.
+        """
+        assert self._client is not None
+        async with conn.cursor() as cur:
+            await cur.execute(
+                sql.SQL("select count(*) from {}").format(sql.Identifier("admin", media.card_view))
+            )
+            row = await cur.fetchone()
+        attendus = int(row[0]) if row else 0
+        if attendus > REINDEX_AUTO_MAX:
+            return {
+                "alias": alias_de(media),
+                "erreur": f"aucun index et {attendus} vignettes — "
+                f"lancer `search reindex --univers {media.univers}`",
+            }
+        stats = await reindexer(conn, self._client, media)
+        log.info(
+            "index %s construit depuis une route : %s document(s)",
+            stats["alias"],
+            stats["documents"],
+        )
+        return {**stats, "construit": True}
 
 
 # ---------------------------------------------------------------------------

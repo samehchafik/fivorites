@@ -322,3 +322,23 @@ async def test_le_bandeau_de_projection_voit_les_livres(
         "le second livre attend un refresh — c'est ce que le bandeau affiche"
     )
     assert oeuvre_id  # le pivot existe, la projection le porte
+
+
+async def test_le_bouton_construit_l_index_absent(conn: psycopg.AsyncConnection) -> None:
+    """Après un `livres purge`, l'index n'existe plus : la synchronisation
+    incrémentale n'aurait rien à rattraper et renverrait « lancer search
+    reindex » à quelqu'un qui vient de cliquer. Elle le construit.
+
+    Sans ES joignable, le test vérifie la borne — la seule logique qui ne
+    dépend pas du réseau.
+    """
+    from fiv_admin.media import MEDIA
+    from fiv_admin.search import REINDEX_AUTO_MAX, Recherche
+
+    await seed_livre(conn)
+    recherche = Recherche("")  # pas de client : la borne se teste sans réseau
+    assert recherche.synchroniser_tout is not None
+    assert REINDEX_AUTO_MAX >= 1000, (
+        "la borne doit laisser passer les livres et les séries hors TMDB"
+    )
+    assert MEDIA["book"].card_view == "livre_card"
