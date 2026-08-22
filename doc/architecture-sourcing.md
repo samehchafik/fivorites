@@ -130,6 +130,7 @@ inventée. Produit exclusivement par `normalize.py`.
 | `diffuseur`, `calendrier` | str, {jours, heure} | TVmaze |
 | `episodes` | {total, dates, resumes} | TVmaze, TMDB |
 | `auteurs` | [{qid?, nom?}] | Wikidata (P50) — livres |
+| `sitelinks` | int | Wikidata — livres, le proxy de popularité |
 | `editions` | {par_langue, total, sans_langue, tronque} | Open Library — livres |
 | `ids` | {tmdb?, imdb?, wikidata?, tvmaze?, openlibrary?} | toutes |
 

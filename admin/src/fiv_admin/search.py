@@ -697,7 +697,7 @@ _EXTRACTION = sql.SQL(
         -- import manuel, fixture, export partiel — mais la grille les montre,
         -- puisqu'elle lit la projection : une recherche qui ne les verrait pas
         -- ferait « disparaître » une vignette pourtant affichable.
-        select v.id, null, null, null
+        select v.id, null, {popularite_vue}, null
         from {vue} v
         where (%(ids)s::int[] is null or v.id = any (%(ids)s))
           and not exists (
@@ -786,6 +786,9 @@ def requete_extraction(media: Media) -> sql.Composed:
         oeuvre_cle=sql.SQL("o.id") if media.pivot_card else sql.SQL("o.id_tmdb"),
         # Seule la projection des livres porte des langues de lecture.
         langues=sql.SQL("v.langues") if media.pivot_card else sql.SQL("null::jsonb"),
+        # Les livres n'ont pas d'inventaire : leur popularité — le nombre de
+        # Wikipédias qui les portent — vit dans la projection.
+        popularite_vue=sql.SQL("v.popularity") if media.pivot_card else sql.SQL("null"),
     )
 
 

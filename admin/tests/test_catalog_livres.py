@@ -27,6 +27,7 @@ pytestmark = [pytest.mark.integration, requires_db]
 
 FACTS_WIKIDATA = {
     "annee": 1967,
+    "sitelinks": 99,
     "pays": ["CO"],
     "langues": ["es"],
     "auteurs": [{"qid": "Q5878", "nom": "Gabriel García Márquez"}],
@@ -342,3 +343,24 @@ async def test_le_bouton_construit_l_index_absent(conn: psycopg.AsyncConnection)
         "la borne doit laisser passer les livres et les séries hors TMDB"
     )
     assert MEDIA["book"].card_view == "livre_card"
+
+
+async def test_la_popularite_du_livre_est_sa_notoriete_wikipedia(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Les livres n'ont pas d'inventaire TMDB d'où tirer une popularité : la
+    leur est le nombre de Wikipédias qui portent l'œuvre — celui par lequel le
+    crawler les fait déjà entrer. Sans cette colonne, le tri « Popularité » ne
+    classait rien et le filtre écartait tout."""
+    await seed_livre(conn)
+
+    rows, _ = await fetch_cards(
+        conn, CardQuery(lang="fr-FR", media="book", sort="popularity", descending=True)
+    )
+    assert rows[0]["popularity"] == 99.0
+
+    _, retenus = await fetch_cards(conn, CardQuery(lang="fr-FR", media="book", min_popularity=100))
+    assert retenus == 0, "le filtre mord — 99 est sous le plancher demandé"
+
+    _, gardes = await fetch_cards(conn, CardQuery(lang="fr-FR", media="book", min_popularity=50))
+    assert gardes == 1

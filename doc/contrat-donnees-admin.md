@@ -110,6 +110,11 @@ Le contrat change de nature pour cet univers, et l'admin le sait par
   `riche_source` : libellé Wikidata en nom, article Wikipédia en synopsis
   (préférence fr, en, es, ar), faits Wikidata pour langue/pays/année ;
 - **la fiche** (`fetch_work`) s'assemble de même — pas de brut à relire ;
+- **la popularité est le nombre de Wikipédias qui portent l'œuvre**
+  (`facts.sitelinks`) : pas d'inventaire TMDB d'où la tirer, et c'est déjà
+  l'ordre par lequel le crawler les fait entrer. L'échelle n'est pas celle de
+  TMDB (unités à deux cents contre des centaines), ce qui est sans
+  conséquence — la grille trie à l'intérieur d'un univers, jamais entre deux ;
 - **les traductions affichées sont les langues d'édition Open Library**
   (`facts.editions.par_langue`), la donnée que l'univers existe pour porter ;
 - le pivot gagne `id_openlibrary`, et `facts` deux clés (`auteurs`,

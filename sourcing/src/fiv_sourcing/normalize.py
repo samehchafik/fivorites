@@ -24,6 +24,7 @@ Le schéma (doc/architecture-sourcing.md §3) :
     calendrier          {"jours": [str], "heure": str}
     episodes            {"total": int, "dates": int, "resumes": int}
     auteurs             [{"qid": str?, "nom": str?}]   (livres)
+    sitelinks           int   (livres) — le proxy de notoriété
     editions            {"par_langue": [{"langue", "nombre", "isbn"?, "annee"?}],
                          "total": int, "sans_langue": int, "tronque": bool}   (livres)
     ids                 {"tmdb": int, "imdb": str, "wikidata": str, "tvmaze": int,
@@ -54,6 +55,7 @@ CLES = frozenset(
         "calendrier",
         "episodes",
         "auteurs",
+        "sitelinks",
         "editions",
         "ids",
     }
@@ -101,6 +103,11 @@ def depuis_wikidata_livre(faits: dict[str, Any]) -> dict[str, Any]:
     _si(canonique, "annee", faits.get("annee"))
     _si(canonique, "pays", list(faits.get("pays") or []))
     _si(canonique, "langues", list(faits.get("langues") or []))
+    # Le nombre de Wikipédias qui portent l'œuvre. Les autres univers tiennent
+    # leur popularité de l'export TMDB (`tmdb_catalog.popularity`) ; les livres
+    # n'ont pas d'inventaire, et c'est donc un fait de la source — le seul
+    # proxy de notoriété gratuit, celui par lequel le balayage classe déjà.
+    _si(canonique, "sitelinks", faits.get("sitelinks"))
 
     auteurs = []
     for auteur in faits.get("auteurs") or []:

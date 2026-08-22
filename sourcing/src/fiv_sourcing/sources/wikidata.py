@@ -182,13 +182,18 @@ ORDER BY ?item
 # le libellé pour l'affichage. Libellé anglais d'abord, arabe en repli : les
 # auteurs arabes sans libellé anglais existent, l'inverse est rare.
 LOOKUP_QID_LIVRE = """
-SELECT ?item ?olid
+SELECT ?item ?olid ?sitelinks
        (GROUP_CONCAT(DISTINCT ?auteurPaire; separator="|") AS ?auteurs)
        (GROUP_CONCAT(DISTINCT ?langueCode; separator="|") AS ?langues)
        (GROUP_CONCAT(DISTINCT ?paysCode; separator="|") AS ?pays)
        (MIN(?anneePub) AS ?annee)
 WHERE {
   BIND(wd:%(qid)s AS ?item)
+  # Le nombre de Wikipédias qui consacrent un article à l'œuvre. C'est le
+  # proxy de notoriété de l'univers livre — celui par lequel le balayage
+  # classe déjà — et il est gratuit ici : un attribut de l'item, pas une
+  # jointure. Voir `normalize.CLES` pour ce qu'il devient.
+  OPTIONAL { ?item wikibase:sitelinks ?sitelinks }
   OPTIONAL { ?item wdt:P648 ?olid }
   OPTIONAL {
     ?item wdt:P50 ?auteur .
@@ -201,7 +206,7 @@ WHERE {
   OPTIONAL { ?item wdt:P495 ?paysItem . ?paysItem wdt:P297 ?paysCode }
   OPTIONAL { ?item wdt:P577 ?datePub . BIND(YEAR(?datePub) AS ?anneePub) }
 }
-GROUP BY ?item ?olid
+GROUP BY ?item ?olid ?sitelinks
 """
 
 
@@ -429,9 +434,11 @@ def lire_lookup_livre(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         if auteur_qid.startswith("Q"):
             auteurs.append({"qid": auteur_qid, "nom": nom or None})
     annee = champ("annee")
+    sitelinks = champ("sitelinks")
     return {
         "qid": qid,
         "olid": champ("olid") or None,
+        "sitelinks": int(sitelinks) if sitelinks.isdigit() else None,
         "auteurs": auteurs,
         "langues": liste("langues"),
         "pays": liste("pays"),

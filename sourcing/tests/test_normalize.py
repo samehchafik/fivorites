@@ -38,6 +38,7 @@ TVMAZE_COMPLET = {
 WIKIDATA_LIVRE_COMPLET = {
     "qid": "Q189378",
     "olid": "OL27258W",
+    "sitelinks": 99,
     "auteurs": [{"qid": "Q5878", "nom": "Gabriel García Márquez"}],
     "langues": ["es"],
     "pays": ["CO"],
@@ -133,6 +134,9 @@ def test_wikidata_livre_produit_les_faits_attendus():
         "annee": 1967,
         "pays": ["CO"],
         "langues": ["es"],
+        # Le proxy de popularité de l'univers livre : les autres le tiennent
+        # de l'export TMDB, celui-ci est un fait de la source.
+        "sitelinks": 99,
         "auteurs": [{"qid": "Q5878", "nom": "Gabriel García Márquez"}],
         "ids": {"wikidata": "Q189378", "openlibrary": "OL27258W"},
     }
