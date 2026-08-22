@@ -698,6 +698,21 @@ def crawl_wikidata_cmd(
     return report
 
 
+# Le plancher de notoriété du balayage, langue par langue.
+#
+# Le classement par notoriété se fait chez nous (voir `SWEEP_LIVRES`), ce qui
+# oblige à balayer tout le périmètre avant de collecter : plus le plancher est
+# bas, plus le balayage est long et plus il expose aux refus de WDQS.
+#
+# Mesuré le 2026-08-21, à 5 sitelinks et plus : fr 1 193 œuvres, es 325,
+# ar 220 — trois balayages qui passent. L'anglais en compte ~3 500 et échoue
+# en fin de course (502, puis 429). À 15, il en ramène 1 370 et termine
+# proprement — c'est aussi un meilleur périmètre : en dessous, l'item est
+# souvent un article unique dans une seule langue, sans matière à notation.
+PLANCHER_PAR_LANGUE: dict[str, int] = {"en": 15}
+PLANCHER_DEFAUT = 5
+
+
 @crawl_app.command("livres")
 def crawl_livres_cmd(
     limit: Annotated[
@@ -705,8 +720,13 @@ def crawl_livres_cmd(
         typer.Option("--limit", help="Nombre d'items par langue. Défaut : tous."),
     ] = None,
     min_sitelinks: Annotated[
-        int, typer.Option("--min-sitelinks", help="Plancher de notoriété du balayage.")
-    ] = 5,
+        int | None,
+        typer.Option(
+            "--min-sitelinks",
+            help="Plancher de notoriété, pour TOUTES les langues. Par défaut, "
+            "chacune a le sien : 15 en anglais, 5 ailleurs.",
+        ),
+    ] = None,
     concurrency: Annotated[
         int, typer.Option("--concurrency", help="Items traités en parallèle.")
     ] = 4,
@@ -717,20 +737,29 @@ def crawl_livres_cmd(
     reprise (le déjà-vu se saute), mêmes limiteurs. Interrompre puis relancer
     reprend où on s'est arrêté, langue par langue.
 
+    Le plancher de notoriété est **propre à chaque langue** (voir
+    `PLANCHER_PAR_LANGUE`) : l'anglais a un corpus trop large pour être
+    balayé en entier. `--min-sitelinks` impose la même valeur partout.
+
     Le récapitulatif final n'est pas décoratif : WDQS est un service gratuit
     et partagé qui refuse parfois une page de balayage. Une langue qui échoue
     doit se voir — sinon on la croit collectée, et rien ne le dira jamais.
     """
     bilan: list[tuple[str, int, int, int]] = []
     for langue in ("fr", "en", "es", "ar"):
-        typer.echo(f"\n=== {langue} ===")
+        plancher = (
+            min_sitelinks
+            if min_sitelinks is not None
+            else PLANCHER_PAR_LANGUE.get(langue, PLANCHER_DEFAUT)
+        )
+        typer.echo(f"\n=== {langue} (sitelinks >= {plancher}) ===")
         report = crawl_wikidata_cmd(
             univers_cle="livres",
             langue=langue,
             avec_imdb=False,
             limit=limit,
             concurrency=concurrency,
-            min_sitelinks=min_sitelinks,
+            min_sitelinks=plancher,
             dry_run=False,
         )
         bilan.append((langue, report.swept, report.enriched, report.errors))
