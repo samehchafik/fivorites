@@ -161,3 +161,33 @@ async def test_l_actualite_d_une_oeuvre_distingue_les_univers(client, conn):
     reponse = await client.get("/api/catalog/works/550/actualite?media=movie")
     assert reponse.status_code == 200
     assert reponse.json()["evenements"] == []
+
+
+async def test_le_filtre_actualite_ne_garde_que_les_oeuvres_qui_ont_bouge(
+    client: httpx.AsyncClient, conn
+) -> None:
+    """« Avec actualité » est la lorgnette de la dérivation : qu'est-ce qui a
+    bougé ? Une œuvre y entre dès qu'un événement lui est lié, et le filtre
+    doit se composer avec les autres sans changer le contrat de la grille."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select id from sourcing.oeuvre where univers = 'series' and id_tmdb = 1399"
+        )
+        oeuvre = (await cur.fetchone())[0]
+        await cur.execute("select id from sourcing.raw_source where source_id = '1399' limit 1")
+        raw = (await cur.fetchone())[0]
+    await conn.execute(
+        "insert into sourcing.actualite (oeuvre_id, type_evenement, survenu_le, titre,"
+        " editeur, raw_source_id) values (%s, 'annulation', '2026-08-01', 'Série annulée',"
+        " 'tmdb', %s)",
+        (oeuvre, raw),
+    )
+
+    tout = (await client.get("/api/catalog/cards", params={"lang": "fr-FR"})).json()
+    filtre = (
+        await client.get("/api/catalog/cards", params={"lang": "fr-FR", "withActualite": "true"})
+    ).json()
+
+    assert tout["total"] == 2
+    assert filtre["total"] == 1
+    assert [c["id"] for c in filtre["items"]] == [1399]

@@ -64,6 +64,7 @@ async def cards(
     order2: str = Query(default="desc", pattern="^(asc|desc)$"),
     withPoster: bool = Query(default=False),
     withOverview: bool = Query(default=False),
+    withActualite: bool = Query(default=False),
     # Répété plutôt que séparé par des virgules : plusieurs genres de TMDB en
     # contiennent des caractères qu'un découpage maison finirait par mal
     # traiter (« Action & Adventure », « Sci-Fi & Fantasy »). `?genres=Comédie
@@ -87,6 +88,7 @@ async def cards(
         descending2=order2 == "desc",
         with_poster=withPoster,
         with_overview=withOverview,
+        with_actualite=withActualite,
         genres=tuple(g for g in genres if g.strip()),
         page=page,
         page_size=pageSize,

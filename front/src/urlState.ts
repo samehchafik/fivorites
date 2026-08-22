@@ -33,6 +33,7 @@
 const FILTRES = {
   image: 'withPoster',
   description: 'withOverview',
+  actualite: 'withActualite',
 } as const
 
 /** Les noms des tris dans l'URL, et leur clé côté API. Même parti pris que les
@@ -133,6 +134,7 @@ export interface UrlState {
   page: number | null
   withPoster: boolean
   withOverview: boolean
+  withActualite: boolean
 }
 
 // Un code BCP-47 avec sa région : `fr-FR`, `ar-SA`. La forme est vérifiée ici,
@@ -178,6 +180,7 @@ export function readUrl(search = window.location.search): UrlState {
     page: Number.isInteger(page) && page > 1 ? page : null,
     withPoster: actifs.includes('image'),
     withOverview: actifs.includes('description'),
+    withActualite: actifs.includes('actualite'),
   }
 }
 

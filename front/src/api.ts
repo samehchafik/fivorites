@@ -237,6 +237,8 @@ export interface CardsParams extends Record<string, QueryValue> {
   withPoster?: boolean
   /** Ne garder que les séries ayant un synopsis. */
   withOverview?: boolean
+  /** Ne garder que les œuvres ayant au moins un événement d'actualité. */
+  withActualite?: boolean
   /** Genres retenus, en OU : « comédie ou drame ». Vide = tous. */
   genres?: string[]
   page: number

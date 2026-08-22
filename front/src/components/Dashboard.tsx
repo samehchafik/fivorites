@@ -64,6 +64,7 @@ const DEFAULT_GRID: GridState = {
   sort2: 'popularity',
   order2: 'desc',
   withPoster: false,
+  withActualite: false,
   withOverview: false,
   genres: [],
   pageSize: 24,
@@ -118,6 +119,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     ...(depuisUrl.tri && { sort: depuisUrl.tri.cle, order: depuisUrl.tri.sens }),
     ...(depuisUrl.puis && { sort2: depuisUrl.puis.cle, order2: depuisUrl.puis.sens }),
     withPoster: depuisUrl.withPoster,
+    withActualite: depuisUrl.withActualite,
     withOverview: depuisUrl.withOverview,
   })
   const [gridPage, setGridPage] = useState(depuisUrl.page ?? 1)
@@ -174,6 +176,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       page: gridPage,
       withPoster: grid.withPoster,
       withOverview: grid.withOverview,
+      withActualite: grid.withActualite,
     })
   }, [
     vue,
@@ -187,6 +190,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     grid.order2,
     grid.withPoster,
     grid.withOverview,
+    grid.withActualite,
     gridPage,
   ])
 
@@ -225,6 +229,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
       grid.order2,
       grid.withPoster,
       grid.withOverview,
+      grid.withActualite,
       // Joints : un tableau change d'identité à chaque rendu, et TanStack
       // Query relancerait la requête en boucle si la clé n'était pas stable.
       grid.genres.join('|'),
@@ -242,6 +247,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
         order2: grid.order2,
         withPoster: grid.withPoster || undefined,
         withOverview: grid.withOverview || undefined,
+        withActualite: grid.withActualite || undefined,
         genres: grid.genres,
         page: gridPage,
         pageSize: grid.pageSize,
@@ -372,6 +378,7 @@ export function Dashboard({ account, onSignedOut }: { account: Account; onSigned
     grid.order2,
     grid.withPoster,
     grid.withOverview,
+    grid.withActualite,
     grid.pageSize,
   ])
 

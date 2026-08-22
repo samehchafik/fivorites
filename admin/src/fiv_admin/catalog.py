@@ -91,6 +91,20 @@ def note_ponderee(table: str) -> sql.Composable:
 
 # Tris de la grille. Liste fermée : la clé vient de la requête HTTP, jamais le
 # nom de colonne.
+def card_sorts(pivot_card: bool = False) -> dict[str, sql.Composable]:
+    """Les tris de la grille, pour un univers.
+
+    Un seul diffère : la popularité. Les univers TMDB la lisent dans
+    l'inventaire (`c.popularity`), les livres dans leur projection
+    (`v.popularity`, le nombre de Wikipédias qui portent l'œuvre) — ils n'ont
+    pas d'inventaire où aller la chercher.
+    """
+    return {
+        **CARD_SORTS,
+        "popularity": sql.SQL("v.popularity") if pivot_card else sql.SQL("c.popularity"),
+    }
+
+
 CARD_SORTS: dict[str, sql.Composable] = {
     # Le défaut demandé : de la plus récente à la plus ancienne.
     "air_date": sql.SQL("v.first_air_date"),
@@ -124,6 +138,23 @@ PAGE_SORTS: dict[str, sql.Composable] = {
 }
 
 
+def _filtre_actualite(univers: Any) -> sql.SQL:
+    """« A au moins un événement d'actualité », dans la bonne géométrie.
+
+    Les projections TMDB portent l'identifiant TMDB (`v.id = id_tmdb`), la
+    projection des livres porte le pivot directement (`v.id = oeuvre.id`).
+    Écrire une seule forme lierait le film 550 à l'actualité de la série 550 —
+    le piège habituel des catalogues qui se chevauchent.
+    """
+    if univers.pivot_card:
+        return sql.SQL("exists (select 1 from actualite a where a.oeuvre_id = v.id)")
+    return sql.SQL(
+        "exists (select 1 from actualite a"
+        " join oeuvre o on o.id = a.oeuvre_id"
+        " where o.univers = %(univers)s and o.id_tmdb = v.id)"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CardQuery:
     lang: str
@@ -153,6 +184,10 @@ class CardQuery:
     # collectées en `fr-FR` (voir 013_movie_card.sql et la table de genres de
     # la notation, qui a appris la leçon dans l'autre sens).
     genres: tuple[str, ...] = ()
+    # N'afficher que les œuvres qui ont au moins un événement d'actualité —
+    # c'est la lorgnette de surveillance de la dérivation : « qu'est-ce qui a
+    # bougé dans le catalogue ? », pas un filtre de contenu.
+    with_actualite: bool = False
     page: int = 1
     page_size: int = 24
 
@@ -310,6 +345,13 @@ async def fetch_cards(
         # silencieusement, ce qui a caché le bug en local. Le cast explicite
         # est vrai partout.
         where = sql.SQL("v.id = any(%(ids)s::bigint[])")
+        if q.with_actualite:
+            # L'index de recherche ne connaît pas l'actualité : le filtre se
+            # rejoue en SQL sur la page choisie par ES. Le total, lui, vient
+            # d'ES et peut donc surcompter — des pages de fin plus courtes,
+            # pas des lignes fausses. L'alternative serait d'indexer
+            # l'actualité dans ES pour un filtre d'administration : non.
+            where = sql.SQL(" and ").join([where, _filtre_actualite(univers)])
         order = sql.SQL("array_position(%(ids)s::bigint[], v.id::bigint)")
         order_page = sql.SQL("array_position(%(ids)s::bigint[], p.id::bigint)")
     else:
@@ -321,7 +363,9 @@ async def fetch_cards(
                     " or v.original_name ilike %(like)s"
                     " or v.id = %(search_id)s::int)"
                 ),
-                sql.SQL("(%(min_popularity)s::real is null or c.popularity >= %(min_popularity)s)"),
+                sql.SQL("(%(min_popularity)s::real is null or {pop} >= %(min_popularity)s)").format(
+                    pop=sql.SQL("v.popularity") if univers.pivot_card else sql.SQL("c.popularity")
+                ),
                 # `nullif` parce que TMDB renvoie tantôt `null`, tantôt une
                 # chaîne vide : les deux veulent dire « pas d'affiche », et
                 # n'en traiter qu'un laisserait passer des vignettes trouées.
@@ -349,10 +393,11 @@ async def fetch_cards(
                 # pour son lecteur. Les autres projections n'ont pas la
                 # colonne, et leur langue n'est pas un filtre.
                 sql.SQL("v.langues ? %(lang2)s") if univers.pivot_card else sql.SQL("true"),
+                _filtre_actualite(univers) if q.with_actualite else sql.SQL("true"),
             ]
         )
 
-        order = _order_by(q.criteria, CARD_SORTS, sql.SQL("v.id desc"))
+        order = _order_by(q.criteria, card_sorts(univers.pivot_card), sql.SQL("v.id desc"))
         order_page = _order_by(q.criteria, PAGE_SORTS, sql.SQL("p.id desc"))
 
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -381,7 +426,7 @@ async def fetch_cards(
                            v.first_air_date, v.last_air_date, v.number_of_seasons,
                            v.number_of_episodes, v.vote_average, v.vote_count,
                            v.genres, v.origin_country, v.fetched_at,
-                           c.popularity, c.adult
+                           {popularite}, c.adult
                     from admin.{vue} v
                     left join tmdb_catalog c on c.univers = %(univers)s and c.id = v.id
                     where {where}
@@ -479,6 +524,9 @@ async def fetch_cards(
                 # Les livres n'ont pas d'id TMDB : leurs vignettes sont keyées
                 # par le pivot, et les notes se joignent donc sur `o.id`.
                 pivot=sql.SQL("o.id") if univers.pivot_card else sql.SQL("o.id_tmdb"),
+                popularite=(
+                    sql.SQL("v.popularity") if univers.pivot_card else sql.SQL("c.popularity")
+                ),
                 traductions=_TRADUCTIONS if traduire else sql.SQL(""),
                 traduction=(
                     sql.SQL("coalesce(x.data, '[]'::jsonb) as traduction")

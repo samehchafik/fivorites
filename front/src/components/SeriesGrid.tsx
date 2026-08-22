@@ -113,6 +113,7 @@ export interface GridState {
   order2: 'asc' | 'desc'
   /** Ne lister que ce qui a une affiche. */
   withPoster: boolean
+  withActualite: boolean
   /** Ne lister que ce qui a un synopsis. */
   withOverview: boolean
   /** Genres retenus, en OU. Vide = tous. */
@@ -161,6 +162,7 @@ export function SeriesGrid({
   const filtreActif =
     state.search.trim() !== '' ||
     state.withPoster ||
+    state.withActualite ||
     state.withOverview ||
     state.genres.length > 0
 
@@ -278,6 +280,17 @@ export function SeriesGrid({
             label="Avec descriptif"
             checked={state.withOverview}
             onChange={(event) => onState({ ...state, withOverview: event.currentTarget.checked })}
+            mb={6}
+          />
+
+          {/* La lorgnette de la dérivation : « qu'est-ce qui a bougé ? ». Une
+              œuvre entre ici dès qu'un événement lui est lié — diff de fiche
+              aujourd'hui, presse liée demain — et la fiche raconte le détail
+              dans son onglet Actualité. */}
+          <Checkbox
+            label="Avec actualité"
+            checked={state.withActualite}
+            onChange={(event) => onState({ ...state, withActualite: event.currentTarget.checked })}
             mb={6}
           />
         </Group>
