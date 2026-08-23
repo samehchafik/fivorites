@@ -578,6 +578,12 @@ sudo docker compose run --rm admin db migrate
 sudo docker compose up -d admin
 ```
 
+```bash
+sudo docker compose build webapp
+sudo docker compose run --rm webapp db migrate
+sudo docker compose up -d webapp
+```
+
 Pour savoir ce que le `git pull` a réellement changé, et donc ce qu'il faut
 reconstruire :
 
@@ -598,8 +604,9 @@ point d'entrée. Les cibles `make` du dépôt (`test`, `db-create`, `db-drop-tes
 n'existent que sur le poste de développement, où Postgres et les toolchains sont
 installés sur la machine.
 
-Le front seul ne demande rien de plus que le `git pull` : le conteneur lit
-`www/` à chaque requête, il n'y a même pas à le redémarrer.
+Les fronts seuls ne demandent rien de plus que le `git pull` : les conteneurs
+lisent `www/` et `www-site/` à chaque requête, il n'y a même pas à les
+redémarrer.
 
 **Une collecte en cours n'a pas à être arrêtée pour ça.** `sourcing` et `admin`
 sont deux conteneurs distincts ; mettre à jour l'un ne touche pas l'autre. Le
@@ -639,6 +646,85 @@ Puis, pour reprendre :
 ```bash
 sudo docker compose run --rm sourcing tmdb backfill
 ```
+
+## 8. Le site public
+
+Le pendant public de l'administration : un service permanent lui aussi, sur le
+port **8183**, géré par le même compose. Le partage des requêtes est le même —
+
+| Requête | Traitée par |
+|---|---|
+| `/api/public/*` | FastAPI, dans le conteneur `webapp` |
+| tout le reste | un fichier de `./www-site`, monté en volume |
+
+Et les trois répertoires se lisent comme ceux de l'admin :
+
+| Répertoire | Contenu |
+|---|---|
+| `webapp/` | l'API publique — c'est elle qui est dans l'image |
+| `site/` | les **sources** Astro du site, jamais montées en production |
+| `www-site/` | le **répertoire statique** — le build versionné, arrivé par `git pull` |
+
+Pas de Node sur le serveur, pas de build : `www-site/` se construit sur le
+poste (`make -C site build`) et se commite avec le code — même contrat que
+`www/`, mêmes précautions (un `www-site/` créé par Docker avant le premier
+`git pull` appartient à root : `sudo rm -rf www-site && git pull`).
+
+Le secret de session d'abord — sans lui le compose refuse de démarrer. À
+choisir une fois et à garder : il signe les cookies des **visiteurs**, et le
+changer déconnecte tout le monde de ses classements (« j'ai vu et aimé »,
+« je veux voir »), qui sont tout ce que ces sessions possèdent :
+
+```bash
+echo "WEBAPP_SECRET_KEY=$(openssl rand -hex 32)" >> .env
+```
+
+Le schéma `visiteur` — sa table de signaux tient une clé étrangère sur
+`sourcing.oeuvre`, donc `sourcing db migrate` doit être passé avant. Et comme
+partout, les migrations sont **dans l'image** : construire d'abord.
+
+```bash
+sudo docker compose build webapp
+sudo docker compose run --rm webapp db migrate
+```
+
+Puis le service, et sa vérification :
+
+```bash
+sudo docker compose up -d webapp
+sudo docker compose run --rm webapp doctor
+```
+
+`doctor` doit afficher `base : OK`, `schéma visiteur : OK`, `site construit :
+oui`.
+
+Ce que le site exige du reste de la maison — rien au démarrage, tout à
+l'usage :
+
+* **la recherche** lit les index Elasticsearch de l'admin (`search reindex`,
+  puis la passe nocturne). ES absent → repli SQL automatique, plus lent,
+  titres originaux seulement ;
+* **les suggestions** lisent le graphe Neo4j (`graphe schema`, `graphe
+  projeter`, `graphe projeter-membres`) et exigent `NEO4J_PASSWORD` dans
+  `.env`. Graphe absent → la route répond 503 en disant quoi faire, le reste
+  du site vit normalement ;
+* **les vignettes** lisent les projections `admin.*_card` (`catalog
+  refresh`).
+
+Sur l'exposition, la logique est **inverse de celle de l'admin** : ce site
+est fait pour être public. `WEBAPP_BIND=0.0.0.0` (le défaut) convient à la
+mise en route, mais la cible normale est un reverse proxy TLS (nginx, Caddy)
+qui porte le nom de domaine et le certificat, avec :
+
+```bash
+WEBAPP_BIND=127.0.0.1       # seul le proxy local joint le conteneur
+WEBAPP_COOKIE_SECURE=true   # le cookie de session refuse de circuler hors HTTPS
+```
+
+Le cookie transporte l'identité anonyme du visiteur ; en clair, il se vole
+comme un cookie d'admin. Tant que le proxy n'est pas là, le site marche —
+mais les classements des visiteurs voyagent en clair, et c'est une raison de
+ne pas tarder.
 
 ## Sauvegarde
 
