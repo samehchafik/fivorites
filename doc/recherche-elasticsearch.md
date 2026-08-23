@@ -248,7 +248,34 @@ sudo docker compose run --rm admin search status
   marqueurs : `search reindex` une fois, et la synchronisation prend le
   relais.
 
-## 6. Ce qui n'est pas couvert (encore)
+## 6. Au-delà des titres : les gens et les genres
+
+*Ajouté le 23 août 2026, pour le composant de suggestion du site public — le
+constat était qu'on ne pouvait chercher que par titre.*
+
+Le document porte deux champs de plus, relus du brut comme les titres :
+
+* **`personnes`** — la distribution (tronquée aux mêmes quinze que le graphe :
+  au-delà c'est le figurant d'une réplique), la réalisation, les créateurs,
+  et les auteurs Wikidata des livres. Analyse identique aux titres (préfixes
+  `edge_ngram`, pliage des accents) : « exup » trouve Saint-Exupéry.
+* **`genres.texte`** — le keyword `genres` reste tel quel pour les filtres et
+  les facettes ; ce sous-champ le rend cherchable à la frappe, avec un
+  analyseur de **requête** à synonymes : « policier » (et ses variantes) mène
+  à Crime, le libellé TMDB. La liste est courte et curatée dans
+  `search.definition_index` — et comme elle vit côté requête, l'enrichir ne
+  demande pas de réindexer.
+
+La frappe a donc quatre portes, et les boosts gardent l'ordre : la phrase de
+titre exacte (×3), un nom de personne (×1,5), les préfixes de titres (×1),
+un genre (×1, jamais devant un titre qui matche) — le tout toujours multiplié
+par la note bayésienne. La même requête sert la grille d'admin et la
+recherche publique (`webapp`).
+
+⚠️ Ce lot a changé le **mapping** : au déploiement, `search reindex` est à
+repasser sur chaque univers — la synchronisation ne rattrape pas un schéma.
+
+## 7. Ce qui n'est pas couvert (encore)
 
 * Les ~44 700 œuvres Wikidata sans id TMDB (dont ~300 séries arabes sans aucun
   identifiant externe) ne sont pas indexées : les routes ne savent de toute
@@ -258,3 +285,7 @@ sudo docker compose run --rm admin search status
   l'index reste à ~30 Mo par univers là où les synopsis multilingues le
   multiplieraient par cent. À rediscuter si un besoin réel de recherche
   documentaire apparaît.
+* Les noms de personnes ne se cherchent que dans la graphie de la source :
+  l'auteur stocké en arabe (« غابرييل غارثيا ماركيث ») ne répond pas à
+  « marquez ». Les alias multilingues de Wikidata sont la piste naturelle le
+  jour où ça compte.
