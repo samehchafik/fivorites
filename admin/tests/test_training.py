@@ -150,7 +150,10 @@ async def client(
     # de plus : ces tests portent sur la mécanique, pas sur la qualité des
     # vecteurs. Le simulacre garde la propriété qui compte — même texte, même
     # vecteur — sur laquelle repose le cache.
-    def faux_encodeur(texts, *, cache_dir=None):
+    # `model` est accepté et ignoré : la doublure n'a qu'un espace vectoriel,
+    # mais elle doit avoir la MÊME signature que `embed_texts` — sinon elle
+    # masque les appelants qui passent la spécification d'encodeur.
+    def faux_encodeur(texts, *, cache_dir=None, model=None):
         vecteurs = []
         for text in texts:
             graine = sum(ord(c) for c in text[:64])
@@ -1365,6 +1368,44 @@ async def test_le_secours_local_est_etiquete_et_ecarte_de_l_entrainement(
     rubric = {"version": "empreinte-v3", "prompt": "p" * 60, "axes": ["joie"]}
     with pytest.raises((EncodeurIndisponible, PasAssezDOeuvresErreur)):
         await entrainer_poids(conn, degrade, rubric)
+
+
+async def test_un_encodeur_local_est_bien_celui_qui_encode(
+    conn: psycopg.AsyncConnection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`EMBEDDER=local:/…` doit atteindre `embed_texts`, pas seulement l'etiquette.
+
+    Le defaut qu'il attrape a coute une passe et failli couter bien plus :
+    `encoder_dossier` appelait `embed_texts` SANS `model`, donc jina encodait
+    quel que soit le reglage — et le vecteur repartait range sous l'etiquette
+    de l'eleve. Deux espaces vectoriels dans une meme colonne, aucune erreur
+    levee, et une regression entrainee sur le mauvais modele.
+
+    On n'execute pas le modele : on verifie la seule chose qui a manque, que la
+    specification voyage jusqu'a l'encodeur.
+    """
+    import fiv_admin.routes.training as module
+    from fiv_admin.embed import etiquette
+    from fiv_admin.routes.training import encoder_dossier
+
+    await seed_series(conn, 2401)
+    built = await build_dossier(conn, 2401)
+    assert built is not None
+
+    demandes: list[str | None] = []
+
+    def faux_embed(textes: list[str], *, cache_dir: str | None = None, model: str | None = None):
+        demandes.append(model)
+        return [[0.1] * 512 for _ in textes]
+
+    monkeypatch.setattr(module, "embed_texts", faux_embed)
+
+    local = settings.model_copy(update={"embedder": "local:/modeles/eleve-distille"})
+    vecteur, label = await encoder_dossier(conn, local, built)
+
+    assert demandes == ["local:/modeles/eleve-distille"]
+    assert label == etiquette(local.embedder) == "eleve-distille"
+    assert len(vecteur) == 512
 
 
 def test_l_etiquette_distingue_les_trois_familles_d_encodeurs() -> None:

@@ -121,13 +121,15 @@ plutôt qu'un résultat complet en deux.
 ### L'admin le voit déjà
 
 Le montage est **dans le compose** depuis 2026-08-23 : `./export` est monté sur
-`/opt/models` du conteneur admin, en lecture seule. Tout ce que la distillation
-dépose dans `export/` est donc visible sous `/opt/models/<nom>` — l'élève
+`/modeles` du conteneur admin, en lecture seule. Pas sur `/opt/models` — c'est
+le cache fastembed de l'image, où jina est déposé à la construction ; monter
+par-dessus le masque et rend le cache non inscriptible. Tout ce que la distillation
+dépose dans `export/` est donc visible sous `/modeles/<nom>` — l'élève
 d'aujourd'hui comme celui qu'une re-distillation produira. Il ne reste que la
 ligne de `.env` :
 
 ```
-EMBEDDER=local:/opt/models/eleve-distille
+EMBEDDER=local:/modeles/eleve-distille
 ```
 
 (après un `docker compose up -d admin` si le service tournait avant le
@@ -159,7 +161,7 @@ ci-dessus). La comparaison, qui n'écrit rien :
 
 ```bash
 sudo docker compose run --rm admin training encodeurs \
-    --modeles local:/opt/models/eleve-distille,openai/text-embedding-3-large@512
+    --modeles local:/modeles/eleve-distille,openai/text-embedding-3-large@512
 ```
 
 C'est le seul juge qui compte : le MAE de validation croisée sur les œuvres
@@ -169,7 +171,7 @@ professeur en moyenne et rater précisément ce qui sert à noter.
 **Déployer seulement si l'écart au professeur est acceptable.** Ensuite :
 
 ```bash
-EMBEDDER=local:/opt/models/eleve-distille
+EMBEDDER=local:/modeles/eleve-distille
 ```
 
 puis `training poids` pour réentraîner la régression dans le nouvel espace —

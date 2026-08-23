@@ -105,18 +105,18 @@ La seule voie qui puisse faire mieux que ~0,8 sur la traîne. Deux pistes, à
 - `videos-check` périodique (existe) ; `training poids` après chaque campagne
   de notes ;
 - l'élève distillé est **branché** (décision du 2026-08-23 : la traîne se note
-  en local, sans dépendance API). Le compose monte `./export` sur `/opt/models`
+  en local, sans dépendance API). Le compose monte `./export` sur `/modeles`
   du conteneur admin, et la bascule tient en une ligne de `.env` :
 
   ```
-  EMBEDDER=local:/opt/models/eleve-distille
+  EMBEDDER=local:/modeles/eleve-distille
   ```
 
   Dans l'ordre, et le premier pas est obligatoire — les poids vivent dans
   l'espace de leur encodeur, `notation generer` refuse sans eux :
 
   ```bash
-  docker compose run --rm -e EMBEDDER=local:/opt/models/eleve-distille admin training poids
+  docker compose run --rm -e EMBEDDER=local:/modeles/eleve-distille admin training poids
   docker compose run --rm admin notation devis        # doit dire « gratuit »
   docker compose run --rm -d admin notation generer
   ```

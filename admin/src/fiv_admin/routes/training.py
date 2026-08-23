@@ -902,10 +902,20 @@ async def encoder_dossier(
     if en_cache is not None:
         return en_cache, secours
 
+    # `model` DOIT être passé, et l'oubli a coûté une passe : sans lui,
+    # `embed_texts` retombe sur `MODEL_NAME` — jina — quel que soit `EMBEDDER`.
+    # Un `EMBEDDER=local:/…/eleve-distille` encodait donc avec jina, et le
+    # vecteur repartait rangé sous l'étiquette de l'élève : deux espaces
+    # vectoriels confondus dans une même colonne, sans qu'aucune erreur se
+    # lève, et une régression entraînée sur le mauvais modèle.
+    #
+    # `None` quand la production est une API : on est alors sur le secours, qui
+    # est jina par définition, et `secours` porte déjà son étiquette.
+    modele = None if api is not None else settings.embedder
     # `to_thread` : l'inférence ONNX est du calcul bloquant, et la tenir dans
     # la boucle d'événements figerait l'API pendant tout un entraînement.
     vectors = await asyncio.to_thread(
-        embed_texts, [built["text"]], cache_dir=settings.embed_cache_dir
+        embed_texts, [built["text"]], cache_dir=settings.embed_cache_dir, model=modele
     )
     await _ranger_vecteur(conn, oeuvre_id, sha, secours, vectors[0])
     return vectors[0], secours
