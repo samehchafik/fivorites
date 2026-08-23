@@ -1,0 +1,10 @@
+# Toolchain vendorisée — même contrat que admin/uv.toml.
+#
+# `only-managed` interdit à uv d'utiliser un interpréteur du système : il ne
+# considère que les Python qu'il a lui-même installés. Le *répertoire* de ces
+# installations n'est pas configurable ici (uv ne lit que la variable
+# d'environnement UV_PYTHON_INSTALL_DIR) — c'est le Makefile qui la positionne
+# sur vendor/python. Les deux ensemble garantissent qu'on tourne toujours sur
+# le CPython de ce dépôt.
+python-preference = "only-managed"
+python-downloads = "automatic"

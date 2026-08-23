@@ -1,0 +1,44 @@
+---
+// Le gabarit commun : tout ce qu'une page SEO doit porter — titre, meta
+// description, Open Graph, langue — et rien d'interactif. Le JavaScript
+// n'entre que par les îlots React que chaque page décide de monter.
+import Header from '../components/Header.astro'
+import '../styles/global.css'
+
+interface Props {
+  titre: string
+  description: string
+}
+
+const { titre, description } = Astro.props
+---
+
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{titre}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={titre} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta name="generator" content={Astro.generator} />
+  </head>
+  <body>
+    <Header />
+    <main>
+      <slot />
+    </main>
+    <footer class="pied">
+      <div class="conteneur">
+        <span>FIVO — vos cinq meilleures œuvres, vos prochaines passions.</span>
+        <nav aria-label="Pied de page">
+          <a href="/series">Séries</a>
+          <a href="/films">Films</a>
+          <a href="/livres">Livres</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,52 @@
+---
+// Une page de contenu type, dans la mise en page de la home V1 : la ligne
+// rouge en capitales, puis le héros en deux colonnes — l'accroche serif et
+// les phrases à gauche, l'outil de suggestion à droite (là où la V1 mettait
+// sa capture : ici c'est le vrai composant) — et le corps Markdown dessous.
+import { getEntry, render } from 'astro:content'
+import Base from '../layouts/Base.astro'
+import FivoSuggest from './fivo/FivoSuggest'
+
+interface Props {
+  /** L'identifiant de l'entrée dans src/content/pages (ex. « accueil »). */
+  entree: string
+}
+
+const entree = await getEntry('pages', Astro.props.entree)
+if (!entree) {
+  throw new Error(`entrée de contenu introuvable : ${Astro.props.entree}`)
+}
+const { Content } = await render(entree)
+const { titre, description, surTitre, accroche, phrases, univers } = entree.data
+
+// Les ** du frontmatter deviennent des <strong> — c'est le seul balisage que
+// le sur-titre connaît, inutile d'invoquer un moteur Markdown pour ça.
+const sur_titre_html = surTitre
+  ?.replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+---
+
+<Base titre={titre} description={description}>
+  <section class="heros">
+    <div class="conteneur">
+      {sur_titre_html && <p class="sur-titre" set:html={sur_titre_html} />}
+      <div class="heros-grille">
+        <div class="heros-texte">
+          <h1>{accroche ?? titre}</h1>
+          {phrases?.map((phrase) => <p>{phrase}</p>)}
+          <a class="bouton-cta" href="#suggere-moi">Obtenez des suggestions personnalisées !</a>
+        </div>
+        <div class="heros-outil" id="suggere-moi">
+          {/* L'îlot : le seul JavaScript de la page. `client:load` — c'est
+              le cœur de l'expérience, on ne le fait pas attendre un scroll. */}
+          <FivoSuggest client:load universInitial={univers} />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <article class="prose">
+    <Content />
+  </article>
+</Base>

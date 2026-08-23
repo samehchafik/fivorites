@@ -1,0 +1,15 @@
+#!/bin/sh
+# Shim uv.
+#
+# uv ne sait lire le répertoire de ses interpréteurs QUE dans la variable
+# d'environnement UV_PYTHON_INSTALL_DIR — ce n'est pas une clé de uv.toml. Un
+# `uv run` lancé sans elle ne reconnaît pas le Python de vendor/, détruit la
+# venv et la recrée sur ~/.local/share/uv. Silencieusement.
+#
+# Ce shim rend ça impossible. Pour l'utiliser :  export PATH="$PWD/bin:$PATH"
+set -e
+here=$(cd -- "$(dirname -- "$0")/.." && pwd)
+UV_PYTHON_INSTALL_DIR="$here/vendor/python"
+export UV_PYTHON_INSTALL_DIR
+real=$(PATH=$(echo "$PATH" | tr ':' '\n' | grep -vFx "$here/bin" | paste -sd: -) command -v uv)
+exec "$real" "$@"

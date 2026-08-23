@@ -1,0 +1,373 @@
+/* Le socle du site public — la charte de la V1, reprise à l'identique.
+ *
+ * Les valeurs viennent du thème V1 (`public/theme/fivorites/static/css/
+ * custom.css`) : le carmin signature et son sombre (#FA0036 → #700031, le
+ * couple `--fivorites1/2` de tous les dégradés), les gris, Libre Baskerville
+ * pour les titres, Fira Sans pour tout le reste, le fond étoilé homeback.png
+ * sur les blocs sombres, et le liseré dégradé de 12 px sous l'en-tête.
+ */
+
+/* --- Les polices de la V1, auto-hébergées (pas de Google Fonts) ---------- */
+
+@font-face {
+  font-family: 'Libre Baskerville';
+  src: url('/fonts/LibreBaskerville-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Fira Sans';
+  src: url('/fonts/FiraSans-Light.woff2') format('woff2');
+  font-weight: 300;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Fira Sans';
+  src: url('/fonts/FiraSans-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Fira Sans';
+  src: url('/fonts/FiraSans-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Fira Sans';
+  src: url('/fonts/FiraSans-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+
+/* --- La palette V1 ------------------------------------------------------- */
+
+:root {
+  --red: hsl(347, 100%, 49%); /* #FA0036 — le carmin signature */
+  --red-light: hsl(354, 94%, 55%);
+  --purple-dark: hsl(334, 100%, 22%); /* #700031 — le bout sombre des dégradés */
+  --purple-light: hsl(268, 77%, 69%); /* #AC73ED — le violet des liserés séries */
+  --pink: rgba(251, 58, 149, 1); /* #FB3A95 */
+  --yes: rgba(0, 187, 0, 0.7);
+  --no: rgba(225, 0, 0, 0.6);
+
+  --gray-lightest: hsl(0, 0%, 96%);
+  --gray-lighter: hsl(0, 0%, 84%);
+  --gray-light: hsl(0, 1%, 72%);
+  --gray-medium: hsl(0, 0%, 47%);
+  --gray-dark: hsl(0, 0%, 23%);
+  --gray-darker: hsl(0, 0%, 15%);
+  --gray-darkest: hsl(0, 0%, 10%);
+
+  --fivorites1: var(--red);
+  --fivorites2: var(--purple-dark);
+
+  --header-bg: black;
+  --header-txt: hsl(0, 0%, 90%);
+  --header-height: 50px;
+  --gradient-height: 12px;
+  --max-width: 1320px;
+  --side-padding: 20px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (min-width: 64rem) {
+  html {
+    font-size: 18px;
+  }
+}
+
+/* La home V1 est sombre : le ciel étoilé porte tout. */
+body {
+  margin: 0;
+  font-family: 'Fira Sans', Verdana, sans-serif;
+  line-height: 150%;
+  color: var(--gray-light);
+  background: linear-gradient(180deg, var(--gray-darkest) 10%, black 100%);
+  background-color: var(--gray-darkest);
+}
+
+img {
+  max-width: 100%;
+}
+
+a {
+  color: var(--red-light);
+}
+
+.conteneur {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 var(--side-padding);
+}
+
+/* --- L'en-tête : noir, logo étoilé, nav en capitales avec les ▶︎ --------- */
+
+.entete {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--header-bg);
+  color: var(--header-txt);
+  /* Le liseré signature de la V1 : 12 px de dégradé carmin au-dessus du
+     bandeau noir — la bordure transparente réserve la place, le ::before la
+     peint (même mécanique que `body.gradient .page-header` en V1). */
+  border-top: var(--gradient-height) solid transparent;
+}
+
+.entete::before {
+  content: ' ';
+  position: absolute;
+  top: calc(var(--gradient-height) * -1);
+  left: 0;
+  width: 100%;
+  height: var(--gradient-height);
+  background: linear-gradient(90deg, var(--fivorites1) 0%, var(--fivorites2) 100%);
+}
+
+.entete-barre {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  height: var(--header-height);
+}
+
+.logo {
+  display: inline-block;
+  width: calc(var(--header-height) * 2.6);
+  height: var(--header-height);
+  background-image: url('/images/logo-fivorites-white.svg');
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center center;
+  opacity: 0.9;
+}
+
+.logo:hover {
+  opacity: 1;
+}
+
+.accessibilite {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.entete nav {
+  display: flex;
+  gap: 0.25rem;
+  text-transform: uppercase;
+  font-size: 0.9rem;
+}
+
+.entete nav a {
+  display: block;
+  padding: 0 1rem;
+  line-height: var(--header-height);
+  color: var(--header-txt);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.entete nav a:hover {
+  color: white;
+  text-shadow: 0 0 0.3rem rgba(255, 255, 255, 0.7);
+}
+
+.entete nav a[aria-current='page'] {
+  color: white;
+  font-weight: 500;
+}
+
+/* La puce ▶︎ de la V1 (U+25B6 + VS15, rendu texte) — portée par un span. */
+.entete nav .fleche {
+  font-size: 0.7em;
+  margin-right: 0.4em;
+  color: var(--red);
+}
+
+/* --- Le héros : le ciel étoilé de la home V1 ----------------------------- */
+
+.heros {
+  background-image: url('/images/homeback.png');
+  background-size: cover;
+  background-repeat: no-repeat;
+  text-shadow: 0 0 10px rgba(0, 0, 0, 0.4);
+  padding: 3rem 0 3.5rem;
+}
+
+/* « LE TOP DE LA CULTURE POP, SUR MESURE ! » — rouge clair, capitales,
+   graisse légère : la ligne d'entête d'article de la home V1. */
+.heros .sur-titre {
+  font-size: 1.6rem;
+  text-transform: uppercase;
+  font-weight: 300;
+  line-height: 130%;
+  color: var(--red-light);
+  text-align: center;
+  margin: 0 0 2.5rem;
+}
+
+.heros .sur-titre strong {
+  font-weight: 700;
+}
+
+/* Le serif de la V1 : Libre Baskerville, blanc, sans capitales forcées. */
+.heros h1 {
+  font-family: 'Libre Baskerville', Georgia, serif;
+  font-weight: 400;
+  font-size: 1.9rem;
+  line-height: 140%;
+  color: white;
+  margin: 0 0 1rem;
+  max-width: 34rem;
+}
+
+.heros p {
+  max-width: 34rem;
+  margin: 0 0 0.9rem;
+  font-size: 1.1rem;
+  line-height: 1.5em;
+  color: var(--gray-light);
+}
+
+/* Le héros en deux colonnes de la home V1 : le texte à gauche, l'outil à
+   droite. En dessous d'une largeur de tablette, l'outil passe sous le texte. */
+.heros-grille {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 2.5rem;
+  align-items: start;
+}
+
+@media (max-width: 56rem) {
+  .heros-grille {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Le bouton d'appel V1 : pilule en dégradé carmin. */
+.bouton-cta {
+  display: inline-block;
+  margin-top: 1rem;
+  padding: 0.55rem 1.4rem;
+  border-radius: 2rem;
+  background: linear-gradient(90deg, var(--fivorites1), var(--fivorites2));
+  color: white;
+  font-weight: 500;
+  text-decoration: none;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.bouton-cta:hover {
+  filter: brightness(1.1);
+}
+
+/* --- La section du composant -------------------------------------------- */
+
+.section-fivo {
+  padding: 2.5rem 0 3.5rem;
+}
+
+.section-fivo h2 {
+  font-family: 'Libre Baskerville', Georgia, serif;
+  font-weight: 400;
+  font-size: 1.6rem;
+  color: white;
+  text-align: center;
+  margin: 0 0 1.5rem;
+}
+
+/* --- Le corps éditorial (le Markdown des pages) -------------------------- */
+
+.prose {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1rem var(--side-padding) 4rem;
+}
+
+.prose h2 {
+  font-family: 'Libre Baskerville', Georgia, serif;
+  font-weight: 400;
+  font-size: 1.5rem;
+  color: white;
+  margin-top: 2.2rem;
+}
+
+.prose p {
+  color: var(--gray-light);
+}
+
+.prose strong {
+  color: white;
+}
+
+/* --- Le pied : le gris sombre de la V1 ----------------------------------- */
+
+.pied {
+  background-color: var(--gray-darkest);
+  border-top: 1px solid var(--gray-darker);
+  padding: 1.5rem 0 2rem;
+  color: var(--gray-light);
+  font-size: 0.9rem;
+}
+
+.pied .conteneur {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.pied h2 {
+  display: none;
+}
+
+.pied nav {
+  display: flex;
+  gap: 1rem;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+}
+
+.pied a {
+  color: var(--gray-light);
+  text-decoration: none;
+}
+
+.pied a:hover {
+  color: var(--gray-lighter);
+}
+
+@media (max-width: 40rem) {
+  .entete-barre {
+    gap: 0.75rem;
+  }
+
+  .entete nav a {
+    padding: 0 0.5rem;
+  }
+
+  .logo {
+    width: calc(var(--header-height) * 2);
+  }
+
+  .heros .sur-titre {
+    font-size: 1.15rem;
+  }
+}

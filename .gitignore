@@ -35,6 +35,19 @@ admin/.env
 front/node_modules/
 front/*.tsbuildinfo
 
+# --- webapp/ (API publique Python) et site/ (sources Astro du site public) ---
+# Mêmes principes que admin/ et front/ : toolchains vendorisées jamais
+# versionnées, réinstallables à l'identique depuis .python-version,
+# .node-version, uv.lock et package-lock.json.
+webapp/vendor/
+webapp/.venv/
+webapp/.pytest_cache/
+webapp/.ruff_cache/
+webapp/.env
+site/vendor/
+site/node_modules/
+site/.astro/
+
 # --- www/ : le répertoire statique, VERSIONNÉ ---
 # Il n'est volontairement pas ignoré : le build y produit toujours les trois
 # mêmes fichiers (noms fixes, la version étant portée par `?version=`), donc le

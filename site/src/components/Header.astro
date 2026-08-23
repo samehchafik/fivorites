@@ -1,0 +1,30 @@
+---
+// L'en-tête de la V1 : bandeau noir sous son liseré carmin, le logo
+// « fivorites » à l'étoile, et les univers en capitales précédés de la puce
+// ▶︎ (U+25B6 + sélecteur de variante texte — le même caractère que la V1).
+const univers = [
+  { chemin: '/series', label: 'Séries' },
+  { chemin: '/films', label: 'Films' },
+  { chemin: '/livres', label: 'Livres' },
+]
+
+const chemin_courant = Astro.url.pathname.replace(/\/$/, '') || '/'
+---
+
+<header class="entete">
+  <div class="conteneur entete-barre">
+    <a href="/" class="logo"><span class="accessibilite">Fivorites</span></a>
+    <nav aria-label="Univers">
+      {
+        univers.map((u) => (
+          <a href={u.chemin} aria-current={chemin_courant === u.chemin ? 'page' : undefined}>
+            <span class="fleche" aria-hidden="true">
+              ▶︎
+            </span>
+            {u.label}
+          </a>
+        ))
+      }
+    </nav>
+  </div>
+</header>

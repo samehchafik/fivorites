@@ -1,0 +1,46 @@
+{
+  "$ref": "#/definitions/pages",
+  "definitions": {
+    "pages": {
+      "type": "object",
+      "properties": {
+        "titre": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "surTitre": {
+          "type": "string"
+        },
+        "accroche": {
+          "type": "string"
+        },
+        "phrases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "univers": {
+          "type": "string",
+          "enum": [
+            "series",
+            "films",
+            "livres"
+          ]
+        },
+        "$schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "titre",
+        "description"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

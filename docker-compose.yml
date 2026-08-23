@@ -371,6 +371,61 @@ services:
       retries: 3
       start_period: 10s
 
+  # --- Site public -----------------------------------------------------------
+  #
+  # Le pendant public de `admin` : même mécanique, autre population. Deux
+  # sortes de requêtes :
+  #
+  #   /api/public/* → FastAPI, dans ce conteneur (recherche, signaux, suggestions)
+  #   tout le reste → des fichiers, lus dans ./www-site monté en volume
+  #
+  # Le site Astro n'est pas dans l'image — `www-site/` est versionné et arrive
+  # par `git pull`, comme `www/` pour l'admin. Pas de Node sur le serveur.
+  #
+  # Pas de login ici : la session est anonyme, posée au premier geste de
+  # classement, signée par WEBAPP_SECRET_KEY. C'est le seul service qui écrit
+  # dans le schéma `visiteur` — sa migration se joue par
+  #   docker compose run --rm webapp db migrate
+  webapp:
+    build:
+      context: ./webapp
+    image: fivorites-v2/webapp:latest
+    restart: unless-stopped
+    # `service_started`, pas `service_healthy` — mêmes raisons que pour
+    # l'admin : la recherche a son repli SQL, les suggestions leur 503 parlant,
+    # et un ES en panne ne doit pas empêcher un `db migrate`.
+    depends_on:
+      elasticsearch:
+        condition: service_started
+      neo4j:
+        condition: service_started
+    ports:
+      - "${WEBAPP_BIND:-0.0.0.0}:${WEBAPP_PORT:-8183}:8183"
+    volumes:
+      # Lecture seule : le service sert ces fichiers, il ne les écrit jamais.
+      - ./www-site:/srv/www-site:ro
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-fivorites_v2}:${DB_PASSWORD:?DB_PASSWORD doit être défini dans .env}@${DB_HOST:-172.28.0.1}:${DB_PORT:-5432}/${DB_NAME:-fivorites_v2}
+      SOURCING_SCHEMA: ${DB_SCHEMA:-sourcing}
+      # Obligatoire : sans elle un secret est tiré au hasard à chaque
+      # démarrage — et ici ce ne sont pas des sessions d'admin qui sautent,
+      # ce sont les classements de TOUS les visiteurs.  openssl rand -hex 32
+      SECRET_KEY: ${WEBAPP_SECRET_KEY:?WEBAPP_SECRET_KEY doit être défini dans .env}
+      COOKIE_SECURE: ${WEBAPP_COOKIE_SECURE:-false}
+      # Une seule origine en production (l'API sert le site) : rien en CORS.
+      CORS_ORIGINS: ""
+      WEB_DIST: /srv/www-site
+      ES_URL: ${ES_URL:-http://elasticsearch:9200}
+      NEO4J_URL: ${NEO4J_URL:-http://neo4j:7474}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8183/api/public/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   # Le graphe. Contenu dérivé lui aussi — `graphe projeter` le reconstruit
   # depuis Postgres — mais nettement plus long à refaire qu'un index de
