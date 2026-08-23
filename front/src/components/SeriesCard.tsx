@@ -34,6 +34,8 @@ export function SeriesCard({
   onTraining: (phase: 1 | 2) => void
 }) {
   const poster = tmdbImage(card.posterPath, 'w185')
+  // Même règle que la fiche (`SeriesModal`) : seule une série a des saisons.
+  const aDesSaisons = media === 'tv'
   const covered = languages.filter((language) => (card.coverage[language.code]?.ok ?? 0) > 0)
 
   return (
@@ -103,9 +105,16 @@ export function SeriesCard({
             <Badge size="sm" variant="light">
               {card.year ?? 'année inconnue'}
             </Badge>
-            <Badge size="sm" variant="light" color="grape">
-              {card.seasons ?? '?'} saison{(card.seasons ?? 0) > 1 ? 's' : ''}
-            </Badge>
+            {/* Les saisons n'existent que pour les séries. Le badge était
+                inconditionnel, et affichait donc « ? saisons » sur un livre
+                comme sur un film — une information vide là où il n'y a rien
+                à compter. Pour une série, le « ? » reste : là, il dit
+                vraiment « on ne sait pas encore ». */}
+            {aDesSaisons && (
+              <Badge size="sm" variant="light" color="grape">
+                {card.seasons ?? '?'} saison{(card.seasons ?? 0) > 1 ? 's' : ''}
+              </Badge>
+            )}
             {card.episodes ? (
               <Badge size="sm" variant="default">
                 {card.episodes} épisodes
