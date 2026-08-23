@@ -114,6 +114,20 @@ class TestConstruireDoc:
         assert doc["note_bayes"] == 8.51
         assert doc["has_poster"] is True
 
+    def test_personnes_fusionnees(self) -> None:
+        """Crédits TMDB et auteurs Wikidata se rejoignent dans `personnes`,
+        dédupliqués — c'est le champ qui rend un nom cherchable."""
+        doc = construire_doc(
+            _ligne(
+                id=1,
+                nom_inventaire="X",
+                personnes=["Emilia Clarke", "Kit Harington"],
+                auteurs=["Emilia Clarke", "George R. R. Martin"],
+            ),
+            "series",
+        )
+        assert doc["personnes"] == ["Emilia Clarke", "Kit Harington", "George R. R. Martin"]
+
     def test_conforme_au_mapping_strict(self) -> None:
         """`dynamic: strict` refuse tout champ inconnu : chaque clé produite
         doit exister dans le mapping, sinon la réindexation casse en vol."""
@@ -223,6 +237,31 @@ class TestCorpsRecherche:
             )
             assert corps["query"]["bool"]["filter"] == []
 
+    def test_personnes_et_genres_cherchables(self) -> None:
+        """La frappe passe aussi par les gens et par les genres : un acteur
+        tapé rend sa filmographie, « policier » rend les Crime — jamais devant
+        un titre exact (boosts : 3 > 1,5 > 1)."""
+        devrait = corps_recherche("spielberg", taille=10, depuis=0)["query"]["function_score"][
+            "query"
+        ]["bool"]["should"]
+        assert {
+            "match": {"personnes": {"query": "spielberg", "operator": "and", "boost": 1.5}}
+        } in devrait
+        assert {"match": {"genres.texte": {"query": "spielberg", "operator": "and"}}} in devrait
+
+    def test_synonymes_de_genres_a_la_requete(self) -> None:
+        """Les synonymes vivent dans l'analyseur de RECHERCHE : enrichir le
+        vocabulaire ne demande pas de réindexer. Et « policier » doit bien y
+        mener à Crime — c'est le cas d'usage qui a créé le champ."""
+        analyse = definition_index("series")["settings"]["analysis"]
+        assert any(
+            "policier" in ligne and "crime" in ligne
+            for ligne in analyse["filter"]["genres_synonymes"]["synonyms"]
+        )
+        assert "genres_synonymes" in analyse["analyzer"]["genres_recherche"]["filter"]
+        # L'analyseur d'INDEX des genres, lui, reste sans synonymes.
+        assert "genres_synonymes" not in analyse["analyzer"]["titres_index"]["filter"]
+
     def test_le_classement_ignore_la_popularite(self) -> None:
         """Le biais occidental de `popularity` (dictionnaire de données, §4)
         ne doit pas entrer dans la pertinence — la note bayésienne, si."""
@@ -327,6 +366,16 @@ PAYLOAD_1399 = {
     "original_language": "en",
     "origin_country": ["US"],
     "genres": [{"id": 1, "name": "Drame"}],
+    # Les crédits, réduits à ce que l'extraction des personnes regarde : la
+    # distribution consolidée, le département Directing, les créateurs.
+    "aggregate_credits": {
+        "cast": [{"name": "Emilia Clarke"}, {"name": "Kit Harington"}],
+        "crew": [
+            {"name": "Alan Taylor", "department": "Directing"},
+            {"name": "Ramin Djawadi", "department": "Sound"},
+        ],
+    },
+    "created_by": [{"name": "David Benioff"}],
     "alternative_titles": {"results": [{"iso_3166_1": "ES", "title": "Juego de tronos"}]},
     "translations": {
         "translations": [
@@ -394,10 +443,20 @@ class TestExtraction:
         # (8,4 × 22 000 + 6,5 × 50) / 22 050 : la formule de la grille.
         assert float(got["note_bayes"]) == pytest.approx(8.396, abs=0.001)
 
+        # Les gens : la distribution et le créateur entrent, le compositeur
+        # (département Sound) reste dehors — seul Directing passe le chemin.
+        assert sorted(got["personnes"]) == [
+            "Alan Taylor",
+            "David Benioff",
+            "Emilia Clarke",
+            "Kit Harington",
+        ]
+
         doc = construire_doc(got, "series")
         assert doc["fiche"] is True
         assert doc["has_poster"] is True
         assert "Le trône de fer" in doc["titres"]
+        assert "Emilia Clarke" in doc["personnes"]
 
         jamais = lignes[4000]
         assert jamais["titres"] is None

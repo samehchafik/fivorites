@@ -120,7 +120,22 @@ def definition_index(univers: str) -> dict[str, Any]:
                         "min_gram": 2,
                         "max_gram": 20,
                         "preserve_original": True,
-                    }
+                    },
+                    # Le vocabulaire des genres, côté requête seulement : les
+                    # gens tapent « policier », TMDB écrit « Crime ». La liste
+                    # est courte et curatée à la main — un thésaurus complet
+                    # serait un projet, pas un filtre. Pas de stemming dans la
+                    # chaîne, donc les variantes s'écrivent (déjà pliées :
+                    # minuscules, sans accent — asciifolding passe avant).
+                    "genres_synonymes": {
+                        "type": "synonym",
+                        "synonyms": [
+                            "policier, policiere, policieres, policiers, polar => crime",
+                            "sf => science fiction",
+                            "dessin anime, dessins animes, anime, animes => animation",
+                            "epouvante => horreur",
+                        ],
+                    },
                 },
                 "analyzer": {
                     "titres_index": {
@@ -135,6 +150,15 @@ def definition_index(univers: str) -> dict[str, Any]:
                         "type": "custom",
                         "tokenizer": "standard",
                         "filter": ["lowercase", "asciifolding"],
+                    },
+                    # La recherche dans les genres : la même chaîne, plus les
+                    # synonymes. À la requête seulement — l'index porte les
+                    # libellés TMDB tels quels, et enrichir le vocabulaire ne
+                    # demande donc pas de réindexer.
+                    "genres_recherche": {
+                        "type": "custom",
+                        "tokenizer": "standard",
+                        "filter": ["lowercase", "asciifolding", "genres_synonymes"],
                     },
                 },
             },
@@ -186,7 +210,30 @@ def definition_index(univers: str) -> dict[str, Any]:
                 # filtre du sélecteur de langue — absent des documents des
                 # autres univers, où la langue d'affichage n'est pas un filtre.
                 "langues": {"type": "keyword"},
-                "genres": {"type": "keyword"},
+                # Le keyword sert les filtres et les facettes ; le sous-champ
+                # `texte` rend le genre CHERCHABLE à la frappe — « poli »
+                # trouve les policiers — avec les synonymes ci-dessus.
+                "genres": {
+                    "type": "keyword",
+                    "fields": {
+                        "texte": {
+                            "type": "text",
+                            "analyzer": "titres_index",
+                            "search_analyzer": "genres_recherche",
+                            "norms": False,
+                        }
+                    },
+                },
+                # Ceux qui font l'œuvre : distribution (tronquée comme au
+                # graphe), réalisateurs, créateurs — et les auteurs pour les
+                # livres. C'est ce qui fait qu'un nom d'acteur ou d'écrivain
+                # tapé dans le champ rend ses œuvres.
+                "personnes": {
+                    "type": "text",
+                    "analyzer": "titres_index",
+                    "search_analyzer": "titres_recherche",
+                    "norms": False,
+                },
                 "origin_country": {"type": "keyword"},
                 # La moyenne bayésienne de `catalog.py`, figée à l'indexation :
                 # le classement n'a plus rien à calculer.
@@ -348,6 +395,14 @@ def corps_recherche(
     devrait: list[dict[str, Any]] = [
         {"match": {"titres": {"query": texte, "operator": "and"}}},
         {"match_phrase": {"titres.exact": {"query": texte, "boost": 3.0}}},
+        # Ceux qui font l'œuvre : un nom d'acteur, de réalisateur ou d'auteur
+        # tapé en entier doit rendre sa filmographie — devant les titres qui
+        # ne font que commencer pareil, derrière un titre exact.
+        {"match": {"personnes": {"query": texte, "operator": "and", "boost": 1.5}}},
+        # Les genres, avec leurs synonymes (« policier » → Crime) : taper un
+        # genre devient un parcours de l'univers, classé par la note — pas de
+        # boost, un genre ne doit jamais passer devant un titre qui matche.
+        {"match": {"genres.texte": {"query": texte, "operator": "and"}}},
     ]
     if texte.isdigit():
         devrait.append({"term": {"id_tmdb": {"value": int(texte), "boost": 10.0}}})
@@ -751,7 +806,33 @@ _EXTRACTION = sql.SQL(
                                 '[]'::jsonb)) tr
                ) t
                where nullif(btrim(t.titre), '') is not null
-           ) end as titres
+           ) end as titres,
+           {auteurs} as auteurs,
+           -- Ceux qui font l'œuvre, relus du brut comme les titres : la
+           -- distribution (tronquée aux mêmes quinze que le graphe — au-delà
+           -- c'est le figurant d'une réplique, du bruit pour la recherche),
+           -- la réalisation, la création. Les chemins jsonb divergent par
+           -- univers, comme au graphe : ils arrivent en paramètres.
+           case when rp.payload is null then null else array(
+               select distinct btrim(p.nom)
+               from (
+                   select membre ->> 'name' as nom
+                   from jsonb_array_elements(coalesce(
+                       nullif(jsonb_path_query_array(rp.payload, %(p_cast)s::jsonpath),
+                              '[]'::jsonb),
+                       jsonb_path_query_array(rp.payload, %(p_cast_repli)s::jsonpath)
+                   )) membre
+                   union all
+                   select membre ->> 'name'
+                   from jsonb_array_elements(
+                       jsonb_path_query_array(rp.payload, %(p_crew)s::jsonpath)) membre
+                   union all
+                   select membre ->> 'name'
+                   from jsonb_array_elements(
+                       coalesce(rp.payload -> 'created_by', '[]'::jsonb)) membre
+               ) p
+               where nullif(btrim(p.nom), '') is not null
+           ) end as personnes
     from inventaire c
     left join {vue} v on v.id = c.id
     left join oeuvre o on o.univers = %(univers)s and {oeuvre_cle} = c.id
@@ -802,15 +883,47 @@ def requete_extraction(media: Media) -> sql.Composed:
             if media.pivot_card
             else sql.SQL("null")
         ),
+        # Les auteurs d'un livre, canonisés par Wikidata — le seul créditage
+        # qu'un livre possède : pas de distribution, pas de réalisation. Même
+        # source que le graphe (`riche_source.facts -> 'auteurs'`).
+        auteurs=(
+            sql.SQL(
+                "(select array(select a ->> 'nom'"
+                " from riche_source rs, jsonb_array_elements(rs.facts -> 'auteurs') a"
+                " where rs.oeuvre_id = o.id and rs.source = 'wikidata'"
+                " and nullif(btrim(a ->> 'nom'), '') is not null))"
+            )
+            if media.pivot_card
+            else sql.SQL("null")
+        ),
     )
 
 
 def parametres_extraction(media: Media, ids: Sequence[int] | None = None) -> dict[str, Any]:
+    """Les paramètres de l'extraction — dont les chemins jsonb des crédits,
+    les mêmes que ceux du graphe (`fiv_admin.graphe`) : une série consolide
+    dans `aggregate_credits` et range les métiers dans `jobs`, un film n'a que
+    `credits`. Sur les univers sans crédits TMDB (les livres, dont le brut est
+    un lookup Wikidata), ces chemins ne trouvent rien — leurs auteurs arrivent
+    par la colonne `auteurs`."""
+    from fiv_admin.graphe import DISTRIBUTION_MAX
+
+    if media.univers == "series":
+        p_cast = f"$.aggregate_credits.cast[0 to {DISTRIBUTION_MAX - 1}]"
+        p_cast_repli = f"$.credits.cast[0 to {DISTRIBUTION_MAX - 1}]"
+        p_crew = '$.aggregate_credits.crew[*] ? (@.department == "Directing")'
+    else:
+        p_cast = f"$.credits.cast[0 to {DISTRIBUTION_MAX - 1}]"
+        p_cast_repli = p_cast
+        p_crew = '$.credits.crew[*] ? (@.job == "Director")'
     return {
         "source": SOURCE,
         "kind": media.kind,
         "univers": media.univers,
         "ids": list(ids) if ids is not None else None,
+        "p_cast": p_cast,
+        "p_cast_repli": p_cast_repli,
+        "p_crew": p_crew,
     }
 
 
@@ -834,6 +947,12 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
             titres.append(titre)
     nom_tri = row.get("name") or row.get("original_name") or row.get("nom_inventaire")
 
+    # Les gens : crédits TMDB pour séries et films, auteurs Wikidata pour les
+    # livres — les deux colonnes sont exclusives par construction, mais un
+    # doublon n'aurait de toute façon aucun effet sur un champ de recherche.
+    personnes: list[str] = list(row.get("personnes") or [])
+    personnes += [auteur for auteur in row.get("auteurs") or [] if auteur not in personnes]
+
     first_air_date = row.get("first_air_date")
     fetched_at = row.get("fetched_at")
     note = row.get("note_bayes")
@@ -844,6 +963,7 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
         "id_tmdb": row["id"],
         "oeuvre_id": row.get("oeuvre_id"),
         "titres": titres or None,
+        "personnes": personnes or None,
         "name": row.get("name"),
         "original_name": row.get("original_name") or row.get("nom_inventaire"),
         "nom_tri": _plier(nom_tri) if nom_tri else None,

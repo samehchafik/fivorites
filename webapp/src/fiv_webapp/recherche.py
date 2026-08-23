@@ -41,13 +41,18 @@ DISJONCTEUR_SECONDES = 30.0
 def corps_recherche(texte: str, *, taille: int) -> dict[str, Any]:
     """Le corps `_search` d'une frappe du composant.
 
-    Deux étages de pertinence, multipliés par la note bayésienne précalculée
-    dans le document — jamais `popularity`, biais occidental mesuré :
+    Quatre portes d'entrée, toutes multipliées par la note bayésienne
+    précalculée dans le document — jamais `popularity`, biais occidental
+    mesuré :
 
-    * `match` sur les préfixes, `operator: and` — chaque mot tapé doit ouvrir
-      un mot d'un titre ; c'est le filet ;
+    * `match` sur les préfixes des titres, `operator: and` — le filet ;
     * `match_phrase` sur les mots entiers, boostée — « game of thrones » tapé
-      en entier passe devant tout ce qui ne fait que commencer pareil.
+      en entier passe devant tout ce qui ne fait que commencer pareil ;
+    * les **personnes** (distribution, réalisateurs, créateurs, auteurs) —
+      un nom tapé rend sa filmographie ou sa bibliographie ;
+    * les **genres**, avec les synonymes posés à l'index (« policier » →
+      Crime) — taper un genre devient un parcours de l'univers, classé par
+      la note, jamais devant un titre qui matche.
     """
     return {
         "query": {
@@ -57,6 +62,16 @@ def corps_recherche(texte: str, *, taille: int) -> dict[str, Any]:
                         "should": [
                             {"match": {"titres": {"query": texte, "operator": "and"}}},
                             {"match_phrase": {"titres.exact": {"query": texte, "boost": 3.0}}},
+                            {
+                                "match": {
+                                    "personnes": {
+                                        "query": texte,
+                                        "operator": "and",
+                                        "boost": 1.5,
+                                    }
+                                }
+                            },
+                            {"match": {"genres.texte": {"query": texte, "operator": "and"}}},
                         ],
                         "minimum_should_match": 1,
                         "filter": [{"term": {"fiche": True}}],

@@ -65,7 +65,7 @@ export function Recherche({
         radius="xl"
         value={texte}
         onChange={(evenement) => setTexte(evenement.currentTarget.value)}
-        placeholder="Un titre… (« Le Trône de fer », « Dune », « Cent ans de solitude »)"
+        placeholder="Un titre, un genre, un acteur, un auteur… (« Dune », « policier », « Spielberg »)"
         aria-label="Rechercher une œuvre"
         autoComplete="off"
       />
