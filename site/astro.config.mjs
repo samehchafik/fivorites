@@ -7,10 +7,16 @@
 // Markdown versionné (`src/content/`), produit et retouché à la main ou par
 // IA : le CMS, c'est le dépôt.
 import react from '@astrojs/react'
+import sitemap from '@astrojs/sitemap'
 import { defineConfig } from 'astro/config'
 
 export default defineConfig({
-  integrations: [react()],
+  // L'adresse publique du site : c'est elle qui fabrique les URL canoniques
+  // des pages et celles du sitemap — le TLS devant est décrit dans
+  // doc/serveur-debian11.md (« Mettre five.ifrit.fr devant »).
+  site: 'https://five.ifrit.fr',
+
+  integrations: [react(), sitemap()],
 
   // Le build versionné, servi par le service webapp — même convention que
   // `www/` pour l'admin : sur le serveur il arrive par `git pull`, pas de

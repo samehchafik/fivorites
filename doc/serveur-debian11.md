@@ -726,6 +726,64 @@ comme un cookie d'admin. Tant que le proxy n'est pas là, le site marche —
 mais les classements des visiteurs voyagent en clair, et c'est une raison de
 ne pas tarder.
 
+### Mettre five.ifrit.fr devant (nginx + Let's Encrypt)
+
+Le proxy est **nginx**, sur l'hôte (paquet apt, pas un service du compose),
+avec un certificat Let's Encrypt obtenu par **certbot** en mode webroot et
+renouvelé par **cron**. Deux fichiers versionnés portent tout :
+
+| Fichier | Rôle |
+|---|---|
+| [`deploy/nginx-five.conf`](../deploy/nginx-five.conf) | le vhost — la source de vérité, copiée sur le serveur, jamais éditée sur place |
+| [`deploy/install-five.sh`](../deploy/install-five.sh) | la mise en service complète, en une commande |
+
+**Le seul prérequis manuel est le DNS** : un enregistrement `A` (et `AAAA` si
+la machine a une IPv6) qui pointe `five.ifrit.fr` vers le serveur. Le script
+refuse de démarrer tant qu'il ne résout pas — certbot échouerait de toute
+façon.
+
+Puis, depuis la racine du dépôt :
+
+```bash
+sudo FIVE_EMAIL=vous@exemple.fr ./deploy/install-five.sh
+```
+
+(l'adresse ne sert qu'à Let's Encrypt — les avis d'expiration du certificat.)
+
+Ce que le script enchaîne, idempotent de bout en bout — le relancer après un
+échec reprend où il en était :
+
+1. **le service** : `WEBAPP_SECRET_KEY` généré s'il manque (jamais réécrit —
+   il porte les classements des visiteurs), image construite, schéma
+   `visiteur` migré, conteneur démarré et sondé ;
+2. **nginx et certbot** installés par apt ;
+3. **le pare-feu** : 80 et 443 ouverts dans ufw s'il est actif — AVANT le
+   certificat, le défi ACME passe par 80. nginx est sur l'hôte : c'est le
+   pare-feu ordinaire qui s'applique, pas la chaîne DOCKER-USER du §4 ;
+4. **le certificat** : un vhost HTTP provisoire le temps du défi (le vhost
+   TLS référence des fichiers que certbot n'a pas encore écrits, `nginx -t`
+   refuserait), `certbot certonly --webroot`, puis le vhost définitif copié
+   depuis `deploy/nginx-five.conf` et rechargé sans coupure ;
+5. **le renouvellement** : `/etc/cron.d/five-certbot` — `certbot renew`
+   deux fois par jour, qui ne touche à rien tant que le certificat a plus de
+   trente jours, avec un `--deploy-hook` qui ne recharge nginx que si un
+   certificat a réellement changé ;
+6. **la fermeture** : une fois `https://five.ifrit.fr` vérifié — et
+   seulement alors, sinon un ACME en échec laisserait le site injoignable —
+   `WEBAPP_BIND=127.0.0.1` et `WEBAPP_COOKIE_SECURE=true` dans le `.env`,
+   et le conteneur recréé (`up -d` : la publication du port fait partie de
+   sa définition, un `restart` ne la changerait pas).
+
+Le script termine sur son bilan : le code HTTP du site, la réponse de
+`/api/public/health`, la redirection 301 du port 80, la date d'expiration du
+certificat. À vérifier en plus depuis l'extérieur : `http://<serveur>:8183`
+ne répond **plus** — c'est tout l'objet de `WEBAPP_BIND=127.0.0.1`.
+
+L'admin n'est pas concernée par cette bascule : elle reste joignable en
+direct sur `:8182` comme avant. Le jour où elle passe elle aussi derrière le
+TLS, c'est un second vhost sur le même modèle (`proxy_pass` vers 8182) et les
+deux lignes `ADMIN_BIND=127.0.0.1` + `ADMIN_COOKIE_SECURE=true` du §7.
+
 ## Sauvegarde
 
 La base est sur l'hôte : pas de volume Docker à sauvegarder.

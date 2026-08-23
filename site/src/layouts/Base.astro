@@ -11,6 +11,11 @@ interface Props {
 }
 
 const { titre, description } = Astro.props
+
+// L'URL canonique, bâtie sur `site` (astro.config.mjs) : c'est elle que les
+// moteurs doivent retenir, quel que soit le chemin par lequel la page est
+// arrivée (port direct, variantes d'hôte).
+const canonique = new URL(Astro.url.pathname, Astro.site)
 ---
 
 <!doctype html>
@@ -20,9 +25,11 @@ const { titre, description } = Astro.props
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{titre}</title>
     <meta name="description" content={description} />
+    <link rel="canonical" href={canonique} />
     <meta property="og:title" content={titre} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonique} />
     <meta name="generator" content={Astro.generator} />
   </head>
   <body>

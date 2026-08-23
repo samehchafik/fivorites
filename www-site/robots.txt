@@ -1,0 +1,5 @@
+# five.ifrit.fr — tout est indexable, et le sitemap dit quoi.
+User-agent: *
+Allow: /
+
+Sitemap: https://five.ifrit.fr/sitemap-index.xml
