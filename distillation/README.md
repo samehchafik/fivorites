@@ -118,18 +118,20 @@ Les trois réglages qui rendent ça tenable :
 `--limite 8000` coupe le corpus si tu veux un premier résultat en une nuit
 plutôt qu'un résultat complet en deux.
 
-### Copier l'élève dans l'image admin
+### L'admin le voit déjà
 
-Une fois `export/eleve-distille/` produit, il faut qu'`admin` le voie. Le plus
-simple, sans reconstruire d'image : le monter.
+Le montage est **dans le compose** depuis 2026-08-23 : `./export` est monté sur
+`/opt/models` du conteneur admin, en lecture seule. Tout ce que la distillation
+dépose dans `export/` est donc visible sous `/opt/models/<nom>` — l'élève
+d'aujourd'hui comme celui qu'une re-distillation produira. Il ne reste que la
+ligne de `.env` :
 
-```yaml
-    volumes:
-      - ./www:/srv/www:ro
-      - ./export/eleve-distille:/opt/models/eleve-distille:ro
+```
+EMBEDDER=local:/opt/models/eleve-distille
 ```
 
-Puis `EMBEDDER=local:/opt/models/eleve-distille` dans le `.env`.
+(après un `docker compose up -d admin` si le service tournait avant le
+`git pull` qui a amené le montage).
 
 ### La reprise
 
@@ -152,7 +154,8 @@ quelque chose ne va pas — et le script refuse d'exporter plutôt que d'écrire
 
 ## 3. Vérifier avant de déployer
 
-Copier `eleve-distille/` dans l'image admin sous `/opt/models/`, puis :
+L'élève est visible du conteneur dès qu'il est dans `export/` (montage
+ci-dessus). La comparaison, qui n'écrit rien :
 
 ```bash
 sudo docker compose run --rm admin training encodeurs \
