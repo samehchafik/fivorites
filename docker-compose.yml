@@ -292,6 +292,11 @@ services:
     volumes:
       # Lecture seule : le service sert ces fichiers, il ne les écrit jamais.
       - ./www:/srv/www:ro
+      # L'élève distillé. La distillation écrit dans ./export (son /travail) ;
+      # l'admin le lit ici, en lecture seule — il encode avec, il n'entraîne
+      # pas. Sans ce montage, EMBEDDER=local:/opt/models/… échoue sur
+      # « model.onnx introuvable » : le chemin n'existe que sur l'hôte.
+      - ./export:/opt/models:ro
     environment:
       DATABASE_URL: postgresql://${DB_USER:-fivorites_v2}:${DB_PASSWORD:?DB_PASSWORD doit être défini dans .env}@${DB_HOST:-172.28.0.1}:${DB_PORT:-5432}/${DB_NAME:-fivorites_v2}
       SOURCING_SCHEMA: ${DB_SCHEMA:-sourcing}
@@ -329,6 +334,12 @@ services:
       # modèle d'API 0,853. Si la clé OpenAI manque ou que l'API tombe, le local
       # reprend la main et son vecteur est rangé sous SON étiquette — il sert
       # l'affichage, jamais l'entraînement.
+      # Pour passer la production sur l'élève distillé, dans .env :
+      #   EMBEDDER=local:/opt/models/eleve-distille
+      # (le chemin est CELUI DU CONTENEUR — le montage ci-dessus fait pointer
+      # /opt/models vers ./export). Préalable obligatoire : un
+      # `EMBEDDER=local:… training poids`, sans quoi `notation generer` refuse
+      # — les poids vivent dans l'espace de leur encodeur.
       EMBEDDER: ${EMBEDDER:-openai/text-embedding-3-large@512}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}

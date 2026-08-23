@@ -104,9 +104,28 @@ La seule voie qui puisse faire mieux que ~0,8 sur la traîne. Deux pistes, à
   automatiquement ; noter le top des nouveautés au fil de l'eau ;
 - `videos-check` périodique (existe) ; `training poids` après chaque campagne
   de notes ;
-- l'élève distillé dort dans `export/` : il ne redevient d'actualité que si la
-  dépendance à l'API devient un problème — une heure de GPU (~2 $) avec
-  1 024 tokens ferait alors mieux que ses 0,937 actuels.
+- l'élève distillé est **branché** (décision du 2026-08-23 : la traîne se note
+  en local, sans dépendance API). Le compose monte `./export` sur `/opt/models`
+  du conteneur admin, et la bascule tient en une ligne de `.env` :
+
+  ```
+  EMBEDDER=local:/opt/models/eleve-distille
+  ```
+
+  Dans l'ordre, et le premier pas est obligatoire — les poids vivent dans
+  l'espace de leur encodeur, `notation generer` refuse sans eux :
+
+  ```bash
+  docker compose run --rm -e EMBEDDER=local:/opt/models/eleve-distille admin training poids
+  docker compose run --rm admin notation devis        # doit dire « gratuit »
+  docker compose run --rm -d admin notation generer
+  ```
+
+  À garder en tête : cet élève a été distillé sur processeur à 256 tokens, et
+  il rend **0,937** de MAE là où l'encodeur d'API rend 0,853 — c'est l'écart
+  qu'on accepte contre la gratuité et l'indépendance réseau. Une heure de GPU
+  (~2 $) avec 1 024 tokens resserrerait cet écart ; le jour venu, re-distiller
+  et rejouer `training poids` suffit, le reste de la chaîne ne bouge pas.
 
 ## 4. Ce qu'il ne faut PLUS essayer — la liste des leviers morts
 
