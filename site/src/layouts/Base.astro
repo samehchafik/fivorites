@@ -2,7 +2,13 @@
 // Le gabarit commun : tout ce qu'une page SEO doit porter — titre, meta
 // description, Open Graph, langue — et rien d'interactif. Le JavaScript
 // n'entre que par les îlots React que chaque page décide de monter.
+//
+// Exception assumée tant que `AVANT_PREMIERE` est vrai (src/config.ts) : la
+// page est en `noindex` et une modale d'entrée la couvre — OK la révèle, le
+// choix est retenu dans le navigateur. Son script tient en dix lignes,
+// inline, et disparaît du HTML avec le drapeau.
 import Header from '../components/Header.astro'
+import { AVANT_PREMIERE } from '../config'
 import '../styles/global.css'
 
 interface Props {
@@ -16,6 +22,27 @@ const { titre, description } = Astro.props
 // moteurs doivent retenir, quel que soit le chemin par lequel la page est
 // arrivée (port direct, variantes d'hôte).
 const canonique = new URL(Astro.url.pathname, Astro.site)
+
+// Le script du voile, en chaîne injectée par `set:html` : Astro n'évalue pas
+// d'expression à l'intérieur d'un <script>, et un bloc JSX y deviendrait du
+// texte inerte — mesuré ici même. Dix lignes : lever le voile si le
+// navigateur se souvient (localStorage), sinon le poser et retenir le OK.
+const script_voile = `(function () {
+  var voile = document.getElementById('voile-avant-premiere')
+  var lever = function () {
+    voile.remove()
+    document.documentElement.classList.remove('voile-pose')
+  }
+  try {
+    if (localStorage.getItem('fivo-avant-premiere') === 'vu') { lever(); return }
+  } catch (e) { /* navigation privée : la modale se remontre, sans gravité */ }
+  document.documentElement.classList.add('voile-pose')
+  document.getElementById('voile-ok').addEventListener('click', function () {
+    try { localStorage.setItem('fivo-avant-premiere', 'vu') } catch (e) {}
+    lever()
+  })
+  document.getElementById('voile-ok').focus()
+})()`
 ---
 
 <!doctype html>
@@ -25,14 +52,42 @@ const canonique = new URL(Astro.url.pathname, Astro.site)
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{titre}</title>
     <meta name="description" content={description} />
+    {AVANT_PREMIERE && <meta name="robots" content="noindex, nofollow" />}
     <link rel="canonical" href={canonique} />
     <meta property="og:title" content={titre} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={canonique} />
     <meta name="generator" content={Astro.generator} />
+    {
+      AVANT_PREMIERE && (
+        <noscript>
+          <style>{`.voile { display: none; }`}</style>
+        </noscript>
+      )
+    }
   </head>
   <body>
+    {
+      AVANT_PREMIERE && (
+        <div class="voile" id="voile-avant-premiere" role="dialog" aria-modal="true" aria-labelledby="voile-titre">
+          <div class="voile-panneau">
+            <p class="voile-marque" aria-hidden="true">
+              FIVO
+            </p>
+            <h1 id="voile-titre">Bienvenue en avant-première&nbsp;!</h1>
+            <p>
+              Le site est encore en construction&nbsp;: le catalogue se remplit, le moteur
+              apprend. Ce que vous voyez peut bouger d'un jour à l'autre — mais tout ce qui
+              est là marche pour de vrai.
+            </p>
+            <button type="button" id="voile-ok" class="bouton-cta">
+              OK, montre-moi&nbsp;!
+            </button>
+          </div>
+        </div>
+      )
+    }
     <Header />
     <main>
       <slot />
@@ -47,5 +102,6 @@ const canonique = new URL(Astro.url.pathname, Astro.site)
         </nav>
       </div>
     </footer>
+    {AVANT_PREMIERE && <script is:inline set:html={script_voile} />}
   </body>
 </html>

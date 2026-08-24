@@ -1,5 +1,3 @@
-# five.ifrit.fr — tout est indexable, et le sitemap dit quoi.
+# five.ifrit.fr — avant-première : rien à indexer pour l'instant.
 User-agent: *
-Allow: /
-
-Sitemap: https://five.ifrit.fr/sitemap-index.xml
+Disallow: /

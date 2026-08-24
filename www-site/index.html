@@ -1,4 +1,12 @@
-<!DOCTYPE html><html lang="fr"> <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>FIVO — des suggestions de séries, films et livres qui vous ressemblent</title><meta name="description" content="Partagez les 5 meilleures séries, films et livres de votre vie : FIVO apprend vos goûts et vous suggère les prochains coups de cœur."><link rel="canonical" href="https://five.ifrit.fr/"><meta property="og:title" content="FIVO — des suggestions de séries, films et livres qui vous ressemblent"><meta property="og:description" content="Partagez les 5 meilleures séries, films et livres de votre vie : FIVO apprend vos goûts et vous suggère les prochains coups de cœur."><meta property="og:type" content="website"><meta property="og:url" content="https://five.ifrit.fr/"><meta name="generator" content="Astro v5.18.2"><link rel="stylesheet" href="/_astro/films.DA9wGXps.css"></head> <body> <header class="entete"> <div class="conteneur entete-barre"> <a href="/" class="logo"><span class="accessibilite">Fivorites</span></a> <nav aria-label="Univers"> <a href="/series"> <span class="fleche" aria-hidden="true">
+<!DOCTYPE html><html lang="fr"> <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>FIVO — des suggestions de séries, films et livres qui vous ressemblent</title><meta name="description" content="Partagez les 5 meilleures séries, films et livres de votre vie : FIVO apprend vos goûts et vous suggère les prochains coups de cœur."><meta name="robots" content="noindex, nofollow"><link rel="canonical" href="https://five.ifrit.fr/"><meta property="og:title" content="FIVO — des suggestions de séries, films et livres qui vous ressemblent"><meta property="og:description" content="Partagez les 5 meilleures séries, films et livres de votre vie : FIVO apprend vos goûts et vous suggère les prochains coups de cœur."><meta property="og:type" content="website"><meta property="og:url" content="https://five.ifrit.fr/"><meta name="generator" content="Astro v5.18.2"><noscript><style>{`.voile { display: none; }`}</style></noscript><link rel="stylesheet" href="/_astro/films.jHT_MR1O.css"></head> <body> <div class="voile" id="voile-avant-premiere" role="dialog" aria-modal="true" aria-labelledby="voile-titre"> <div class="voile-panneau"> <p class="voile-marque" aria-hidden="true">
+FIVO
+</p> <h1 id="voile-titre">Bienvenue en avant-première&nbsp;!</h1> <p>
+Le site est encore en construction&nbsp;: le catalogue se remplit, le moteur
+              apprend. Ce que vous voyez peut bouger d'un jour à l'autre — mais tout ce qui
+              est là marche pour de vrai.
+</p> <button type="button" id="voile-ok" class="bouton-cta">
+OK, montre-moi&nbsp;!
+</button> </div> </div> <header class="entete"> <div class="conteneur entete-barre"> <a href="/" class="logo"><span class="accessibilite">Fivorites</span></a> <nav aria-label="Univers"> <a href="/series"> <span class="fleche" aria-hidden="true">
 ▶︎
 </span> Séries </a><a href="/films"> <span class="fleche" aria-hidden="true">
 ▶︎
@@ -19,4 +27,19 @@ voulez le voir — et c’est tout.</p>
 qui permet de mesurer à quel point deux histoires se ressemblent vraiment,
 au-delà du genre affiché.</p>
 <p>Le résultat : des suggestions qui collent, expliquées — vous savez toujours
-<em>pourquoi</em> une œuvre vous est proposée.</p> </article>  </main> <footer class="pied"> <div class="conteneur"> <span>FIVO — vos cinq meilleures œuvres, vos prochaines passions.</span> <nav aria-label="Pied de page"> <a href="/series">Séries</a> <a href="/films">Films</a> <a href="/livres">Livres</a> </nav> </div> </footer> </body></html>
+<em>pourquoi</em> une œuvre vous est proposée.</p> </article>  </main> <footer class="pied"> <div class="conteneur"> <span>FIVO — vos cinq meilleures œuvres, vos prochaines passions.</span> <nav aria-label="Pied de page"> <a href="/series">Séries</a> <a href="/films">Films</a> <a href="/livres">Livres</a> </nav> </div> </footer> <script>(function () {
+  var voile = document.getElementById('voile-avant-premiere')
+  var lever = function () {
+    voile.remove()
+    document.documentElement.classList.remove('voile-pose')
+  }
+  try {
+    if (localStorage.getItem('fivo-avant-premiere') === 'vu') { lever(); return }
+  } catch (e) { /* navigation privée : la modale se remontre, sans gravité */ }
+  document.documentElement.classList.add('voile-pose')
+  document.getElementById('voile-ok').addEventListener('click', function () {
+    try { localStorage.setItem('fivo-avant-premiere', 'vu') } catch (e) {}
+    lever()
+  })
+  document.getElementById('voile-ok').focus()
+})()</script> </body> </html>

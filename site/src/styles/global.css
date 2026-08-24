@@ -317,6 +317,86 @@ a {
   color: white;
 }
 
+/* --- Le voile d'avant-première (voir src/config.ts) ---------------------- */
+
+/* Tant que le voile est posé, la page ne défile pas derrière lui. */
+html.voile-pose {
+  overflow: hidden;
+}
+
+.voile {
+  position: fixed;
+  inset: 0;
+  z-index: 100; /* au-dessus de l'en-tête collant (z-index 10) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background:
+    url('/images/homeback.png') center / cover no-repeat,
+    linear-gradient(180deg, var(--gray-darkest) 10%, black 100%);
+}
+
+.voile-panneau {
+  max-width: 26rem;
+  padding: 2rem 1.75rem 1.75rem;
+  text-align: center;
+  color: white;
+  background: linear-gradient(var(--fivorites2), var(--fivorites1));
+  box-shadow: 0 0 60px rgba(250, 0, 54, 0.35);
+  border-radius: 6px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* La même étoile en filigrane que le panneau du composant. */
+.voile-panneau::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url('/images/star-white.svg') no-repeat -10% 110% / 55%;
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+.voile-panneau > * {
+  position: relative;
+}
+
+.voile-marque {
+  margin: 0 0 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  font-size: 1.1rem;
+  opacity: 0.85;
+}
+
+.voile-panneau h1 {
+  font-family: 'Libre Baskerville', Georgia, serif;
+  font-weight: 400;
+  font-size: 1.45rem;
+  line-height: 130%;
+  margin: 0 0 0.8rem;
+}
+
+.voile-panneau p {
+  margin: 0 0 1.2rem;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.98rem;
+}
+
+/* Le bouton reprend .bouton-cta ; sur fond carmin il s'inverse : blanc,
+   texte rouge — sinon il se fondrait dans le panneau. */
+.voile-panneau .bouton-cta {
+  background: white;
+  color: var(--fivorites1);
+  font-weight: 700;
+  border: 0;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-top: 0;
+}
+
 /* --- Le pied : le gris sombre de la V1 ----------------------------------- */
 
 .pied {
