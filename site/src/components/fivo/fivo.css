@@ -327,6 +327,246 @@
   color: white;
 }
 
+/* --- La fiche détaillée (la modale ouverte au clic sur une carte) -------- */
+
+.fivo-carte {
+  cursor: pointer;
+}
+
+.fivo-carte:hover {
+  box-shadow: 0 0 26px rgba(112, 0, 49, 0.85);
+}
+
+.fiche-modale {
+  background: var(--gray-darkest, #1a1a1a);
+  color: var(--gray-light, #b8b7b7);
+  overflow: hidden;
+}
+
+.fiche-corps {
+  padding: 0;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+/* L'en-tête de Mantine ne contient que la croix : sans ce traitement, il
+   pose un bandeau blanc au-dessus de l'image de fond. On le rend flottant. */
+.fiche-tete {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  background: transparent;
+  padding: 0.6rem;
+  min-height: 0;
+}
+
+.fiche-fermer {
+  color: white;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.fiche-fermer:hover {
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+}
+
+/* L'en-tête : l'image de fond TMDB en bandeau, assombrie pour que le titre
+   reste lisible quelle que soit l'image. */
+.fiche-entete {
+  background-size: cover;
+  background-position: center 20%;
+}
+
+/* Sans image de fond — c'est le cas de tous les livres — le dégradé carmin
+   tient le rôle : la modale garde sa silhouette au lieu d'un trou noir. */
+.fiche-entete-nue {
+  background: linear-gradient(var(--fivorites2, #700031), var(--fivorites1, #fa0036));
+}
+
+.fiche-entete-voile {
+  display: flex;
+  gap: 1.1rem;
+  padding: 1.5rem 1.5rem 1.2rem;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.55) 0%, rgba(26, 26, 26, 0.96) 100%);
+}
+
+.fiche-affiche {
+  width: 118px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  border-radius: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+}
+
+.fiche-affiche-vide {
+  height: 172px;
+  background:
+    url('/images/star-white.svg') no-repeat center / 45%,
+    linear-gradient(0deg, var(--fivorites1, #fa0036), var(--fivorites2, #700031));
+}
+
+.fiche-entete-texte {
+  min-width: 0;
+}
+
+.fiche-entete-texte h2 {
+  font-family: 'Libre Baskerville', Georgia, serif;
+  font-weight: 400;
+  font-size: 1.5rem;
+  line-height: 125%;
+  color: white;
+  margin: 0 0 0.3rem;
+}
+
+.fiche-original {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+  color: var(--gray-medium, #787878);
+}
+
+.fiche-accroche {
+  margin: 0 0 0.5rem;
+  font-style: italic;
+  color: var(--red-light, #f82036);
+}
+
+.fiche-faits {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  color: var(--gray-lighter, #d6d6d6);
+}
+
+.fiche-genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fiche-genres li {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 1rem;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.fiche-contenu {
+  padding: 1.2rem 1.5rem 0.5rem;
+}
+
+.fiche-synopsis {
+  margin: 0 0 1.4rem;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.fiche-section {
+  margin-bottom: 1.4rem;
+}
+
+.fiche-section h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--red-light, #f82036);
+}
+
+.fiche-noms {
+  margin: 0;
+  color: var(--gray-lighter, #d6d6d6);
+}
+
+/* Les visages : une bande qui défile horizontalement plutôt qu'une grille
+   qui pousse les saisons hors de l'écran. */
+.fiche-gens {
+  display: flex;
+  gap: 0.9rem;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0.4rem;
+  overflow-x: auto;
+}
+
+.fiche-gens li {
+  width: 84px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 0.78rem;
+}
+
+.fiche-gens img,
+.fiche-visage-vide {
+  display: block;
+  width: 68px;
+  height: 68px;
+  margin: 0 auto 0.35rem;
+  border-radius: 50%;
+  object-fit: cover;
+  background: linear-gradient(var(--fivorites2, #700031), var(--fivorites1, #fa0036));
+}
+
+.fiche-gens strong {
+  display: block;
+  color: white;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.fiche-gens span {
+  color: var(--gray-medium, #787878);
+  font-size: 0.72rem;
+}
+
+.fiche-saisons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.fiche-saisons li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.45rem 0.7rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+}
+
+.fiche-saisons strong {
+  color: white;
+  font-weight: 500;
+}
+
+.fiche-saisons span {
+  color: var(--gray-medium, #787878);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Le pied colle en bas : les trois gestes restent visibles pendant qu'on lit
+   le synopsis — c'est ici qu'on se décide. */
+.fiche-pied {
+  position: sticky;
+  bottom: 0;
+  padding: 0.8rem 1.5rem;
+  background: linear-gradient(var(--fivorites2, #700031), var(--fivorites1, #fa0036));
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.fiche-pied .fivo-gestes {
+  justify-content: center;
+  padding-top: 0;
+}
+
 @media (max-width: 40rem) {
   .fivo-contenu {
     padding: 0.8rem 0.8rem 1rem;
@@ -334,5 +574,16 @@
 
   .fivo-affiche {
     width: 72px;
+  }
+
+  .fiche-entete-voile,
+  .fiche-contenu,
+  .fiche-pied {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .fiche-affiche {
+    width: 88px;
   }
 }

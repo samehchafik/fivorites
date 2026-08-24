@@ -72,8 +72,9 @@ WHERE v.membreId IN $voisins
   AND reco.univers = $univers
   AND NOT reco.oeuvreId IN $exclues
 WITH reco, count(DISTINCT v) AS voisins, avg(6 - coalesce(c.rang, 5)) AS force
-RETURN reco.oeuvreId AS oeuvreId, reco.titre AS titre, reco.annee AS annee,
-       reco.affiche AS affiche, reco.univers AS univers, voisins, force
+RETURN reco.oeuvreId AS oeuvreId, reco.idTmdb AS idTmdb, reco.titre AS titre,
+       reco.annee AS annee, reco.affiche AS affiche, reco.univers AS univers,
+       voisins, force
 ORDER BY voisins DESC, force DESC, reco.oeuvreId
 LIMIT $limite
 """
@@ -95,8 +96,8 @@ WHERE node.univers = $univers
   AND NOT node.oeuvreId IN $exclues
   AND node.oeuvreId <> s.oeuvreId
 WITH node, max(score) AS score
-RETURN node.oeuvreId AS oeuvreId, node.titre AS titre, node.annee AS annee,
-       node.affiche AS affiche, node.univers AS univers, score
+RETURN node.oeuvreId AS oeuvreId, node.idTmdb AS idTmdb, node.titre AS titre,
+       node.annee AS annee, node.affiche AS affiche, node.univers AS univers, score
 ORDER BY score DESC, node.oeuvreId
 LIMIT $limite
 """
@@ -122,12 +123,26 @@ class Suggestion:
     univers_interne: str
     # `voisins` quand la communauté la porte, `proche` quand c'est l'empreinte.
     source: str
+    # L'identifiant TMDB, porté par le nœud — nul pour un livre, qui n'en a
+    # pas. C'est lui qui donne la clé de vignette (voir `cle_vignette`), celle
+    # que la fiche détaillée attend.
+    id_tmdb: int | None = None
     voisins: int | None = None
     force: float | None = None
     distance: float | None = None
 
+    @property
+    def cle_vignette(self) -> int:
+        """La clé que la carte et la fiche manipulent : l'identifiant TMDB
+        quand il existe, le pivot sinon — exactement la règle de
+        `univers.pivot_card`."""
+        return self.id_tmdb if self.id_tmdb is not None else self.oeuvre_id
+
     def publique(self, slug: str) -> dict[str, Any]:
         return {
+            # `id` est nommé comme sur une carte de recherche, et pour la même
+            # raison : c'est la clé qui ouvre la fiche.
+            "id": self.cle_vignette,
             "oeuvreId": self.oeuvre_id,
             "titre": self.titre,
             "annee": self.annee,
@@ -199,6 +214,7 @@ class Suggestions:
         return [
             Suggestion(
                 oeuvre_id=ligne["oeuvreId"],
+                id_tmdb=ligne.get("idTmdb"),
                 titre=ligne["titre"],
                 annee=ligne["annee"],
                 affiche=ligne["affiche"],
@@ -232,6 +248,7 @@ class Suggestions:
             retenues.append(
                 Suggestion(
                     oeuvre_id=ligne["oeuvreId"],
+                    id_tmdb=ligne.get("idTmdb"),
                     titre=ligne["titre"],
                     annee=ligne["annee"],
                     affiche=ligne["affiche"],

@@ -2,7 +2,7 @@
 // relaie /api vers le service webapp (astro.config.mjs), en production c'est
 // le service qui sert le site — le cookie de session reste propriétaire.
 
-import type { Carte, Signal, Statut, Suggestion, UniversSlug } from './types'
+import type { Carte, Fiche, Signal, Statut, Suggestion, UniversSlug } from './types'
 
 const BASE = '/api/public'
 
@@ -36,6 +36,13 @@ export function rechercher(
   return requete(`/recherche?${params}`, { signal })
 }
 
+/** La fiche détaillée. `identifiant` est la clé de la vignette — celle que
+ *  la carte porte dans `id`, jamais le pivot. */
+export function chargerFiche(univers: UniversSlug, identifiant: number): Promise<Fiche> {
+  const params = new URLSearchParams({ univers })
+  return requete(`/fiche/${identifiant}?${params}`)
+}
+
 export function listerSignaux(): Promise<{ items: Signal[] }> {
   return requete('/signaux')
 }
@@ -63,8 +70,12 @@ export function chargerSuggestions(
 }
 
 /** L'affiche prête pour un <img> : un chemin TMDB se préfixe, une URL
- *  complète (couvertures Open Library des livres) passe telle quelle. */
-export function urlAffiche(affiche: string | null): string | null {
+ *  complète (couvertures Open Library des livres) passe telle quelle.
+ *
+ *  `taille` est un format TMDB (`w185` la vignette, `w342` la modale,
+ *  `w780` l'image de fond, `w45` un visage) : demander la bonne évite de
+ *  télécharger une affiche de 2 Mo pour une pastille de 40 pixels. */
+export function urlAffiche(affiche: string | null, taille = 'w185'): string | null {
   if (!affiche) return null
-  return affiche.startsWith('http') ? affiche : `https://image.tmdb.org/t/p/w185${affiche}`
+  return affiche.startsWith('http') ? affiche : `https://image.tmdb.org/t/p/${taille}${affiche}`
 }

@@ -28,10 +28,11 @@ from fastapi.staticfiles import StaticFiles
 from fiv_webapp.cartes import Cartes
 from fiv_webapp.config import Settings, get_settings
 from fiv_webapp.db import build_pool
+from fiv_webapp.fiche import Fiches
 from fiv_webapp.graphe import Graphe
 from fiv_webapp.jeton import JetonSession
 from fiv_webapp.recherche import Recherche
-from fiv_webapp.routes import recherche, signaux, suggestions
+from fiv_webapp.routes import fiche, recherche, signaux, suggestions
 from fiv_webapp.signaux import Signaux
 
 log = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.jeton = JetonSession(secret, ttl_seconds=settings.session_ttl_days * 86400)
     app.state.cartes = Cartes()
+    app.state.fiches = Fiches()
     app.state.signaux = Signaux()
 
     # En développement seulement : Astro sert le site sur 4321, l'API répond
@@ -130,6 +132,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     app.include_router(recherche.router, prefix="/api/public", tags=["recherche"])
+    app.include_router(fiche.router, prefix="/api/public", tags=["fiche"])
     app.include_router(signaux.router, prefix="/api/public", tags=["signaux"])
     app.include_router(suggestions.router, prefix="/api/public", tags=["suggestions"])
 

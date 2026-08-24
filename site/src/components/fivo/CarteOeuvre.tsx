@@ -16,6 +16,7 @@ export function CarteOeuvre({
   explication,
   statutActuel,
   classable,
+  onOuvrir,
   onClasser,
   onDeclasser,
 }: {
@@ -29,12 +30,28 @@ export function CarteOeuvre({
   explication?: string
   statutActuel: Statut | null
   classable: boolean
+  /** Ouvre la fiche détaillée. Toute la carte y mène sauf les trois gestes,
+   *  qui arrêtent la propagation : classer depuis la liste doit rester un
+   *  seul clic. */
+  onOuvrir: () => void
   onClasser: (statut: Statut) => void
   onDeclasser: () => void
 }) {
   const image = urlAffiche(affiche)
   return (
-    <article className={`fivo-carte${statutActuel ? ` fivo-carte-${statutActuel}` : ''}`}>
+    <article
+      className={`fivo-carte${statutActuel ? ` fivo-carte-${statutActuel}` : ''}`}
+      onClick={onOuvrir}
+      role="button"
+      tabIndex={0}
+      aria-label={`Voir la fiche de ${titre ?? 'cette œuvre'}`}
+      onKeyDown={(evenement) => {
+        if (evenement.key === 'Enter' || evenement.key === ' ') {
+          evenement.preventDefault()
+          onOuvrir()
+        }
+      }}
+    >
       {image ? (
         <img className="fivo-affiche" src={image} alt="" loading="lazy" />
       ) : (
@@ -63,12 +80,16 @@ export function CarteOeuvre({
             {synopsis}
           </p>
         )}
-        <BoutonsClassement
-          statutActuel={statutActuel}
-          desactive={!classable}
-          onClasser={onClasser}
-          onDeclasser={onDeclasser}
-        />
+        {/* Les gestes vivent sur une carte entièrement cliquable : sans ce
+            `stopPropagation`, classer ouvrirait aussi la fiche par-dessus. */}
+        <div onClick={(evenement) => evenement.stopPropagation()}>
+          <BoutonsClassement
+            statutActuel={statutActuel}
+            desactive={!classable}
+            onClasser={onClasser}
+            onDeclasser={onDeclasser}
+          />
+        </div>
       </div>
     </article>
   )

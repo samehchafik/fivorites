@@ -27,6 +27,7 @@ export function Suggestions({
   univers,
   statuts,
   versionSignaux,
+  onOuvrir,
   onClasser,
   onDeclasser,
 }: {
@@ -34,6 +35,7 @@ export function Suggestions({
   statuts: Record<number, Statut>
   /** Incrémentée à chaque geste de classement — le déclencheur du rechargement. */
   versionSignaux: number
+  onOuvrir: (identifiant: number, oeuvreId: number | null) => void
   onClasser: (oeuvreId: number, univers: UniversSlug, statut: Statut) => void
   onDeclasser: (oeuvreId: number) => void
 }) {
@@ -92,6 +94,7 @@ export function Suggestions({
             explication={expliquer(suggestion)}
             statutActuel={statuts[suggestion.oeuvreId] ?? null}
             classable
+            onOuvrir={() => onOuvrir(suggestion.id, suggestion.oeuvreId)}
             onClasser={(statut) => onClasser(suggestion.oeuvreId, univers, statut)}
             onDeclasser={() => onDeclasser(suggestion.oeuvreId)}
           />

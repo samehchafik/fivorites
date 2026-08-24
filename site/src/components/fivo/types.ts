@@ -30,7 +30,52 @@ export interface Signal {
   annee: number | null
 }
 
+export interface Personne {
+  nom: string
+  /** Le personnage joué, « Création », « Réalisation » ou « Auteur ». */
+  role: string | null
+  photo: string | null
+  episodes: number | null
+}
+
+export interface Saison {
+  numero: number
+  nom: string | null
+  annee: number | null
+  episodes: number | null
+  affiche: string | null
+  synopsis: string | null
+}
+
+/** L'œuvre en grand — ce que la modale affiche. Un livre a les mêmes clés,
+ *  ses saisons et sa distribution étant simplement vides. */
+export interface Fiche {
+  id: number
+  oeuvreId: number | null
+  univers: UniversSlug
+  titre: string | null
+  titreOriginal: string | null
+  accroche: string | null
+  annee: number | null
+  synopsis: string | null
+  affiche: string | null
+  fond: string | null
+  genres: string[]
+  note: number | null
+  votes: number | null
+  statut: string | null
+  pays: string[]
+  langue: string | null
+  saisonsTotal: number | null
+  episodesTotal: number | null
+  distribution: Personne[]
+  realisation: Personne[]
+  saisons: Saison[]
+}
+
 export interface Suggestion {
+  /** La clé de vignette — id TMDB, ou pivot pour un livre. Ouvre la fiche. */
+  id: number
   oeuvreId: number
   titre: string | null
   annee: number | null

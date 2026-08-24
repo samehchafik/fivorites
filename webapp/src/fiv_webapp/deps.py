@@ -19,6 +19,7 @@ import psycopg
 from fastapi import Depends, HTTPException, Request, Response, status
 
 from fiv_webapp.cartes import Cartes
+from fiv_webapp.fiche import Fiches
 from fiv_webapp.graphe import Graphe
 from fiv_webapp.jeton import JetonSession
 from fiv_webapp.recherche import Recherche
@@ -42,6 +43,10 @@ def obtenir_cartes(request: Request) -> Cartes:
     return request.app.state.cartes
 
 
+def obtenir_fiches(request: Request) -> Fiches:
+    return request.app.state.fiches
+
+
 def obtenir_signaux(request: Request) -> Signaux:
     return request.app.state.signaux
 
@@ -52,6 +57,7 @@ def obtenir_graphe(request: Request) -> Graphe | None:
 
 RechercheDep = Annotated[Recherche, Depends(obtenir_recherche)]
 CartesDep = Annotated[Cartes, Depends(obtenir_cartes)]
+FichesDep = Annotated[Fiches, Depends(obtenir_fiches)]
 SignauxDep = Annotated[Signaux, Depends(obtenir_signaux)]
 GrapheOpt = Annotated[Graphe | None, Depends(obtenir_graphe)]
 

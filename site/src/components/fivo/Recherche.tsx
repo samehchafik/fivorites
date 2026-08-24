@@ -17,12 +17,15 @@ const FRAPPE_MIN = 2
 export function Recherche({
   univers,
   statuts,
+  onOuvrir,
   onClasser,
   onDeclasser,
 }: {
   univers: UniversSlug
   /** Les classements de la session, par pivot — pour rallumer les boutons. */
   statuts: Record<number, Statut>
+  /** Ouvre la fiche : la clé de vignette, et le pivot pour les boutons. */
+  onOuvrir: (identifiant: number, oeuvreId: number | null) => void
   onClasser: (oeuvreId: number, univers: UniversSlug, statut: Statut) => void
   onDeclasser: (oeuvreId: number) => void
 }) {
@@ -97,6 +100,7 @@ export function Recherche({
             note={carte.note}
             statutActuel={carte.oeuvreId != null ? (statuts[carte.oeuvreId] ?? null) : null}
             classable={carte.oeuvreId != null}
+            onOuvrir={() => onOuvrir(carte.id, carte.oeuvreId)}
             onClasser={(statut) => {
               if (carte.oeuvreId != null) onClasser(carte.oeuvreId, univers, statut)
             }}

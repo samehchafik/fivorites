@@ -15,6 +15,7 @@ import { MantineProvider, Tabs, UnstyledButton } from '@mantine/core'
 import { useEffect, useState } from 'react'
 
 import { listerSignaux, poserSignal, retirerSignal } from './api'
+import { FicheModale } from './FicheModale'
 import { Recherche } from './Recherche'
 import { Suggestions } from './Suggestions'
 import { UNIVERS_LABELS, type Statut, type UniversSlug } from './types'
@@ -43,6 +44,9 @@ export default function FivoSuggest({
   const [statuts, setStatuts] = useState<Record<number, Statut>>({})
   // Incrémentée à chaque geste : le signal de rechargement des suggestions.
   const [versionSignaux, setVersionSignaux] = useState(0)
+  // La fiche ouverte : sa clé de vignette (ce que l'API demande) et son
+  // pivot (ce que les boutons manipulent). `null` = rien d'ouvert.
+  const [ouverte, setOuverte] = useState<{ id: number; oeuvreId: number | null } | null>(null)
 
   useEffect(() => {
     listerSignaux()
@@ -90,6 +94,8 @@ export default function FivoSuggest({
       setStatuts((courants) => ({ ...courants, [oeuvreId]: precedent }))
     }
   }
+
+  const ouvrir = (id: number, oeuvreId: number | null) => setOuverte({ id, oeuvreId })
 
   const nombre_aimes = Object.values(statuts).filter((statut) => statut === 'aime').length
 
@@ -149,6 +155,7 @@ export default function FivoSuggest({
               <Recherche
                 univers={univers}
                 statuts={statuts}
+                onOuvrir={ouvrir}
                 onClasser={classer}
                 onDeclasser={declasser}
               />
@@ -157,12 +164,22 @@ export default function FivoSuggest({
                 univers={univers}
                 statuts={statuts}
                 versionSignaux={versionSignaux}
+                onOuvrir={ouvrir}
                 onClasser={classer}
                 onDeclasser={declasser}
               />
             )}
           </div>
         </div>
+
+        <FicheModale
+          univers={univers}
+          identifiant={ouverte?.id ?? null}
+          statutActuel={ouverte?.oeuvreId != null ? (statuts[ouverte.oeuvreId] ?? null) : null}
+          onFermer={() => setOuverte(null)}
+          onClasser={(oeuvreId, statut) => classer(oeuvreId, univers, statut)}
+          onDeclasser={declasser}
+        />
       </section>
     </MantineProvider>
   )
