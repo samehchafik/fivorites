@@ -70,7 +70,9 @@ class TestRealisation:
         noms = [personne.nom for personne in retenus]
         assert noms.count("David Benioff") == 1
         assert next(p for p in retenus if p.nom == "David Benioff").role == "Création"
-        assert "Alan Taylor" in noms
+        # Le créateur EN TÊTE, même avec moins d'épisodes que le réalisateur :
+        # il signe la série, l'autre signe sept épisodes.
+        assert noms == ["David Benioff", "Alan Taylor"]
 
     def test_seul_directing_passe(self) -> None:
         """Côté série, le filtre jsonpath laisse passer tout le département :
@@ -121,6 +123,32 @@ class TestSaisons:
         saisons = Fiches()._saisons([{"season_number": 3}, {"name": "Bizarre"}])
         assert [saison.numero for saison in saisons] == [3]
         assert saisons[0].annee is None
+
+
+class TestEpisodes:
+    def test_ordre_et_sans_numero(self) -> None:
+        """L'ordre de diffusion, quel que soit l'ordre du payload ; un épisode
+        sans numéro n'a pas de place dans la liste."""
+        episodes = Fiches()._episodes(
+            [
+                {"episode_number": 2, "name": "Le Roi du Nord"},
+                {"name": "Sans numéro"},
+                {"episode_number": 1, "name": "L'hiver vient", "vote_average": 8.44},
+            ]
+        )
+        assert [episode.numero for episode in episodes] == [1, 2]
+        assert episodes[0].titre == "L'hiver vient"
+        assert episodes[0].note == 8.4
+
+    def test_champs_vides_deviennent_none(self) -> None:
+        """Une date vide de TMDB (`""`) n'est pas une date, et un synopsis
+        d'espaces n'est pas un synopsis."""
+        episodes = Fiches()._episodes(
+            [{"episode_number": 1, "name": "  ", "overview": "   ", "air_date": ""}]
+        )
+        assert episodes[0].titre is None
+        assert episodes[0].synopsis is None
+        assert episodes[0].diffusion is None
 
 
 class TestChapeau:

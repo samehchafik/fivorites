@@ -1,11 +1,17 @@
 // L'onglet Mes suggestions : ce que le moteur propose, et toujours pourquoi.
 //
-// La liste se recharge quand l'onglet s'ouvre et quand les classements
-// bougent (`versionSignaux`) : classer une suggestion la fait sortir de la
-// liste — elle est acceptée ou écartée — et la place se remplit au
-// rechargement suivant.
+// Le panneau **reste monté** quand on regarde la recherche (voir
+// `FivoSuggest`) : revenir ici ne doit pas rejouer un chargement pour
+// réafficher ce qu'on venait de lire. D'où la règle de rafraîchissement,
+// tenue par `charge` : on ne recharge que si quelque chose a bougé depuis le
+// dernier affichage — un univers changé, ou un classement posé entre-temps —
+// et **seulement quand l'onglet est visible**. Classer trois œuvres dans la
+// recherche déclenche donc UNE requête à la bascule, pas trois en arrière-plan.
+//
+// C'est ce qui donne le comportement attendu : on cherche, on classe, on
+// bascule — et les suggestions arrivent enrichies de ce qu'on vient de faire.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { chargerSuggestions } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
@@ -27,6 +33,7 @@ export function Suggestions({
   univers,
   statuts,
   versionSignaux,
+  actif,
   onOuvrir,
   onClasser,
   onDeclasser,
@@ -35,6 +42,9 @@ export function Suggestions({
   statuts: Record<number, Statut>
   /** Incrémentée à chaque geste de classement — le déclencheur du rechargement. */
   versionSignaux: number
+  /** L'onglet est-il celui qu'on regarde ? Le panneau reste monté quand il ne
+   *  l'est pas : il garde sa liste, et ne va pas la rafraîchir pour personne. */
+  actif: boolean
   onOuvrir: (identifiant: number, oeuvreId: number | null) => void
   onClasser: (oeuvreId: number, univers: UniversSlug, statut: Statut) => void
   onDeclasser: (oeuvreId: number) => void
@@ -42,8 +52,19 @@ export function Suggestions({
   const [items, setItems] = useState<Suggestion[]>([])
   const [raison, setRaison] = useState<string | null>(null)
   const [etat, setEtat] = useState<'en-cours' | 'servi' | 'erreur'>('en-cours')
+  // Ce que la liste affichée reflète déjà. Une référence plutôt qu'un état :
+  // elle ne décide d'aucun rendu, elle évite seulement de recharger ce qui
+  // est à jour — la mettre en `useState` relancerait l'effet pour rien.
+  const charge = useRef<{ univers: UniversSlug; version: number } | null>(null)
 
   useEffect(() => {
+    if (!actif) return
+    const dejaVu =
+      charge.current !== null &&
+      charge.current.univers === univers &&
+      charge.current.version === versionSignaux
+    if (dejaVu) return
+
     let abandonne = false
     setEtat('en-cours')
     chargerSuggestions(univers)
@@ -52,6 +73,7 @@ export function Suggestions({
         setItems(reponse.items)
         setRaison(reponse.raison)
         setEtat('servi')
+        charge.current = { univers, version: versionSignaux }
       })
       .catch(() => {
         if (!abandonne) setEtat('erreur')
@@ -59,7 +81,7 @@ export function Suggestions({
     return () => {
       abandonne = true
     }
-  }, [univers, versionSignaux])
+  }, [univers, versionSignaux, actif])
 
   // Les suggestions déjà classées pendant la consultation restent affichées
   // (avec leur bouton allumé) jusqu'au prochain rechargement : les faire

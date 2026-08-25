@@ -140,6 +140,14 @@
   padding: 1rem 1.1rem 1.2rem;
 }
 
+/* Le panneau qu'on ne regarde pas : caché, jamais démonté — il garde sa
+   frappe, ses résultats et sa position. `[hidden]` seul ne suffirait pas
+   partout (une règle d'affichage le rendrait à nouveau visible), d'où cette
+   classe explicite. */
+.fivo-panneau-cache {
+  display: none;
+}
+
 .fivo-champ input {
   font-family: inherit;
 }
@@ -524,32 +532,131 @@
   font-size: 0.72rem;
 }
 
-.fiche-saisons {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* --- L'accordéon des saisons -------------------------------------------- */
+
+.saisons {
   display: grid;
   gap: 0.3rem;
 }
 
-.fiche-saisons li {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.45rem 0.7rem;
+/* La variante « separated » de Mantine peint ses éléments avec la couleur de
+   corps — blanche ici, puisque le composant force le schéma clair. Sur la
+   modale sombre, ça rendait le titre de saison et ceux des épisodes blancs
+   sur blanc, donc invisibles : mesuré à l'écran. On reprend donc le fond,
+   déplié comme replié. */
+.saison-item,
+.saison-item[data-active] {
   background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 4px;
+  overflow: hidden;
 }
 
-.fiche-saisons strong {
+.saison-item[data-active] {
+  border-color: rgba(250, 0, 54, 0.5);
+  background: rgba(250, 0, 54, 0.07);
+}
+
+.saison-tete {
+  padding: 0.5rem 0.7rem;
+  color: var(--gray-lighter, #d6d6d6);
+}
+
+.saison-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  padding: 0;
+}
+
+.saison-tete:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.saison-titre {
   color: white;
   font-weight: 500;
 }
 
-.fiche-saisons span {
+.saison-faits {
   color: var(--gray-medium, #787878);
   font-size: 0.85rem;
   white-space: nowrap;
+}
+
+.saison-chevron {
+  color: var(--red-light, #f82036);
+}
+
+.saison-contenu {
+  padding: 0.2rem 0.7rem 0.7rem;
+}
+
+.saison-synopsis {
+  margin: 0 0 0.7rem;
+  font-size: 0.9rem;
+  color: var(--gray-light, #b8b7b7);
+}
+
+.saison-note {
+  margin: 0.3rem 0;
+  font-size: 0.88rem;
+  color: var(--gray-medium, #787878);
+}
+
+/* --- Les épisodes, dépliés ---------------------------------------------- */
+
+.episodes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.episodes li {
+  display: flex;
+  gap: 0.7rem;
+}
+
+.episodes img,
+.episode-image-vide {
+  width: 108px;
+  height: 61px; /* 16/9 — le format des vignettes d'épisode de TMDB */
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: 3px;
+  background: linear-gradient(var(--fivorites2, #700031), var(--fivorites1, #fa0036));
+}
+
+.episode-texte {
+  min-width: 0;
+}
+
+.episode-texte strong {
+  display: block;
+  color: white;
+  font-weight: 500;
+  font-size: 0.92rem;
+  line-height: 1.3;
+}
+
+.episode-faits {
+  display: block;
+  color: var(--gray-medium, #787878);
+  font-size: 0.78rem;
+  margin-bottom: 0.15rem;
+}
+
+.episode-texte p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--gray-light, #b8b7b7);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* Le pied colle en bas : les trois gestes restent visibles pendant qu'on lit

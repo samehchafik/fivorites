@@ -30,3 +30,22 @@ async def fiche(
             f"œuvre inconnue dans {univers.slug} : {identifiant}",
         )
     return trouvee.publique()
+
+
+@router.get("/fiche/{identifiant}/saison/{numero}")
+async def saison(
+    conn: Conn, fiches: FichesDep, univers: UniversDep, identifiant: int, numero: int
+) -> dict[str, Any]:
+    """Les épisodes d'une saison — appelée au dépliement de l'accordéon, pas
+    avec la fiche.
+
+    Une liste vide n'est pas une erreur : la saison peut n'avoir jamais été
+    collectée, et le front le dit plutôt que d'afficher une panne.
+    """
+    if univers.interne != "series":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"seules les séries ont des saisons (demandé : {univers.slug})",
+        )
+    episodes = await fiches.episodes(conn, identifiant, numero)
+    return {"episodes": [episode.publique() for episode in episodes]}

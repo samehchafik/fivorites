@@ -150,25 +150,44 @@ export default function FivoSuggest({
             </div>
           </header>
 
+          {/* Les DEUX panneaux restent montés, celui qu'on ne regarde pas
+              étant seulement caché : démonter la recherche perdrait la frappe
+              et ses résultats, et revenir dessus rejouerait une requête pour
+              réafficher ce qu'on venait de lire. Les suggestions, elles,
+              savent ne se rafraîchir qu'en redevenant visibles (voir
+              `Suggestions`). */}
           <div className="fivo-contenu">
-            {onglet === 'recherche' ? (
+            <div
+              role="tabpanel"
+              aria-label="Recherche"
+              hidden={onglet !== 'recherche'}
+              className={onglet === 'recherche' ? undefined : 'fivo-panneau-cache'}
+            >
               <Recherche
                 univers={univers}
                 statuts={statuts}
+                actif={onglet === 'recherche'}
                 onOuvrir={ouvrir}
                 onClasser={classer}
                 onDeclasser={declasser}
               />
-            ) : (
+            </div>
+            <div
+              role="tabpanel"
+              aria-label="Mes suggestions"
+              hidden={onglet !== 'suggestions'}
+              className={onglet === 'suggestions' ? undefined : 'fivo-panneau-cache'}
+            >
               <Suggestions
                 univers={univers}
                 statuts={statuts}
                 versionSignaux={versionSignaux}
+                actif={onglet === 'suggestions'}
                 onOuvrir={ouvrir}
                 onClasser={classer}
                 onDeclasser={declasser}
               />
-            )}
+            </div>
           </div>
         </div>
 

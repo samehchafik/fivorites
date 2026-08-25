@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react'
 
 import { chargerFiche, urlAffiche } from './api'
 import { BoutonsClassement } from './BoutonsClassement'
+import { SaisonsAccordeon } from './SaisonsAccordeon'
 import type { Fiche, Statut, UniversSlug } from './types'
 
 export function FicheModale({
@@ -167,24 +168,16 @@ export function FicheModale({
               </section>
             )}
 
-            {fiche.saisons.length > 0 && (
+            {fiche.saisons.length > 0 && identifiant !== null && (
               <section className="fiche-section">
                 <h3>Les saisons</h3>
-                <ul className="fiche-saisons">
-                  {fiche.saisons.map((saison) => (
-                    <li key={saison.numero}>
-                      <strong>{saison.nom ?? `Saison ${saison.numero}`}</strong>
-                      <span>
-                        {[
-                          saison.annee?.toString(),
-                          saison.episodes ? `${saison.episodes} épisodes` : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                {/* Déplier une saison charge ses épisodes — pas avant : une
+                    série de huit saisons en porte deux cents. */}
+                <SaisonsAccordeon
+                  univers={univers}
+                  identifiant={identifiant}
+                  saisons={fiche.saisons}
+                />
               </section>
             )}
           </div>

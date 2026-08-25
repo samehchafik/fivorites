@@ -2,7 +2,7 @@
 // relaie /api vers le service webapp (astro.config.mjs), en production c'est
 // le service qui sert le site — le cookie de session reste propriétaire.
 
-import type { Carte, Fiche, Signal, Statut, Suggestion, UniversSlug } from './types'
+import type { Carte, Episode, Fiche, Signal, Statut, Suggestion, UniversSlug } from './types'
 
 const BASE = '/api/public'
 
@@ -41,6 +41,17 @@ export function rechercher(
 export function chargerFiche(univers: UniversSlug, identifiant: number): Promise<Fiche> {
   const params = new URLSearchParams({ univers })
   return requete(`/fiche/${identifiant}?${params}`)
+}
+
+/** Les épisodes d'une saison — appelés au dépliement de l'accordéon : une
+ *  série de huit saisons en porte deux cents. */
+export function chargerEpisodes(
+  univers: UniversSlug,
+  identifiant: number,
+  numero: number,
+): Promise<{ episodes: Episode[] }> {
+  const params = new URLSearchParams({ univers })
+  return requete(`/fiche/${identifiant}/saison/${numero}?${params}`)
 }
 
 export function listerSignaux(): Promise<{ items: Signal[] }> {

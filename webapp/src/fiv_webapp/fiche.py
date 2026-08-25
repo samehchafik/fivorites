@@ -48,6 +48,16 @@ REALISATION_MAX = 6
 # ils passent par l'autre chemin.
 KIND_TMDB = {"series": "tv", "movies": "movie"}
 
+# Le brut d'une saison : collecté à part, une ligne par saison ET par langue
+# (`source_id` = « 1399/s1 »). C'est ce qui permet de ne charger les épisodes
+# qu'au dépliement — une série de huit saisons en porte deux cents.
+KIND_SAISON = "tv_season"
+
+# La langue préférée du site. Le repli sur une autre langue collectée est
+# explicite dans la requête : mieux vaut des épisodes en anglais qu'un
+# accordéon qui s'ouvre sur du vide.
+LANGUE_DEFAUT = "fr-FR"
+
 
 @dataclass(frozen=True, slots=True)
 class Personne:
@@ -87,6 +97,30 @@ class Saison:
             "episodes": self.episodes,
             "affiche": self.affiche,
             "synopsis": self.synopsis,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Episode:
+    """Un épisode, tel que le brut de sa saison le porte."""
+
+    numero: int
+    titre: str | None
+    synopsis: str | None
+    diffusion: str | None
+    duree: int | None
+    image: str | None
+    note: float | None
+
+    def publique(self) -> dict[str, Any]:
+        return {
+            "numero": self.numero,
+            "titre": self.titre,
+            "synopsis": self.synopsis,
+            "diffusion": self.diffusion,
+            "duree": self.duree,
+            "image": self.image,
+            "note": self.note,
         }
 
 
@@ -188,6 +222,20 @@ _PIVOT = """
     select id from oeuvre where univers = %(univers)s and id_tmdb = %(id)s limit 1
 """
 
+# Les épisodes d'une saison. Le tri de langue est explicite : la langue du
+# site d'abord, n'importe quelle autre collectée ensuite — un accordéon qui
+# s'ouvre sur du vide serait pire qu'un titre en anglais.
+_EPISODES = """
+    select r.lang,
+           coalesce(r.payload -> 'episodes', '[]'::jsonb) as episodes
+    from raw_source r
+    where r.source = %(source)s and r.kind = %(kind)s
+      and r.source_id = %(id)s
+      and r.http_status between 200 and 299 and r.payload is not null
+    order by (r.lang = %(langue)s) desc, r.fetched_at desc
+    limit 1
+"""
+
 # Un livre : le pivot, ses faits Wikidata, son article Wikipédia le plus
 # fourni (préférence française), sa couverture Open Library.
 _FICHE_LIVRE = """
@@ -232,6 +280,54 @@ class Fiches:
         if univers.pivot_card:
             return await self._livre(conn, univers, identifiant)
         return await self._tmdb(conn, univers, identifiant)
+
+    async def episodes(
+        self, conn: psycopg.AsyncConnection, identifiant: int, numero: int
+    ) -> list[Episode]:
+        """Les épisodes d'une saison, chargés **au dépliement** et pas avec la
+        fiche : une série de huit saisons en porte deux cents, et personne ne
+        les lit toutes.
+
+        Une saison jamais collectée rend une liste vide — pas une erreur : le
+        cas est banal (la collecte procède par langue et par lot) et
+        l'accordéon sait dire « pas encore collectés ».
+        """
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                _EPISODES,
+                {
+                    "source": SOURCE,
+                    "kind": KIND_SAISON,
+                    "id": f"{identifiant}/s{numero}",
+                    "langue": LANGUE_DEFAUT,
+                },
+            )
+            ligne = await cur.fetchone()
+        if ligne is None:
+            return []
+        return self._episodes(ligne.get("episodes"))
+
+    def _episodes(self, episodes: list[dict[str, Any]] | None) -> list[Episode]:
+        """Les épisodes, dans l'ordre de diffusion. Un épisode sans numéro
+        n'en est pas un — il n'aurait pas de place dans la liste."""
+        retenus: list[Episode] = []
+        for episode in episodes or []:
+            numero = episode.get("episode_number")
+            if numero is None:
+                continue
+            note = episode.get("vote_average")
+            retenus.append(
+                Episode(
+                    numero=int(numero),
+                    titre=(episode.get("name") or "").strip() or None,
+                    synopsis=(episode.get("overview") or "").strip() or None,
+                    diffusion=episode.get("air_date") or None,
+                    duree=episode.get("runtime"),
+                    image=episode.get("still_path"),
+                    note=round(float(note), 1) if note else None,
+                )
+            )
+        return sorted(retenus, key=lambda episode: episode.numero)
 
     # --- séries et films ----------------------------------------------------
 
@@ -335,11 +431,15 @@ class Fiches:
         « Directing » : c'est ici qu'on ne garde que les réalisateurs, le
         tableau `jobs` n'étant pas filtrable proprement en jsonpath.
         """
+        createurs: dict[str, Personne] = {}
         par_nom: dict[str, Personne] = {}
         for membre in creation or []:
             nom = (membre.get("name") or "").strip()
             if nom:
-                par_nom[nom] = Personne(nom=nom, role="Création", photo=membre.get("profile_path"))
+                createurs[nom] = Personne(
+                    nom=nom, role="Création", photo=membre.get("profile_path")
+                )
+        par_nom.update(createurs)
         for membre in equipe or []:
             nom = (membre.get("name") or "").strip()
             if not nom or nom in par_nom:
@@ -359,7 +459,15 @@ class Fiches:
                 photo=membre.get("profile_path"),
                 episodes=episodes,
             )
-        retenus = sorted(par_nom.values(), key=lambda p: -(p.episodes or 0))
+        # Les créateurs d'abord, quel que soit leur compte d'épisodes : ils
+        # signent la série entière, là où un réalisateur en signe sept
+        # épisodes. Trier tout le monde sur le nombre d'épisodes ferait passer
+        # le second devant les premiers — vu sur Game of Thrones, où Alan
+        # Taylor doublait Benioff et Weiss.
+        retenus = sorted(
+            par_nom.values(),
+            key=lambda personne: (personne.nom not in createurs, -(personne.episodes or 0)),
+        )
         return retenus[:REALISATION_MAX]
 
     def _saisons(self, saisons: list[dict[str, Any]] | None) -> list[Saison]:

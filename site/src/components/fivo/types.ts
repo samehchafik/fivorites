@@ -38,6 +38,16 @@ export interface Personne {
   episodes: number | null
 }
 
+export interface Episode {
+  numero: number
+  titre: string | null
+  synopsis: string | null
+  diffusion: string | null
+  duree: number | null
+  image: string | null
+  note: number | null
+}
+
 export interface Saison {
   numero: number
   nom: string | null
