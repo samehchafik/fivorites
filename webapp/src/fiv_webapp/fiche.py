@@ -62,9 +62,17 @@ LANGUE_DEFAUT = "fr-FR"
 @dataclass(frozen=True, slots=True)
 class Personne:
     """Quelqu'un qui fait l'œuvre : un acteur avec son rôle, un réalisateur,
-    un auteur."""
+    un auteur.
+
+    `cle` est son identité dans le graphe — `tmdb:1234` pour les crédits
+    TMDB, `wd:Q535` pour un auteur venu de Wikidata. Les deux espaces de
+    numérotation ne se rencontrent jamais, d'où le préfixe : c'est la
+    convention du graphe (`fiv_admin.graphe`), et c'est elle qui permet
+    d'ouvrir la filmographie de quelqu'un sans risquer l'homonyme.
+    """
 
     nom: str
+    cle: str | None = None
     role: str | None = None
     photo: str | None = None
     episodes: int | None = None
@@ -72,6 +80,7 @@ class Personne:
     def publique(self) -> dict[str, Any]:
         return {
             "nom": self.nom,
+            "cle": self.cle,
             "role": self.role,
             "photo": self.photo,
             "episodes": self.episodes,
@@ -609,9 +618,11 @@ class Fiches:
             episodes = membre.get("total_episode_count") or (
                 roles[0].get("episode_count") if roles else None
             )
+            identifiant = membre.get("id")
             retenus.append(
                 Personne(
                     nom=nom,
+                    cle=f"tmdb:{identifiant}" if identifiant is not None else None,
                     role=(personnage or "").strip() or None,
                     photo=membre.get("profile_path"),
                     episodes=episodes,
@@ -650,8 +661,10 @@ class Fiches:
                 continue
             else:
                 episodes = None
+            identifiant = membre.get("id")
             par_nom[nom] = Personne(
                 nom=nom,
+                cle=f"tmdb:{identifiant}" if identifiant is not None else None,
                 role="Réalisation",
                 photo=membre.get("profile_path"),
                 episodes=episodes,
@@ -784,7 +797,13 @@ class Fiches:
             pays=list(faits.get("pays") or []),
             langue=(faits.get("langues") or [None])[0],
             realisation=[
-                Personne(nom=auteur["nom"], role="Auteur")
+                Personne(
+                    nom=auteur["nom"],
+                    # Un auteur vient de Wikidata : son espace de
+                    # numérotation n'est pas celui de TMDB, d'où le préfixe.
+                    cle=f"wd:{auteur['qid']}" if auteur.get("qid") else None,
+                    role="Auteur",
+                )
                 for auteur in faits.get("auteurs") or []
                 if (auteur.get("nom") or "").strip()
             ],

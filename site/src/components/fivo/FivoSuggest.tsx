@@ -16,6 +16,8 @@ import { useEffect, useState } from 'react'
 
 import { listerSignaux, poserSignal, retirerSignal } from './api'
 import { FicheModale } from './FicheModale'
+import { Loupe } from './Loupe'
+import { PersonneModale } from './PersonneModale'
 import { Recherche } from './Recherche'
 import { Suggestions } from './Suggestions'
 import { LANGUES, LANGUE_LABELS, langueInitiale, retenirLangue, type Langue } from './langue'
@@ -54,6 +56,19 @@ export default function FivoSuggest({
   // La fiche ouverte : sa clé de vignette (ce que l'API demande) et son
   // pivot (ce que les boutons manipulent). `null` = rien d'ouvert.
   const [ouverte, setOuverte] = useState<{ id: number; oeuvreId: number | null } | null>(null)
+  // L'univers de la fiche ouverte. Il peut différer de l'univers courant :
+  // depuis la filmographie de quelqu'un, on ouvre un film alors qu'on
+  // regardait des séries — et la fiche doit être demandée au bon endroit.
+  const [universFiche, setUniversFiche] = useState<UniversSlug>(universInitial)
+  // La personne ouverte, et l'image agrandie. Deux fenêtres de plus, chacune
+  // avec son propre état : la loupe peut s'ouvrir depuis la fiche comme depuis
+  // le panneau d'une personne.
+  const [personne, setPersonne] = useState<{
+    cle: string
+    nom: string
+    photo: string | null
+  } | null>(null)
+  const [loupe, setLoupe] = useState<{ image: string; legende: string } | null>(null)
 
   // La langue est lue après le montage, jamais pendant : la page est rendue à
   // l'avance (HTML statique) et le navigateur de qui la reçoit n'est pas
@@ -110,7 +125,13 @@ export default function FivoSuggest({
     }
   }
 
-  const ouvrir = (id: number, oeuvreId: number | null) => setOuverte({ id, oeuvreId })
+  const ouvrir = (id: number, oeuvreId: number | null) => {
+    setUniversFiche(univers)
+    setOuverte({ id, oeuvreId })
+  }
+
+  const agrandir = (image: string, legende: string) =>
+    image ? setLoupe({ image, legende }) : undefined
 
   const nombre_aimes = Object.values(statuts).filter((statut) => statut === 'aime').length
 
@@ -229,13 +250,38 @@ export default function FivoSuggest({
         </div>
 
         <FicheModale
-          univers={univers}
+          univers={universFiche}
           langue={langue}
           identifiant={ouverte?.id ?? null}
           statutActuel={ouverte?.oeuvreId != null ? (statuts[ouverte.oeuvreId] ?? null) : null}
           onFermer={() => setOuverte(null)}
-          onClasser={(oeuvreId, statut) => classer(oeuvreId, univers, statut)}
+          onClasser={(oeuvreId, statut) => classer(oeuvreId, universFiche, statut)}
           onDeclasser={declasser}
+          onAgrandir={agrandir}
+          onOuvrirPersonne={(cle, nom, photo) => setPersonne({ cle, nom, photo })}
+        />
+
+        <PersonneModale
+          cle={personne?.cle ?? null}
+          nom={personne?.nom ?? null}
+          photo={personne?.photo ?? null}
+          univers={universFiche}
+          onFermer={() => setPersonne(null)}
+          onOuvrirOeuvre={(identifiant, oeuvreId, universOeuvre) => {
+            // On navigue d'un acteur à l'un de ses films : la fiche se
+            // recharge dessus et le panneau se referme, plutôt que d'empiler
+            // une troisième fenêtre.
+            setPersonne(null)
+            setUniversFiche(universOeuvre)
+            setOuverte({ id: identifiant, oeuvreId })
+          }}
+          onAgrandir={agrandir}
+        />
+
+        <Loupe
+          image={loupe?.image ?? null}
+          legende={loupe?.legende}
+          onFermer={() => setLoupe(null)}
         />
       </section>
     </MantineProvider>

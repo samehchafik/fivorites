@@ -6,6 +6,7 @@ import type {
   Carte,
   Episode,
   Fiche,
+  FichePersonne,
   Filtres,
   Signal,
   Statut,
@@ -67,6 +68,22 @@ export function rechercher(
     for (const valeur of valeurs) params.append(champ, valeur)
   }
   return requete(`/recherche?${params}`, { signal: options.signal })
+}
+
+/** Quelqu'un et une page de sa filmographie.
+ *
+ *  `univers` et `nom` ne servent qu'au repli : sans graphe projeté, le
+ *  serveur ne sait chercher que par le nom, dans un seul univers. Les passer
+ *  ne coûte rien et évite un panneau vide. */
+export function chargerPersonne(
+  cle: string,
+  options: { page?: number; univers?: UniversSlug; nom?: string } = {},
+): Promise<FichePersonne> {
+  const params = new URLSearchParams()
+  if (options.page && options.page > 1) params.set('page', String(options.page))
+  if (options.univers) params.set('univers', options.univers)
+  if (options.nom) params.set('nom', options.nom)
+  return requete(`/personne/${encodeURIComponent(cle)}?${params}`)
 }
 
 /** Les groupes de filtres de cet univers. La langue compte : les plateformes

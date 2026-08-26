@@ -80,6 +80,10 @@ export interface Video {
 
 export interface Personne {
   nom: string
+  /** Son identité dans le graphe — `tmdb:1234`, `wd:Q535`. Nulle quand la
+   *  source ne l'a pas donnée : la personne s'affiche alors sans être
+   *  cliquable, plutôt que d'ouvrir la filmographie d'un homonyme. */
+  cle: string | null
   /** Le personnage joué, « Création », « Réalisation » ou « Auteur ». */
   role: string | null
   photo: string | null
@@ -137,6 +141,31 @@ export interface Fiche {
    *  vous » de « aucune donnée ». */
   paysOffres: string[]
   videos: Video[]
+}
+
+/** Une œuvre de la filmographie de quelqu'un. */
+export interface OeuvreDePersonne {
+  id: number
+  oeuvreId: number
+  univers: UniversSlug
+  titre: string | null
+  annee: number | null
+  affiche: string | null
+  role: string | null
+}
+
+/** Quelqu'un, sa photo, et une page de ses œuvres. `source` vaut `graphe`
+ *  (exact, tous univers) ou `index` (par le nom, un seul univers, homonymes
+ *  confondus) — le panneau le dit, parce que ça change ce qu'on regarde. */
+export interface FichePersonne {
+  cle: string
+  nom: string | null
+  photo: string | null
+  oeuvres: OeuvreDePersonne[]
+  total: number
+  page: number
+  parPage: number
+  source: 'graphe' | 'index'
 }
 
 export interface Suggestion {

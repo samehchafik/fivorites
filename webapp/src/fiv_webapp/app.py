@@ -32,7 +32,7 @@ from fiv_webapp.fiche import Fiches
 from fiv_webapp.graphe import Graphe
 from fiv_webapp.jeton import JetonSession
 from fiv_webapp.recherche import Recherche
-from fiv_webapp.routes import fiche, recherche, signaux, suggestions
+from fiv_webapp.routes import fiche, personnes, recherche, signaux, suggestions
 from fiv_webapp.signaux import Signaux
 
 log = logging.getLogger(__name__)
@@ -133,6 +133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(recherche.router, prefix="/api/public", tags=["recherche"])
     app.include_router(fiche.router, prefix="/api/public", tags=["fiche"])
+    app.include_router(personnes.router, prefix="/api/public", tags=["personnes"])
     app.include_router(signaux.router, prefix="/api/public", tags=["signaux"])
     app.include_router(suggestions.router, prefix="/api/public", tags=["suggestions"])
 

@@ -25,6 +25,8 @@ export function FicheModale({
   onFermer,
   onClasser,
   onDeclasser,
+  onAgrandir,
+  onOuvrirPersonne,
 }: {
   univers: UniversSlug
   /** La langue : elle décide du titre, du synopsis et du pays dont on lit la
@@ -36,6 +38,10 @@ export function FicheModale({
   onFermer: () => void
   onClasser: (oeuvreId: number, statut: Statut) => void
   onDeclasser: (oeuvreId: number) => void
+  /** Ouvre une image en grand. */
+  onAgrandir: (image: string, legende: string) => void
+  /** Ouvre la filmographie de quelqu'un. */
+  onOuvrirPersonne: (cle: string, nom: string, photo: string | null) => void
 }) {
   const [fiche, setFiche] = useState<Fiche | null>(null)
   const [etat, setEtat] = useState<'en-cours' | 'servi' | 'erreur'>('en-cours')
@@ -98,8 +104,17 @@ export function FicheModale({
             style={fond ? { backgroundImage: `url(${fond})` } : undefined}
           >
             <div className="fiche-entete-voile">
+              {/* L'affiche s'agrandit au clic : à 118 pixels on la reconnaît,
+                  on ne la regarde pas. */}
               {affiche ? (
-                <img className="fiche-affiche" src={affiche} alt="" loading="lazy" />
+                <button
+                  type="button"
+                  className="fiche-affiche-bouton"
+                  onClick={() => onAgrandir(fiche.affiche ?? '', fiche.titre ?? '')}
+                  title="Agrandir l'affiche"
+                >
+                  <img className="fiche-affiche" src={affiche} alt="" loading="lazy" />
+                </button>
               ) : (
                 <div className="fiche-affiche fiche-affiche-vide" aria-hidden="true" />
               )}
@@ -145,7 +160,25 @@ export function FicheModale({
               <section className="fiche-section">
                 <h3>{fiche.univers === 'livres' ? 'Écrit par' : 'Réalisé et créé par'}</h3>
                 <p className="fiche-noms">
-                  {fiche.realisation.map((personne) => personne.nom).join(', ')}
+                  {fiche.realisation.map((personne, rang) => (
+                    <span key={`${personne.nom}-${rang}`}>
+                      {rang > 0 && ', '}
+                      {personne.cle ? (
+                        <button
+                          type="button"
+                          className="fiche-nom-lien"
+                          onClick={() =>
+                            onOuvrirPersonne(personne.cle!, personne.nom, personne.photo)
+                          }
+                          title={`Voir les œuvres de ${personne.nom}`}
+                        >
+                          {personne.nom}
+                        </button>
+                      ) : (
+                        personne.nom
+                      )}
+                    </span>
+                  ))}
                 </p>
               </section>
             )}
@@ -158,13 +191,32 @@ export function FicheModale({
                     const visage = urlAffiche(personne.photo, 'w185')
                     return (
                       <li key={`${personne.nom}-${personne.role ?? ''}`}>
-                        {visage ? (
-                          <img src={visage} alt="" loading="lazy" />
-                        ) : (
-                          <span className="fiche-visage-vide" aria-hidden="true" />
-                        )}
-                        <strong>{personne.nom}</strong>
-                        {personne.role && <span>{personne.role}</span>}
+                        {/* Cliquer quelqu'un ouvre sa filmographie. Sans clé
+                            — la source ne l'a pas donnée — on se contente
+                            d'agrandir son portrait : ouvrir la filmographie
+                            d'un homonyme serait pire que ne rien faire. */}
+                        <button
+                          type="button"
+                          className="fiche-gens-bouton"
+                          onClick={() =>
+                            personne.cle
+                              ? onOuvrirPersonne(personne.cle, personne.nom, personne.photo)
+                              : personne.photo && onAgrandir(personne.photo, personne.nom)
+                          }
+                          title={
+                            personne.cle
+                              ? `Voir la filmographie de ${personne.nom}`
+                              : personne.nom
+                          }
+                        >
+                          {visage ? (
+                            <img src={visage} alt="" loading="lazy" />
+                          ) : (
+                            <span className="fiche-visage-vide" aria-hidden="true" />
+                          )}
+                          <strong>{personne.nom}</strong>
+                          {personne.role && <span>{personne.role}</span>}
+                        </button>
                       </li>
                     )
                   })}

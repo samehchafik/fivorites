@@ -406,6 +406,57 @@ class Recherche:
             tronque=donnees["hits"]["total"].get("relation") == "gte",
         )
 
+    async def par_personne(
+        self, univers: Univers, nom: str, *, depuis: int = 0, taille: int = 10
+    ) -> PageIds | None:
+        """Les œuvres dont le champ `personnes` porte ce nom.
+
+        Le repli de la filmographie quand le graphe n'est pas là. `match_phrase`
+        et non `match` : « Emilia Clarke » ne doit pas rendre toutes les Clarke
+        du catalogue. Le classement reste celui de la maison — la note
+        bayésienne — parce qu'à filmographie égale on montre d'abord ce qui est
+        le mieux tenu.
+        """
+        if self._client is None or not self.active:
+            return None
+        corps = {
+            "query": {
+                "function_score": {
+                    "query": {
+                        "bool": {
+                            "must": [{"match_phrase": {"personnes": nom}}],
+                            "filter": [{"term": {"fiche": True}}],
+                        }
+                    },
+                    "field_value_factor": {
+                        "field": "note_bayes",
+                        "missing": 5.0,
+                        "modifier": "none",
+                    },
+                    "boost_mode": "multiply",
+                }
+            },
+            "from": depuis,
+            "size": taille,
+            "_source": False,
+            "track_total_hits": TOTAL_MAX,
+        }
+        try:
+            reponse = await self._client.post(
+                f"/{univers.alias_recherche}/_search", json=corps
+            )
+            reponse.raise_for_status()
+        except httpx.HTTPError as exc:
+            self._coupe_jusqua = time.monotonic() + DISJONCTEUR_SECONDES
+            log.warning("Elasticsearch indisponible (%s) — pas de filmographie.", exc)
+            return None
+        donnees = reponse.json()
+        return PageIds(
+            ids=[int(hit["_id"]) for hit in donnees["hits"]["hits"]],
+            total=int(donnees["hits"]["total"]["value"]),
+            tronque=donnees["hits"]["total"].get("relation") == "gte",
+        )
+
     async def facettes(
         self, univers: Univers, *, langue: str = LANGUE_DEFAUT, taille: int = 40
     ) -> dict[str, list[Facette]] | None:
