@@ -9,7 +9,17 @@
 
 import { UnstyledButton } from '@mantine/core'
 
+import { useTextes } from './textes'
+import type { CleTexte } from '../../i18n/textes'
 import type { GroupeFiltre } from './types'
+
+// Le libellé d'une dimension se traduit ici, par son CODE : le serveur en
+// rend un en français (« Plateformes »), utile en repli, mais qui n'a rien à
+// faire dans une page arabe.
+const LIBELLES: Record<string, CleTexte> = {
+  genres: 'filtres.genres',
+  plateformes: 'filtres.plateformes',
+}
 
 // Ce qu'on montre d'un groupe sans le déplier. TMDB a une vingtaine de
 // genres et JustWatch une centaine de plateformes : au-delà, la barre
@@ -33,6 +43,7 @@ export function BarreFiltres({
   onDeplier: (champ: string) => void
   onEffacer: () => void
 }) {
+  const t = useTextes()
   const utiles = groupes.filter((groupe) => groupe.valeurs.length > 0)
   if (utiles.length === 0) return null
   const nombreChoisis = Object.values(choisis).reduce((somme, v) => somme + v.length, 0)
@@ -48,15 +59,16 @@ export function BarreFiltres({
           ? groupe.valeurs
           : groupe.valeurs.filter((f, rang) => rang < VISIBLES || cochees.includes(f.valeur))
         const restantes = groupe.valeurs.length - montrees.length
+        const libelle = LIBELLES[groupe.champ] ? t.dit(LIBELLES[groupe.champ]) : groupe.libelle
 
         return (
           <div
             key={groupe.champ}
             className="fivo-filtres"
             role="group"
-            aria-label={`Filtrer par ${groupe.libelle.toLowerCase()}`}
+            aria-label={t.dit('filtres.filtrer_par', { dimension: libelle.toLowerCase() })}
           >
-            <span className="fivo-filtres-titre">{groupe.libelle}</span>
+            <span className="fivo-filtres-titre">{libelle}</span>
             {montrees.map((facette) => {
               const actif = cochees.includes(facette.valeur)
               return (
@@ -65,9 +77,7 @@ export function BarreFiltres({
                   className={`fivo-filtre${actif ? ' actif' : ''}`}
                   aria-pressed={actif}
                   onClick={() => onBasculer(groupe.champ, facette.valeur)}
-                  title={`${facette.nombre.toLocaleString('fr-FR')} œuvre${
-                    facette.nombre > 1 ? 's' : ''
-                  }`}
+                  title={t.compte(facette.nombre, 'filtres.oeuvre_une', 'filtres.oeuvres')}
                 >
                   {facette.valeur}
                 </UnstyledButton>
@@ -86,7 +96,7 @@ export function BarreFiltres({
       })}
       {nombreChoisis > 0 && (
         <UnstyledButton className="fivo-filtre fivo-filtre-effacer" onClick={onEffacer}>
-          ✕ tout effacer
+          ✕ {t.dit('filtres.effacer')}
         </UnstyledButton>
       )}
     </div>

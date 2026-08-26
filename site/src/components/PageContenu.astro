@@ -6,15 +6,28 @@
 import { getEntry, render } from 'astro:content'
 import Base from '../layouts/Base.astro'
 import FivoSuggest from './fivo/FivoSuggest'
+import { LANGUE_DEFAUT, type Langue } from '../i18n/langues'
+import { traduire } from '../i18n/textes'
 
 interface Props {
-  /** L'identifiant de l'entrée dans src/content/pages (ex. « accueil »). */
+  /** L'identifiant de l'entrée dans src/content/pages, SANS la langue
+   *  (« accueil », « series »…) : elle est retrouvée dans le dossier de la
+   *  langue demandée. */
   entree: string
+  /** La langue de la page. Le français vit à la racine de la collection, les
+   *  autres dans leur dossier — comme les URL, dont le français n'a pas de
+   *  préfixe. */
+  langue?: Langue
+  /** Le chemin sans préfixe de langue (« / », « /series »…). */
+  chemin: string
 }
 
-const entree = await getEntry('pages', Astro.props.entree)
+const langue = Astro.props.langue ?? LANGUE_DEFAUT
+const identifiant =
+  langue === LANGUE_DEFAUT ? Astro.props.entree : `${langue}/${Astro.props.entree}`
+const entree = await getEntry('pages', identifiant)
 if (!entree) {
-  throw new Error(`entrée de contenu introuvable : ${Astro.props.entree}`)
+  throw new Error(`entrée de contenu introuvable : ${identifiant}`)
 }
 const { Content } = await render(entree)
 const { titre, description, surTitre, accroche, phrases, univers } = entree.data
@@ -27,7 +40,7 @@ const sur_titre_html = surTitre
   .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
 ---
 
-<Base titre={titre} description={description}>
+<Base titre={titre} description={description} langue={langue} chemin={Astro.props.chemin}>
   <section class="heros">
     <div class="conteneur">
       {sur_titre_html && <p class="sur-titre" set:html={sur_titre_html} />}
@@ -35,12 +48,12 @@ const sur_titre_html = surTitre
         <div class="heros-texte">
           <h1>{accroche ?? titre}</h1>
           {phrases?.map((phrase) => <p>{phrase}</p>)}
-          <a class="bouton-cta" href="#suggere-moi">Obtenez des suggestions personnalisées !</a>
+          <a class="bouton-cta" href="#suggere-moi">{traduire(langue, 'cta.suggestions')}</a>
         </div>
         <div class="heros-outil" id="suggere-moi">
           {/* L'îlot : le seul JavaScript de la page. `client:load` — c'est
               le cœur de l'expérience, on ne le fait pas attendre un scroll. */}
-          <FivoSuggest client:load universInitial={univers} />
+          <FivoSuggest client:load universInitial={univers} langue={langue} />
         </div>
       </div>
     </div>

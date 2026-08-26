@@ -21,6 +21,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { urlAffiche } from './api'
+import { useTextes } from './textes'
 import type { Statut, Suggestion } from './types'
 
 /** Les quatre directions du plateau, et ce qu'elles décident. */
@@ -71,6 +72,7 @@ export function PileSuggestions({
 }) {
   // La file locale : la pile consomme sa propre liste, sans attendre un
   // rechargement à chaque geste — sinon la pile se réordonnerait sous la main.
+  const t = useTextes()
   const [file, setFile] = useState<Suggestion[]>(suggestions)
   const [glisse, setGlisse] = useState<{ x: number; y: number } | null>(null)
   const [sortie, setSortie] = useState<Geste | null>(null)
@@ -171,7 +173,7 @@ export function PileSuggestions({
   }
 
   if (!dessus) {
-    return <p className="fivo-message">Plus de carte pour l'instant — revenez après avoir classé quelques œuvres.</p>
+    return <p className="fivo-message">{t.dit('pile.vide')}</p>
   }
 
   // La rotation suit le geste, comme en V1 : proportionnelle à la part de
@@ -198,19 +200,19 @@ export function PileSuggestions({
         <span className="fivo-aide-fleche" aria-hidden="true">
           ←
         </span>
-        <span className="fivo-aide-texte">J'aime pas</span>
+        <span className="fivo-aide-texte">{t.dit('geste.aime_pas')}</span>
       </button>
       <button type="button" className="fivo-aide fivo-aide-aime" onClick={() => jeter('aime')}>
         <span className="fivo-aide-fleche" aria-hidden="true">
           ↑
         </span>
-        <span className="fivo-aide-texte">J'ai vu &amp; aimé</span>
+        <span className="fivo-aide-texte">{t.dit('geste.aime')}</span>
       </button>
       <button type="button" className="fivo-aide fivo-aide-a-voir" onClick={() => jeter('a_voir')}>
         <span className="fivo-aide-fleche" aria-hidden="true">
           →
         </span>
-        <span className="fivo-aide-texte">Je veux voir !</span>
+        <span className="fivo-aide-texte">{t.dit('geste.a_voir')}</span>
       </button>
 
       {/* La pile : la carte du dessus en dernier dans le DOM, comme en V1 —
@@ -243,7 +245,7 @@ export function PileSuggestions({
               aria-hidden={!estDessus}
               aria-label={
                 estDessus
-                  ? `${suggestion.titre ?? 'Œuvre'} — flèches pour classer, entrée pour la fiche`
+                  ? t.dit('pile.aria', { titre: suggestion.titre ?? t.dit('carte.cette_oeuvre') })
                   : undefined
               }
             >
@@ -257,9 +259,10 @@ export function PileSuggestions({
                   vu à l'écran — et la V1 ne montre elle aussi qu'un titre. */}
               {estDessus && (
               <div className="fivo-pile-texte">
-                <h3 dir="auto">{suggestion.titre ?? 'Sans titre'}</h3>
+                <h3 dir="auto">{suggestion.titre ?? t.dit('carte.sans_titre')}</h3>
                 <p className="fivo-pile-meta">
-                  <strong>{suggestion.annee ?? 'année inconnue'}</strong> · <strong>{type}</strong>
+                  <strong>{suggestion.annee ?? t.dit('carte.annee_inconnue')}</strong> ·{' '}
+                  <strong>{type}</strong>
                 </p>
                 <p
                   className={`fivo-pile-raison${
@@ -276,7 +279,7 @@ export function PileSuggestions({
                   className="fivo-pile-info"
                   onPointerDown={(evenement) => evenement.stopPropagation()}
                   onClick={() => onOuvrir(suggestion.id, suggestion.oeuvreId)}
-                  title="Voir la fiche"
+                  title={t.dit('pile.voir_fiche')}
                 >
                   ⓘ
                 </button>
@@ -291,7 +294,7 @@ export function PileSuggestions({
         <span className="fivo-passer-fleches" aria-hidden="true">
           ▶︎▶︎
         </span>{' '}
-        Passer
+        {t.dit('pile.passer')}
       </button>
     </div>
   )

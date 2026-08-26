@@ -1,0 +1,19 @@
+---
+// L'accueil dans les langues préfixées — /en/, /es/, /ar/.
+//
+// Le français reste à la racine (`src/pages/index.astro`) : le site y était
+// déjà indexé, et le déplacer vers /fr/ casserait des liens pour ne gagner
+// qu'une symétrie.
+import PageContenu from '../../components/PageContenu.astro'
+import { LANGUES, LANGUE_DEFAUT, type Langue } from '../../i18n/langues'
+
+export function getStaticPaths() {
+  return LANGUES.filter((langue) => langue !== LANGUE_DEFAUT).map((langue) => ({
+    params: { langue },
+  }))
+}
+
+const langue = Astro.params.langue as Langue
+---
+
+<PageContenu entree="accueil" langue={langue} chemin="/" />

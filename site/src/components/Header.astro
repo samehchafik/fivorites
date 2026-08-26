@@ -2,26 +2,65 @@
 // L'en-tête de la V1 : bandeau noir sous son liseré carmin, le logo
 // « fivorites » à l'étoile, et les univers en capitales précédés de la puce
 // ▶︎ (U+25B6 + sélecteur de variante texte — le même caractère que la V1).
-const univers = [
-  { chemin: '/series', label: 'Séries' },
-  { chemin: '/films', label: 'Films' },
-  { chemin: '/livres', label: 'Livres' },
-]
+//
+// Il porte aussi le passage d'une langue à l'autre. Des LIENS et pas un
+// `select` : ce sont quatre pages distinctes, chacune avec son URL et son
+// `hreflang` — un menu en JavaScript les cacherait aux moteurs, et c'est
+// exactement ce qu'on ne veut pas d'une page de référencement.
+import { LANGUES, LANGUE_NOMS, chemin_localise, type Langue } from '../i18n/langues'
+import { traduire } from '../i18n/textes'
 
-const chemin_courant = Astro.url.pathname.replace(/\/$/, '') || '/'
+interface Props {
+  langue: Langue
+  /** Le chemin SANS préfixe de langue (« / », « /series »…) : c'est lui
+   *  qu'on traduit vers les autres langues. */
+  chemin: string
+}
+
+const { langue, chemin } = Astro.props
+
+const univers = [
+  { chemin: '/series', cle: 'nav.series' as const },
+  { chemin: '/films', cle: 'nav.films' as const },
+  { chemin: '/livres', cle: 'nav.livres' as const },
+]
 ---
 
 <header class="entete">
   <div class="conteneur entete-barre">
-    <a href="/" class="logo"><span class="accessibilite">Fivorites</span></a>
-    <nav aria-label="Univers">
+    <a href={chemin_localise('/', langue)} class="logo">
+      <span class="accessibilite">Fivorites</span>
+    </a>
+    <nav aria-label={traduire(langue, 'nav.aria')}>
       {
         univers.map((u) => (
-          <a href={u.chemin} aria-current={chemin_courant === u.chemin ? 'page' : undefined}>
+          <a
+            href={chemin_localise(u.chemin, langue)}
+            aria-current={chemin === u.chemin ? 'page' : undefined}
+          >
             <span class="fleche" aria-hidden="true">
               ▶︎
             </span>
-            {u.label}
+            {traduire(langue, u.cle)}
+          </a>
+        ))
+      }
+    </nav>
+    <nav class="entete-langues" aria-label={traduire(langue, 'nav.langues')}>
+      {
+        LANGUES.map((code) => (
+          <a
+            href={chemin_localise(chemin, code)}
+            hreflang={code}
+            lang={code}
+            class={code === langue ? 'actif' : undefined}
+            aria-current={code === langue ? 'true' : undefined}
+          >
+            {/* Le nom entier sur grand écran, le code sur mobile : quatre
+                noms de langue ne tiennent pas dans un bandeau de 375 px, et
+                les faire déborder est ce qu'on a mesuré. */}
+            <span class="langue-long">{LANGUE_NOMS[code]}</span>
+            <span class="langue-courte" aria-hidden="true">{code.toUpperCase()}</span>
           </a>
         ))
       }

@@ -460,20 +460,118 @@ html.voile-pose {
   color: white;
 }
 
+/* --- Le passage d'une langue à l'autre ---------------------------------- */
+
+/* Des liens, pas un menu : quatre pages distinctes, chacune avec son URL et
+   son hreflang. Discrets — on change de langue une fois, pas à chaque
+   visite — mais toujours là, et indexables. */
+.entete-langues {
+  gap: 0;
+  font-size: 0.78rem;
+  text-transform: none;
+}
+
+.entete-langues a {
+  padding: 0 0.45rem;
+  color: var(--gray-light, #b9b9b9);
+}
+
+.entete-langues a.actif {
+  color: white;
+  font-weight: 500;
+}
+
+.langue-courte {
+  display: none;
+}
+
+/* --- Mobile ------------------------------------------------------------- */
+
 @media (max-width: 40rem) {
+  /* L'en-tête ne se plie pas : il se resserre. Le logo garde sa place (c'est
+     le retour à l'accueil), les univers gardent leurs mots, les langues
+     passent en codes — mesuré à 375 px, c'est ce qui tient sans déborder. */
   .entete-barre {
-    gap: 0.75rem;
+    gap: 0.3rem;
   }
 
   .entete nav a {
-    padding: 0 0.5rem;
+    padding: 0 0.25rem;
+    font-size: 0.72rem;
   }
 
   .logo {
-    width: calc(var(--header-height) * 2);
+    width: calc(var(--header-height) * 1.5);
+    flex-shrink: 0;
+  }
+
+  .entete-langues a {
+    padding: 0 0.22rem;
+    font-size: 0.68rem;
+  }
+
+  /* Dix pixels de gagnés de chaque côté : à 375 px, ce sont les dix qui
+     faisaient sortir « AR » de l'écran. */
+  .conteneur {
+    padding-left: 0.7rem;
+    padding-right: 0.7rem;
+  }
+
+  .langue-long {
+    display: none;
+  }
+
+  .langue-courte {
+    display: inline;
+  }
+
+  /* L'OUTIL D'ABORD. Sur mobile, le héros occupait tout le premier écran —
+     sur-titre, accroche serif, deux paragraphes, bouton — et le composant,
+     qui est la raison de la page, commençait à 900 px de haut : on ne le
+     voyait qu'après avoir scrollé une page entière. L'accroche reste (elle
+     dit où on est), le reste passe SOUS l'outil.
+
+     `display: contents` sort les enfants du bloc de texte pour les rendre
+     ordonnables un par un dans la grille — sans dupliquer un mot de HTML. */
+  .heros-texte {
+    display: contents;
+  }
+
+  .heros-texte h1 {
+    order: 1;
+    margin-bottom: 0.6rem;
+    font-size: 1.7rem;
+    line-height: 1.15;
+    /* « Plus rien à regarder ? » laissait son point d'interrogation seul sur
+       la deuxième ligne. */
+    text-wrap: balance;
+  }
+
+  .heros-outil {
+    order: 2;
+  }
+
+  .heros-texte p {
+    order: 3;
+    font-size: 1rem;
+  }
+
+  /* Le bouton d'appel pointait vers l'outil : celui-ci est désormais
+     au-dessus de lui, l'ancre n'a plus de sens. */
+  .heros-texte .bouton-cta {
+    display: none;
   }
 
   .heros .sur-titre {
-    font-size: 1.15rem;
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .heros {
+    padding-top: 1.2rem;
+  }
+
+  .heros-grille {
+    gap: 1.2rem;
   }
 }

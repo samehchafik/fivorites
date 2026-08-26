@@ -268,6 +268,41 @@ class Recherche:
             if document.get("found")
         ]
 
+    async def titres(self, univers: Univers, cles: list[int], *, langue: str) -> dict[int, str]:
+        """Le titre de chaque vignette dans la langue demandée.
+
+        Les projections Postgres ne portent qu'un titre — celui de la
+        collecte, en français. Ce que quelqu'un a classé doit pourtant se
+        relire dans SA langue : sans ce détour, « Ma liste » rendait des
+        titres français à un lecteur arabophone, exactement le défaut qui
+        rendait la recherche incompréhensible.
+
+        ES absent : un dictionnaire vide, et l'appelant garde ses titres de
+        projection. Une liste dans la mauvaise langue reste meilleure qu'une
+        page d'erreur.
+        """
+        if self._client is None or not self.active or not cles:
+            return {}
+        champ = champ_titres(langue)
+        try:
+            reponse = await self._client.post(
+                f"/{univers.alias_recherche}/_mget",
+                json={"ids": [str(cle) for cle in cles], "_source": [champ]},
+            )
+            reponse.raise_for_status()
+        except httpx.HTTPError as exc:
+            self._coupe_jusqua = time.monotonic() + DISJONCTEUR_SECONDES
+            log.warning("Elasticsearch indisponible (%s) — titres non localisés.", exc)
+            return {}
+        trouves: dict[int, str] = {}
+        for document in reponse.json().get("docs") or []:
+            if not document.get("found"):
+                continue
+            valeurs = (document.get("_source") or {}).get(champ) or []
+            if valeurs:
+                trouves[int(document["_id"])] = valeurs[0]
+        return trouves
+
     async def affinites(
         self,
         univers: Univers,
@@ -442,9 +477,7 @@ class Recherche:
             "track_total_hits": TOTAL_MAX,
         }
         try:
-            reponse = await self._client.post(
-                f"/{univers.alias_recherche}/_search", json=corps
-            )
+            reponse = await self._client.post(f"/{univers.alias_recherche}/_search", json=corps)
             reponse.raise_for_status()
         except httpx.HTTPError as exc:
             self._coupe_jusqua = time.monotonic() + DISJONCTEUR_SECONDES

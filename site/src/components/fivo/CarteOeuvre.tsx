@@ -4,6 +4,7 @@
 
 import { urlAffiche } from './api'
 import { BoutonsClassement } from './BoutonsClassement'
+import { useTextes } from './textes'
 import type { Statut } from './types'
 
 export function CarteOeuvre({
@@ -45,6 +46,7 @@ export function CarteOeuvre({
   onClasser: (statut: Statut) => void
   onDeclasser: () => void
 }) {
+  const t = useTextes()
   const image = urlAffiche(affiche)
   return (
     <article
@@ -52,7 +54,7 @@ export function CarteOeuvre({
       onClick={onOuvrir}
       role="button"
       tabIndex={0}
-      aria-label={`Voir la fiche de ${titre ?? 'cette œuvre'}`}
+      aria-label={t.dit('carte.voir_fiche', { titre: titre ?? t.dit('carte.cette_oeuvre') })}
       onKeyDown={(evenement) => {
         if (evenement.key === 'Enter' || evenement.key === ' ') {
           evenement.preventDefault()
@@ -70,10 +72,10 @@ export function CarteOeuvre({
       <div className="fivo-corps">
         <header className="fivo-titre-ligne">
           <h3 className="fivo-titre" dir="auto">
-            {titre ?? 'Sans titre'}
+            {titre ?? t.dit('carte.sans_titre')}
           </h3>
           {note != null && (
-            <span className="fivo-note" title={`Note des votants : ${note.toFixed(1)} sur 10`}>
+            <span className="fivo-note" title={t.dit('carte.note', { note: note.toFixed(1) })}>
               ★ {note.toFixed(1)}
             </span>
           )}
@@ -81,7 +83,7 @@ export function CarteOeuvre({
         {/* L'année et le type en gras : ce sont les deux repères qu'on
             cherche d'abord dans une liste, avant les genres. */}
         <p className="fivo-meta">
-          <strong>{annee ?? 'année inconnue'}</strong>
+          <strong>{annee ?? t.dit('carte.annee_inconnue')}</strong>
           {type && (
             <>
               {' · '}

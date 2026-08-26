@@ -118,8 +118,14 @@ export function chargerEpisodes(
   return requete(`/fiche/${identifiant}/saison/${numero}?${params}`)
 }
 
-export function listerSignaux(): Promise<{ items: Signal[] }> {
-  return requete('/signaux')
+/** Les classements de la session.
+ *
+ *  Sans `langue`, les titres sont ceux des projections (français) : c'est
+ *  suffisant au montage, où l'on ne relit que les statuts pour rallumer les
+ *  boutons. Avec, le serveur les remplace par ceux de l'index — ce que
+ *  demande « Ma liste », qui les AFFICHE. */
+export function listerSignaux(langue?: string): Promise<{ items: Signal[] }> {
+  return requete(`/signaux${langue ? `?langue=${encodeURIComponent(langue)}` : ''}`)
 }
 
 export function poserSignal(

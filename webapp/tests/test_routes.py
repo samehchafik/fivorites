@@ -50,6 +50,11 @@ class RechercheMuette:
     async def affinites(self, *args: Any, **kwargs: Any) -> None:
         return None
 
+    async def titres(self, *args: Any, **kwargs: Any) -> dict[int, str]:
+        # Index muet : aucun titre localisé, et la route doit garder ceux de
+        # la projection plutôt que de vider la liste.
+        return {}
+
 
 class CartesFeintes:
     async def chercher_sql(self, *args: Any, **kwargs: Any) -> list[int]:
@@ -90,6 +95,19 @@ class SignauxFeints:
 
     async def pivots(self, conn: Any, session_id: str) -> dict[str, list[int]]:
         return {"aime": [], "aime_pas": [], "a_voir": []}
+
+    async def lister(self, conn: Any, session_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": 42,
+                "oeuvreId": 1042,
+                "univers": "series",
+                "statut": "aime",
+                "titre": "Une œuvre",
+                "affiche": None,
+                "annee": 2020,
+            }
+        ]
 
 
 @pytest.fixture
@@ -187,3 +205,22 @@ class TestSuggestions:
 class TestSante:
     def test_health(self, client: TestClient) -> None:
         assert client.get("/api/public/health").json() == {"status": "ok"}
+
+
+class TestMaListe:
+    """L'onglet « Ma liste » relit `/signaux`. Sans session, la réponse est une
+    liste vide — jamais une erreur : quelqu'un qui n'a rien classé n'est pas
+    dans un cas d'exception, il est au début."""
+
+    def test_sans_session_liste_vide(self, client: TestClient) -> None:
+        reponse = client.get("/api/public/signaux?langue=fr")
+        assert reponse.status_code == 200
+        corps = reponse.json()
+        assert corps["items"] == []
+        assert corps["langue"] == "fr"
+
+    def test_langue_inconnue_retombe_sur_le_francais(self, client: TestClient) -> None:
+        assert client.get("/api/public/signaux?langue=pt").json()["langue"] == "fr"
+
+    def test_statut_inconnu_refuse(self, client: TestClient) -> None:
+        assert client.get("/api/public/signaux?statut=peut-etre").status_code == 400

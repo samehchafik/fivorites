@@ -22,8 +22,12 @@ export interface Carte {
 }
 
 export interface Signal {
+  /** La clé de vignette — ce que la fiche demande. `null` quand la
+   *  projection n'a pas (encore) de ligne pour ce pivot : l'œuvre se liste,
+   *  elle ne s'ouvre pas. */
+  id: number | null
   oeuvreId: number
-  univers: string
+  univers: UniversSlug
   statut: Statut
   titre: string | null
   affiche: string | null
@@ -75,6 +79,9 @@ export interface Video {
   officielle: boolean
   saison: number | null
   url: string | null
+  /** L'adresse du lecteur intégrable — ce qu'une `iframe` accepte. C'est
+   *  elle qui permet de regarder sans quitter la fiche. */
+  integration: string | null
   vignette: string | null
 }
 
@@ -191,17 +198,9 @@ export interface Suggestion {
   corrobore: boolean
 }
 
-/** Le type d'une œuvre, au singulier — affiché en gras sur la carte à côté
- *  de l'année. `UNIVERS_LABELS` est le pluriel des onglets ; ce n'est pas la
- *  même chose et les confondre donnerait « 1954 · Livres ». */
-export const TYPE_LABELS: Record<UniversSlug, string> = {
-  series: 'Série',
-  films: 'Film',
-  livres: 'Livre',
-}
-
-export const UNIVERS_LABELS: Record<UniversSlug, string> = {
-  series: 'Séries',
-  films: 'Films',
-  livres: 'Livres',
-}
+/** Les trois univers, dans l'ordre des onglets. Leurs libellés ne sont plus
+ *  ici : « Séries » se dit dans quatre langues, et cela vit dans
+ *  `src/i18n/textes` avec le reste (clés `nav.series` au pluriel des
+ *  onglets, `type.series` au singulier de la carte — les confondre donnerait
+ *  « 1954 · Livres »). */
+export const UNIVERS: readonly UniversSlug[] = ['series', 'films', 'livres'] as const

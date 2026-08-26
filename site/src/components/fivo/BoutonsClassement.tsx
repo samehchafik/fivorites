@@ -5,12 +5,14 @@
 
 import { UnstyledButton } from '@mantine/core'
 
+import { useTextes } from './textes'
+import type { CleTexte } from '../../i18n/textes'
 import type { Statut } from './types'
 
-const GESTES: Array<{ statut: Statut; label: string; fleche: string }> = [
-  { statut: 'aime_pas', label: "J'aime pas", fleche: '←' },
-  { statut: 'aime', label: "J'ai vu & aimé", fleche: '↑' },
-  { statut: 'a_voir', label: 'Je veux voir !', fleche: '→' },
+const GESTES: Array<{ statut: Statut; cle: CleTexte; fleche: string }> = [
+  { statut: 'aime_pas', cle: 'geste.aime_pas', fleche: '←' },
+  { statut: 'aime', cle: 'geste.aime', fleche: '↑' },
+  { statut: 'a_voir', cle: 'geste.a_voir', fleche: '→' },
 ]
 
 export function BoutonsClassement({
@@ -25,23 +27,27 @@ export function BoutonsClassement({
   onClasser: (statut: Statut) => void
   onDeclasser: () => void
 }) {
+  const t = useTextes()
   return (
-    <div className="fivo-gestes" role="group" aria-label="Classer cette œuvre">
-      {GESTES.map(({ statut, label, fleche }) => {
+    <div className="fivo-gestes" role="group" aria-label={t.dit('geste.groupe')}>
+      {GESTES.map(({ statut, cle, fleche }) => {
         const actif = statutActuel === statut
+        const label = t.dit(cle)
         return (
           <UnstyledButton
             key={statut}
             className={`fivo-geste fivo-geste-${statut}${actif ? ' actif' : ''}`}
             disabled={desactive}
             aria-pressed={actif}
-            title={desactive ? 'Œuvre pas encore classable' : label}
+            title={desactive ? t.dit('geste.inclassable') : label}
             onClick={() => (actif ? onDeclasser() : onClasser(statut))}
           >
+            {/* La flèche ne tourne PAS en arabe : elle désigne un côté du
+                plateau (gauche, haut, droite), pas un sens de lecture. */}
             <span className="fivo-geste-fleche" aria-hidden="true">
               {fleche}
             </span>{' '}
-            {label}
+            <span className="fivo-geste-mot">{label}</span>
           </UnstyledButton>
         )
       })}

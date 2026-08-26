@@ -1273,11 +1273,82 @@
   flex-shrink: 0;
 }
 
-.fiche-videos a {
+/* La façade d'une vidéo : un BOUTON, pas un lien — le clic ne navigue pas,
+   il remplace la vignette par le lecteur. Il se dessine comme le lien qu'il
+   remplaçait. */
+.fiche-videos a,
+.fiche-video-facade {
   position: relative;
   display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: inherit;
+  font-family: inherit;
+  text-align: left;
   text-decoration: none;
+  cursor: pointer;
+}
+
+.fiche-video-facade:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.fiche-video-facade:hover .fiche-video-lecture {
+  background: var(--red, #fa0036);
+}
+
+/* La vidéo en lecture prend toute la largeur de la liste : on la regarde,
+   on ne la compare pas. Les autres vignettes restent en dessous, à leur
+   taille — revenir à la suivante ne demande pas de refermer. */
+.fiche-video-ouverte {
+  width: 100% !important;
+  order: -1;
+}
+
+.fiche-video-cadre {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 4px;
+  overflow: hidden;
+  background: black;
+}
+
+.fiche-video-cadre iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.fiche-video-pied {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.fiche-video-fermer,
+.fiche-video-lien {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--texte-doux-sur-sombre, #b9b9b9);
+  font-family: inherit;
+  font-size: 0.78rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.fiche-video-fermer:hover,
+.fiche-video-lien:hover {
+  color: white;
 }
 
 .fiche-videos img,
@@ -1525,5 +1596,239 @@
 
   .fiche-affiche {
     width: 88px;
+  }
+}
+
+/* --- « Ma liste » : les trois sections de ce qui a été classé ------------ */
+
+.fivo-mes-listes {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.fivo-section-liste h4 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: white;
+}
+
+.fivo-section-compte {
+  font-size: 0.78rem;
+  font-weight: 400;
+  text-transform: none;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Chaque section porte la couleur de son geste — le même code que les trois
+   boutons, pour qu'on retrouve « j'aime pas » à sa couleur sans lire. */
+.fivo-section-a_voir h4 {
+  border-bottom-color: var(--yes, #0b0);
+}
+
+.fivo-section-aime h4 {
+  border-bottom-color: var(--pink, #fb3a95);
+}
+
+.fivo-section-aime_pas h4 {
+  border-bottom-color: var(--no, #e10000);
+}
+
+.fivo-message-discret {
+  margin: 0 0 0.2rem;
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+/* --- L'arabe : ce que le sens d'écriture retourne, et ce qu'il ne retourne
+   pas ---------------------------------------------------------------------
+
+   `dir="rtl"` sur l'îlot suffit pour le texte et les marges logiques. Deux
+   choses doivent lui résister :
+
+   * le PLATEAU de la pile — ses trois demi-disques désignent des côtés
+     physiques (jeter à gauche = j'aime pas), et le geste ne se retourne pas
+     avec la langue ;
+   * les listes horizontales de vignettes, qui se lisent dans le sens de la
+     langue et n'ont donc, elles, rien à corriger. */
+.fivo[dir='rtl'] .fivo-plateau {
+  direction: ltr;
+}
+
+.fivo[dir='rtl'] .fivo-pile-texte,
+.fivo[dir='rtl'] .fivo-carte-pile {
+  direction: rtl;
+  text-align: right;
+}
+
+.fivo[dir='rtl'] .fivo-geste-fleche,
+.fivo[dir='rtl'] .fivo-aide-fleche {
+  display: inline-block;
+  /* Les flèches désignent le plateau, pas la lecture : elles gardent leur
+     sens. Sans ce `scaleX(1)` explicite, certains navigateurs miroitent les
+     caractères de flèche en contexte RTL. */
+  transform: scaleX(1);
+}
+
+/* --- Mobile : le composant sur un écran de téléphone ---------------------
+
+   Ce bloc corrige ce qu'une capture d'iPhone a montré sans discussion : le
+   texte de la carte du dessus passait PAR-DESSUS les affiches empilées
+   derrière elle, la raison de la suggestion était coupée à mi-phrase, et il
+   fallait descendre une page entière avant d'atteindre l'outil.
+
+   La cause du chevauchement valait le détour : la carte du dessus est la
+   seule à porter du texte, elle est donc plus HAUTE que les autres ; toutes
+   étant centrées sur le même point, son affiche remontait et celles du
+   dessous se retrouvaient exactement derrière son texte. La réparation n'est
+   pas un `z-index` — c'est de sortir le texte du flux de la carte, pour que
+   les cinq cartes aient enfin la même géométrie. */
+
+@media (max-width: 40rem) {
+  /* Le bandeau : même contenu, moins de hauteur. Sur un téléphone, ces
+     quatre lignes coûtaient un tiers de l'écran avant le premier champ. */
+  .fivo-bandeau {
+    padding: 0.7rem 0.8rem 0.75rem;
+  }
+
+  .fivo-bandeau h3 {
+    margin-bottom: 0.3rem;
+    font-size: 0.98rem;
+    line-height: 1.3;
+  }
+
+  .fivo-bandeau p {
+    margin-bottom: 0.6rem;
+    font-size: 0.82rem;
+  }
+
+  /* Les trois pilules sur UNE ligne qui glisse, plutôt que deux lignes
+     empilées : la troisième (« Ma liste ») passait à la ligne toute seule et
+     donnait l'impression d'un bouton oublié. */
+  .fivo-pilules {
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 0.15rem;
+  }
+
+  .fivo-pilules::-webkit-scrollbar {
+    display: none;
+  }
+
+  .fivo-pilule {
+    padding: 0.22rem 0.7rem;
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }
+
+  .fivo-selecteur-onglet {
+    padding: 7px 3px;
+    font-size: 0.75rem;
+  }
+
+  .fivo-langue select {
+    font-size: 0.8rem;
+  }
+
+  /* Les sections de « Ma liste » : le titre et son compte sur une ligne, en
+     plus petit. */
+  .fivo-section-liste h4 {
+    font-size: 0.85rem;
+  }
+}
+
+@media (max-width: 30rem) {
+  .fivo-plateau {
+    --aide-taille: 96px;
+    --carte-largeur: 156px;
+    /* La place de l'affiche ET du bloc de texte, qui vit maintenant sous
+       elle — pas plus : 68vh laissait un vide de carmin sous la légende. */
+    height: 62vh;
+    max-height: 500px;
+  }
+
+  /* La carte remonte : son texte occupe l'espace sous elle. */
+  .fivo-carte-pile {
+    top: 36%;
+    gap: 0;
+  }
+
+  .fivo-pile-affiche,
+  .fivo-pile-affiche-vide {
+    height: 200px;
+  }
+
+  /* LE point : le texte sort du flux de la carte. Les cinq affiches ont dès
+     lors la même géométrie, l'éventail se lit comme un éventail, et plus une
+     lettre ne traverse une affiche. */
+  .fivo-pile-texte {
+    position: absolute;
+    top: calc(100% + 0.6rem);
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(310px, 88vw);
+    padding: 0.55rem 0.75rem 0.65rem;
+    border-radius: 8px;
+    /* Un fond plein : le texte se lit sur lui, pas sur ce qui passe
+       derrière. */
+    background: rgba(0, 0, 0, 0.45);
+    text-align: center;
+  }
+
+  .fivo-pile-texte h3 {
+    font-size: 1.05rem;
+  }
+
+  /* La raison de la suggestion : trois lignes et toute la largeur. Coupée à
+     deux lignes derrière le ⓘ, elle s'arrêtait sur « … membres qui » — la
+     phrase la plus utile du composant, illisible. */
+  .fivo-pile-raison {
+    margin: 0.25rem 0 0;
+    font-size: 0.78rem;
+    -webkit-line-clamp: 3;
+  }
+
+  .fivo-pile-info {
+    margin-top: 0.4rem;
+  }
+
+  /* L'éventail se resserre : à 375 px, un décalage de 24 % sortait les
+     cartes du dessous hors du plateau. */
+  .fivo-carte-rang-1 {
+    transform: translate(-54%, -50%) scale(0.95) rotate(-3deg);
+  }
+
+  .fivo-carte-rang-2 {
+    transform: translate(-58%, -50%) scale(0.9) rotate(-6deg);
+  }
+
+  .fivo-carte-rang-3 {
+    transform: translate(-62%, -50%) scale(0.85) rotate(-9deg);
+  }
+
+  .fivo-carte-rang-4 {
+    transform: translate(-66%, -50%) scale(0.8) rotate(-12deg);
+  }
+
+  /* « PASSER » descend sous le bloc de texte plutôt que sous l'affiche. */
+  .fivo-aide-passer {
+    bottom: 2px;
+  }
+
+  /* Les demi-disques remontent au niveau de l'AFFICHE : centrés sur le
+     plateau, ils se retrouvaient à hauteur du texte, où le geste n'a plus de
+     rapport avec ce qu'on voit. */
+  .fivo-aide-aime-pas,
+  .fivo-aide-a-voir {
+    top: 36%;
   }
 }

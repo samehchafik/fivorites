@@ -44,10 +44,14 @@ PAGE_MAX = 30
 
 # Les métiers qu'on montre, et leur libellé. Ce sont les trois relations que
 # la projection du graphe pose (`fiv_admin.graphe.LABEL_DU_ROLE`).
+# Le rôle sort en CODE, pas en français : la même filmographie se lit en
+# quatre langues, et « Interprétation » dans une page arabe serait une faute
+# de plus qu'un manque. Le front les traduit (`src/i18n/textes`, clés
+# `role.*`).
 ROLES = {
-    "FIV_JOUE_DANS": "Interprétation",
-    "FIV_A_REALISE": "Réalisation",
-    "FIV_A_CREE": "Création",
+    "FIV_JOUE_DANS": "interpretation",
+    "FIV_A_REALISE": "realisation",
+    "FIV_A_CREE": "creation",
 }
 
 
@@ -135,9 +139,7 @@ SKIP $depuis LIMIT $taille
 class Personnes:
     """La lecture d'une filmographie, par le graphe ou par l'index."""
 
-    def __init__(
-        self, recherche: Recherche, cartes: Cartes, graphe: Graphe | None = None
-    ) -> None:
+    def __init__(self, recherche: Recherche, cartes: Cartes, graphe: Graphe | None = None) -> None:
         self._recherche = recherche
         self._cartes = cartes
         self._graphe = graphe

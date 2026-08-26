@@ -69,7 +69,9 @@ class TestRealisation:
         )
         noms = [personne.nom for personne in retenus]
         assert noms.count("David Benioff") == 1
-        assert next(p for p in retenus if p.nom == "David Benioff").role == "Création"
+        # Le rôle est un CODE : la fiche se lit en quatre langues, et c'est le
+        # front qui le nomme (`src/i18n/textes`, clés `role.*`).
+        assert next(p for p in retenus if p.nom == "David Benioff").role == "creation"
         # Le créateur EN TÊTE, même avec moins d'épisodes que le réalisateur :
         # il signe la série, l'autre signe sept épisodes.
         assert noms == ["David Benioff", "Alan Taylor"]

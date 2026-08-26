@@ -1,0 +1,23 @@
+---
+// Les trois pages d'univers dans les langues préfixées : /en/series,
+// /ar/livres… Une seule route pour neuf pages — les combinaisons sont
+// énumérées ici, donc /en/nimportequoi n'existe pas plutôt que de rendre une
+// page vide.
+import PageContenu from '../../components/PageContenu.astro'
+import { LANGUES, LANGUE_DEFAUT, type Langue } from '../../i18n/langues'
+
+export function getStaticPaths() {
+  // Les trois pages sont déclarées ICI et pas au-dessus : Astro extrait
+  // `getStaticPaths` dans son propre module, où les constantes du frontmatter
+  // n'existent pas (mesuré — « PAGES is not defined » au build).
+  const pages = ['series', 'films', 'livres']
+  return LANGUES.filter((langue) => langue !== LANGUE_DEFAUT).flatMap((langue) =>
+    pages.map((page) => ({ params: { langue, page } })),
+  )
+}
+
+const langue = Astro.params.langue as Langue
+const page = Astro.params.page as string
+---
+
+<PageContenu entree={page} langue={langue} chemin={`/${page}`} />

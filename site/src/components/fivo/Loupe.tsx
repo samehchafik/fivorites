@@ -12,6 +12,7 @@
 import { Modal } from '@mantine/core'
 
 import { urlAffiche } from './api'
+import { useTextes } from './textes'
 
 export function Loupe({
   image,
@@ -23,6 +24,7 @@ export function Loupe({
   legende?: string | null
   onFermer: () => void
 }) {
+  const t = useTextes()
   const grande = urlAffiche(image, 'original')
   return (
     <Modal
@@ -40,7 +42,7 @@ export function Loupe({
       {grande && (
         // Le clic sur l'image referme aussi : c'est ce qu'on essaie
         // spontanément, et ne rien faire donnerait l'impression d'un blocage.
-        <button type="button" className="loupe-bouton" onClick={onFermer} title="Fermer">
+        <button type="button" className="loupe-bouton" onClick={onFermer} title={t.dit('commun.fermer')}>
           <img src={grande} alt={legende ?? ''} />
           {legende && <figcaption>{legende}</figcaption>}
         </button>

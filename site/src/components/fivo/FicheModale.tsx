@@ -15,7 +15,20 @@ import { useEffect, useState } from 'react'
 import { chargerFiche, urlAffiche } from './api'
 import { BoutonsClassement } from './BoutonsClassement'
 import { SaisonsAccordeon } from './SaisonsAccordeon'
+import { useTextes } from './textes'
+import { Videos } from './Videos'
+import type { CleTexte } from '../../i18n/textes'
 import type { Fiche, Statut, UniversSlug } from './types'
+
+// Les types d'offre arrivent en code (`flatrate`, `free`…) : le libellé
+// français que l'API joint sert de repli, pas de texte affiché.
+const OFFRES: Record<string, CleTexte> = {
+  flatrate: 'offre.flatrate',
+  free: 'offre.free',
+  ads: 'offre.ads',
+  rent: 'offre.rent',
+  buy: 'offre.buy',
+}
 
 export function FicheModale({
   univers,
@@ -43,6 +56,7 @@ export function FicheModale({
   /** Ouvre la filmographie de quelqu'un. */
   onOuvrirPersonne: (cle: string, nom: string, photo: string | null) => void
 }) {
+  const t = useTextes()
   const [fiche, setFiche] = useState<Fiche | null>(null)
   const [etat, setEtat] = useState<'en-cours' | 'servi' | 'erreur'>('en-cours')
 
@@ -87,12 +101,8 @@ export function FicheModale({
         close: 'fiche-fermer',
       }}
     >
-      {etat === 'en-cours' && <p className="fivo-message">Chargement…</p>}
-      {etat === 'erreur' && (
-        <p className="fivo-message fivo-erreur">
-          Cette fiche ne répond pas — réessayez dans un instant.
-        </p>
-      )}
+      {etat === 'en-cours' && <p className="fivo-message">{t.dit('commun.chargement')}</p>}
+      {etat === 'erreur' && <p className="fivo-message fivo-erreur">{t.dit('fiche.erreur')}</p>}
 
       {fiche && (
         <article>
@@ -111,7 +121,7 @@ export function FicheModale({
                   type="button"
                   className="fiche-affiche-bouton"
                   onClick={() => onAgrandir(fiche.affiche ?? '', fiche.titre ?? '')}
-                  title="Agrandir l'affiche"
+                  title={t.dit('fiche.agrandir_affiche')}
                 >
                   <img className="fiche-affiche" src={affiche} alt="" loading="lazy" />
                 </button>
@@ -119,7 +129,7 @@ export function FicheModale({
                 <div className="fiche-affiche fiche-affiche-vide" aria-hidden="true" />
               )}
               <div className="fiche-entete-texte">
-                <h2 dir="auto">{fiche.titre ?? 'Sans titre'}</h2>
+                <h2 dir="auto">{fiche.titre ?? t.dit('carte.sans_titre')}</h2>
                 {fiche.titreOriginal && fiche.titreOriginal !== fiche.titre && (
                   <p className="fiche-original" dir="auto">
                     {fiche.titreOriginal}
@@ -130,9 +140,11 @@ export function FicheModale({
                   {[
                     fiche.annee?.toString(),
                     fiche.saisonsTotal
-                      ? `${fiche.saisonsTotal} saison${fiche.saisonsTotal > 1 ? 's' : ''}`
+                      ? t.compte(fiche.saisonsTotal, 'fiche.compte_saison', 'fiche.compte_saisons')
                       : null,
-                    fiche.episodesTotal ? `${fiche.episodesTotal} épisodes` : null,
+                    fiche.episodesTotal
+                      ? t.dit('fiche.compte_episodes', { nombre: t.nombre(fiche.episodesTotal) })
+                      : null,
                     fiche.note ? `★ ${fiche.note.toFixed(1)}` : null,
                   ]
                     .filter(Boolean)
@@ -158,7 +170,7 @@ export function FicheModale({
 
             {fiche.realisation.length > 0 && (
               <section className="fiche-section">
-                <h3>{fiche.univers === 'livres' ? 'Écrit par' : 'Réalisé et créé par'}</h3>
+                <h3>{t.dit(fiche.univers === 'livres' ? 'fiche.ecrit_par' : 'fiche.realise_par')}</h3>
                 <p className="fiche-noms">
                   {fiche.realisation.map((personne, rang) => (
                     <span key={`${personne.nom}-${rang}`}>
@@ -170,7 +182,7 @@ export function FicheModale({
                           onClick={() =>
                             onOuvrirPersonne(personne.cle!, personne.nom, personne.photo)
                           }
-                          title={`Voir les œuvres de ${personne.nom}`}
+                          title={t.dit('fiche.filmographie', { nom: personne.nom })}
                         >
                           {personne.nom}
                         </button>
@@ -185,7 +197,7 @@ export function FicheModale({
 
             {fiche.distribution.length > 0 && (
               <section className="fiche-section">
-                <h3>À l'affiche</h3>
+                <h3>{t.dit('fiche.distribution')}</h3>
                 <ul className="fiche-gens">
                   {fiche.distribution.map((personne) => {
                     const visage = urlAffiche(personne.photo, 'w185')
@@ -205,7 +217,7 @@ export function FicheModale({
                           }
                           title={
                             personne.cle
-                              ? `Voir la filmographie de ${personne.nom}`
+                              ? t.dit('fiche.filmographie', { nom: personne.nom })
                               : personne.nom
                           }
                         >
@@ -228,10 +240,12 @@ export function FicheModale({
                 de citer la source : c'est ce que fait le lien. */}
             {fiche.offres.length > 0 && (
               <section className="fiche-section">
-                <h3>Où regarder</h3>
+                <h3>{t.dit('fiche.ou_regarder')}</h3>
                 {fiche.offres.map((offre) => (
                   <div key={offre.genre} className="fiche-offre">
-                    <span className="fiche-offre-libelle">{offre.libelle}</span>
+                    <span className="fiche-offre-libelle">
+                      {OFFRES[offre.genre] ? t.dit(OFFRES[offre.genre]) : offre.libelle}
+                    </span>
                     <ul className="fiche-plateformes">
                       {offre.plateformes.map((plateforme) => (
                         <li key={plateforme.nom} title={plateforme.nom}>
@@ -252,7 +266,7 @@ export function FicheModale({
                 {fiche.lienOffres && (
                   <p className="fiche-source">
                     <a href={fiche.lienOffres} target="_blank" rel="noreferrer noopener">
-                      Offres et disponibilité — JustWatch
+                      {t.dit('fiche.source_offres')}
                     </a>
                   </p>
                 )}
@@ -263,57 +277,26 @@ export function FicheModale({
                 silence qu'on prendrait pour une donnée manquante. */}
             {fiche.offres.length === 0 && fiche.paysOffres.length > 0 && (
               <section className="fiche-section">
-                <h3>Où regarder</h3>
+                <h3>{t.dit('fiche.ou_regarder')}</h3>
                 <p className="fiche-noms">
-                  Rien dans votre pays — mais disponible dans {fiche.paysOffres.length} autre
-                  {fiche.paysOffres.length > 1 ? 's' : ''}.
+                  {t.compte(fiche.paysOffres.length, 'fiche.ailleurs_un', 'fiche.ailleurs')}
                 </p>
               </section>
             )}
 
-            {/* Les vidéos : la vignette et un lien, jamais un lecteur chargé
-                d'office — trois iframes YouTube dans une modale, ce sont trois
-                traceurs et un mégaoctet avant le moindre clic. */}
+            {/* Les bandes-annonces : lecteur intégré, ouvert au clic
+                seulement (voir `Videos`). Un lien sortant emportait le
+                visiteur — et sa recherche, ses filtres, sa pile. */}
             {fiche.videos.length > 0 && (
               <section className="fiche-section">
-                <h3>Bandes-annonces</h3>
-                <ul className="fiche-videos">
-                  {fiche.videos.map((video) => (
-                    <li key={`${video.site}-${video.cle}`}>
-                      <a
-                        href={video.url ?? undefined}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        title={video.nom ?? video.type}
-                      >
-                        {video.vignette ? (
-                          <img src={video.vignette} alt="" loading="lazy" />
-                        ) : (
-                          <span className="fiche-video-vide" aria-hidden="true" />
-                        )}
-                        <span className="fiche-video-lecture" aria-hidden="true">
-                          ▶
-                        </span>
-                        <strong>{video.nom ?? video.type}</strong>
-                        <span className="fiche-video-meta">
-                          {[
-                            video.type,
-                            video.langue?.toUpperCase(),
-                            video.saison ? `saison ${video.saison}` : null,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </span>
-                      </a>
-                    </li>
-                  ))}
-                </ul>
+                <h3>{t.dit('fiche.videos')}</h3>
+                <Videos videos={fiche.videos} />
               </section>
             )}
 
             {fiche.saisons.length > 0 && identifiant !== null && (
               <section className="fiche-section">
-                <h3>Les saisons</h3>
+                <h3>{t.dit('fiche.saisons')}</h3>
                 {/* Déplier une saison charge ses épisodes — pas avant : une
                     série de huit saisons en porte deux cents. */}
                 <SaisonsAccordeon

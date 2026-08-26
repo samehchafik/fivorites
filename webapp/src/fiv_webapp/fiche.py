@@ -189,6 +189,23 @@ class Video:
         return None
 
     @property
+    def integration(self) -> str | None:
+        """L'adresse du lecteur intégrable — celle qu'une `iframe` accepte.
+
+        Elle existe pour que la bande-annonce se regarde SANS quitter la
+        fiche : un lien sortant emportait le visiteur sur YouTube, et avec lui
+        sa recherche, ses filtres et sa pile de suggestions. Le front ne la
+        charge qu'au clic (voir `fiche.videos` côté site) — et
+        `youtube-nocookie` plutôt que `youtube` parce qu'un lecteur qui ne
+        dépose rien avant qu'on l'ait demandé est le comportement par défaut
+        qu'on veut."""
+        if self.site.lower() == "youtube":
+            return f"https://www.youtube-nocookie.com/embed/{self.cle}"
+        if self.site.lower() == "vimeo":
+            return f"https://player.vimeo.com/video/{self.cle}"
+        return None
+
+    @property
     def vignette(self) -> str | None:
         """L'image d'attente, servie par le site de la vidéo — jamais un
         lecteur chargé d'office : trois iframes YouTube dans une modale, c'est
@@ -207,13 +224,16 @@ class Video:
             "officielle": self.officielle,
             "saison": self.saison,
             "url": self.url,
+            "integration": self.integration,
             "vignette": self.vignette,
         }
 
 
 # Les types d'offre de TMDB, dans l'ordre d'intérêt et avec leur libellé —
 # les mêmes que l'admin (`catalog.WATCH_KINDS`), pour que les deux fronts
-# nomment la même chose pareil.
+# nomment la même chose pareil. Le libellé français part quand même dans la
+# réponse : le site public traduit par le CODE (`offre.flatrate`…), l'admin,
+# qui n'existe qu'en français, se sert du libellé.
 OFFRES = (
     ("flatrate", "Par abonnement"),
     ("free", "Gratuit"),
@@ -645,7 +665,7 @@ class Fiches:
             nom = (membre.get("name") or "").strip()
             if nom:
                 createurs[nom] = Personne(
-                    nom=nom, role="Création", photo=membre.get("profile_path")
+                    nom=nom, role="creation", photo=membre.get("profile_path")
                 )
         par_nom.update(createurs)
         for membre in equipe or []:
@@ -665,7 +685,7 @@ class Fiches:
             par_nom[nom] = Personne(
                 nom=nom,
                 cle=f"tmdb:{identifiant}" if identifiant is not None else None,
-                role="Réalisation",
+                role="realisation",
                 photo=membre.get("profile_path"),
                 episodes=episodes,
             )
@@ -802,7 +822,7 @@ class Fiches:
                     # Un auteur vient de Wikidata : son espace de
                     # numérotation n'est pas celui de TMDB, d'où le préfixe.
                     cle=f"wd:{auteur['qid']}" if auteur.get("qid") else None,
-                    role="Auteur",
+                    role="auteur",
                 )
                 for auteur in faits.get("auteurs") or []
                 if (auteur.get("nom") or "").strip()

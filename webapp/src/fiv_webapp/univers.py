@@ -98,6 +98,17 @@ UNIVERS: dict[str, Univers] = {
 }
 
 
+def univers_de_interne(interne: str) -> Univers | None:
+    """L'univers dont `sourcing.oeuvre.univers` vaut `interne`.
+
+    Le détour existe parce que la base parle `movies` là où les URL parlent
+    `films` : ce qui sort d'une table (`visiteur.signal.univers`, par exemple)
+    doit être retraduit avant d'atteindre un client, qui ne connaît que les
+    slugs publics.
+    """
+    return next((u for u in UNIVERS.values() if u.interne == interne), None)
+
+
 def univers_ou_400(slug: str) -> Univers:
     """L'univers demandé, ou l'erreur qui dit lesquels existent.
 

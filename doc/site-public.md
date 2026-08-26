@@ -149,9 +149,9 @@ de l'admin. Ce qui a changé depuis la première version :
   français — limite connue.
 * **Les filtres** sont peuplés par une agrégation sur l'index, donc par ce que
   le catalogue contient vraiment. La dimension s'adapte : genres pour les
-  séries et les films, **langues** pour les livres, qui n'ont aucun genre en
-  base (Wikidata ne rend qu'auteurs, langues, pays, année). Le jour où le
-  crawler collectera P136, deux lignes de `univers.py` suffiront.
+  séries et les films, genres **et plateformes** pour eux (un livre ne se
+  regarde pas sur Netflix), genres seuls pour les livres depuis que le
+  crawler collecte P136.
 * **La liste se pagine** : total annoncé (compté jusqu'à 500, puis « plus
   de »), et un bouton qui ajoute à la suite. Le repli SQL pagine et filtre
   lui aussi.
@@ -165,6 +165,78 @@ s'invoque que par le script console `fiv-admin` — `python -m fiv_admin.cli`
 ne lance pas l'application Typer et sort silencieusement en 0, ce qui a fait
 croire à deux réindexations réussies qui n'avaient rien fait.
 
+## Quatre langues, un fichier
+
+*Ajouté le 26 août 2026.*
+
+Le site existe en **français, anglais, espagnol et arabe**, entièrement : la
+coque, le contenu Markdown, le composant de suggestion, et le sens
+d'écriture.
+
+**Un seul fichier de textes**, `site/src/i18n/textes.ts`, les quatre langues
+côte à côte pour chaque clé. Pas un fichier par langue : une clé traduite
+trois fois sur quatre se voit en relecture de diff, elle se perd entre quatre
+fichiers — et le type `Phrase` exige les quatre, donc un oubli casse le build
+plutôt que la page. `site/src/i18n/langues.ts` porte la liste, les noms, le
+sens (`rtl` pour l'arabe), les locales `Intl` et les chemins.
+
+**Les URL** : le français reste à la racine (`/series`), les trois autres
+langues sont préfixées (`/en/series`, `/ar/livres`). Le français n'y descend
+pas — le site y est déjà indexé, et déplacer `/series` vers `/fr/series`
+casserait des liens pour ne gagner qu'une symétrie. Neuf pages d'univers +
+trois accueils sortent de deux routes dynamiques ; chaque page porte ses
+`hreflang` et un `x-default` sur le français. Le contenu suit la même règle :
+`src/content/pages/accueil.md` pour le français, `src/content/pages/en/…`
+pour le reste.
+
+**L'URL décide de la langue, seule.** Trois candidats se disputaient la
+place — la préférence du navigateur, un choix retenu en `localStorage`, et la
+page. Les deux premiers produisaient la même faute, vue à l'écran : arriver
+sur `/ar/series` donnait une coque arabe, de droite à gauche, avec un
+composant français au milieu ; et cliquer « AR » dans l'en-tête ne changeait
+rien au composant, un ancien `fr` traînant dans le navigateur. Le sélecteur
+de langue du composant ne modifie donc plus un état local : **il navigue**,
+et tout suit d'un mouvement.
+
+Ce qui NE se traduit pas ici : les données. Titres, genres, plateformes
+viennent de l'index dans la langue demandée. Les **rôles**, eux, sortent
+désormais du serveur en codes (`interpretation`, `realisation`, `creation`,
+`auteur`) et les types d'offre aussi (`flatrate`, `free`…) — précisément pour
+être traduits côté front plutôt que d'imposer « Interprétation » à une page
+arabe.
+
+Deux formes de pluriel seulement (juste pour trois langues sur quatre,
+approché pour l'arabe qui en compte six), avec le zéro au singulier en
+français : « 0 œuvre », pas « 0 œuvres ».
+
+## Le mobile, après une capture d'écran
+
+*Ajouté le 26 août 2026, sur une capture d'iPhone.*
+
+Trois défauts, trois causes distinctes :
+
+1. **Le texte de la carte du dessus passait par-dessus les affiches
+   empilées.** La cause valait le détour : la carte du dessus est la seule à
+   porter du texte, elle est donc plus haute que les autres ; toutes étant
+   centrées sur le même point, son affiche remontait et celles du dessous se
+   retrouvaient exactement derrière son texte. La réparation n'est pas un
+   `z-index` mais de **sortir le texte du flux de la carte** — les cinq
+   affiches ont enfin la même géométrie, et le bloc de texte vit sous elles
+   sur son propre fond.
+2. **La raison de la suggestion était coupée** à deux lignes derrière le ⓘ,
+   s'arrêtant sur « … membres qui » : la phrase la plus utile du composant,
+   illisible. Trois lignes, toute la largeur.
+3. **L'outil commençait à 900 px de haut** : le héros occupait tout le premier
+   écran. Sur mobile l'accroche reste, le reste passe SOUS l'outil
+   (`display: contents` sur le bloc de texte réordonne ses enfants dans la
+   grille, sans dupliquer un mot de HTML), et le bouton d'appel disparaît —
+   il pointait vers ce qui est désormais au-dessus de lui.
+
+Plus : l'en-tête tient à 375 px (langues en codes `FR EN ES AR`), les trois
+pilules sur une ligne qui glisse, et un placeholder court — le long se coupait
+sur « un auteu », et les exemples ont déménagé dans le message d'accueil, où
+ils tiennent.
+
 ## Ce qui reste devant
 
 * **Neo4j en local** : le poste n'a pas encore de Neo4j vendorisé dans ce
@@ -175,5 +247,9 @@ croire à deux réindexations réussies qui n'avaient rien fait.
   (import V1), et l'app React « connectée » complète.
 * **BD et musiques** : entreront par `webapp/src/fiv_webapp/univers.py` et
   une entrée de contenu — nulle part ailleurs.
+* **Le synopsis dans la langue demandée** : il reste français. Mesuré sur la
+  production : 334 séries sur 500 échantillonnées n'ont pas de synopsis à la
+  racine, et 325 d'entre elles en ont un en anglais — la cascade langue →
+  anglais → racine est le prochain geste.
 * **Le sitemap et les pages de taxonomie SEO** (par origine notamment — voir
   `doc/etude-couverture-marche-arabe.md` §4) : la structure Astro les attend.

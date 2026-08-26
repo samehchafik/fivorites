@@ -16,7 +16,17 @@ import { Modal } from '@mantine/core'
 import { useEffect, useState } from 'react'
 
 import { chargerPersonne, urlAffiche } from './api'
+import { useTextes } from './textes'
+import type { CleTexte } from '../../i18n/textes'
 import type { FichePersonne, UniversSlug } from './types'
+
+// Le rôle arrive du graphe en code (voir `fiv_webapp.personnes.ROLES`).
+const ROLES: Record<string, CleTexte> = {
+  interpretation: 'role.interpretation',
+  realisation: 'role.realisation',
+  creation: 'role.creation',
+  auteur: 'role.auteur',
+}
 
 export function PersonneModale({
   cle,
@@ -39,6 +49,7 @@ export function PersonneModale({
   onOuvrirOeuvre: (identifiant: number, oeuvreId: number, univers: UniversSlug) => void
   onAgrandir: (image: string, legende: string) => void
 }) {
+  const t = useTextes()
   const [fiche, setFiche] = useState<FichePersonne | null>(null)
   const [page, setPage] = useState(1)
   const [etat, setEtat] = useState<'en-cours' | 'servi' | 'erreur'>('en-cours')
@@ -100,7 +111,7 @@ export function PersonneModale({
               onClick={() =>
                 onAgrandir(fiche?.photo ?? photo ?? '', fiche?.nom ?? nom ?? '')
               }
-              title="Agrandir le portrait"
+              title={t.dit('personne.agrandir')}
             >
               <img src={portrait} alt="" />
             </button>
@@ -108,18 +119,17 @@ export function PersonneModale({
             <span className="personne-portrait personne-portrait-vide" aria-hidden="true" />
           )}
           <div>
-            <h2>{fiche?.nom ?? nom ?? 'Quelqu’un'}</h2>
+            <h2>{fiche?.nom ?? nom ?? t.dit('personne.inconnue')}</h2>
             {etat === 'servi' && (
               <p className="personne-compte">
                 {total > 0
-                  ? `${total} œuvre${total > 1 ? 's' : ''} au catalogue`
-                  : 'Aucune œuvre trouvée au catalogue'}
+                  ? t.compte(total, 'personne.compte_une', 'personne.compte')
+                  : t.dit('personne.aucune')}
                 {/* La source change ce qu'on regarde : une liste tirée du nom
                     peut mêler deux homonymes, et se limite à un univers. */}
                 {fiche?.source === 'index' && (
                   <span className="personne-source">
-                    {' '}
-                    — trouvées par le nom, dans les {univers} seulement
+                    {t.dit('personne.par_le_nom', { univers: t.dit(`nav.${univers}`).toLowerCase() })}
                   </span>
                 )}
               </p>
@@ -128,11 +138,9 @@ export function PersonneModale({
         </header>
 
         <div className="fiche-contenu">
-          {etat === 'en-cours' && <p className="fivo-message">Chargement…</p>}
+          {etat === 'en-cours' && <p className="fivo-message">{t.dit('commun.chargement')}</p>}
           {etat === 'erreur' && (
-            <p className="fivo-message fivo-erreur">
-              Cette filmographie ne répond pas — réessayez dans un instant.
-            </p>
+            <p className="fivo-message fivo-erreur">{t.dit('personne.erreur')}</p>
           )}
 
           {fiche && fiche.oeuvres.length > 0 && (
@@ -146,7 +154,9 @@ export function PersonneModale({
                       onClick={() =>
                         onOuvrirOeuvre(oeuvre.id, oeuvre.oeuvreId, oeuvre.univers)
                       }
-                      title={`Ouvrir la fiche de ${oeuvre.titre ?? 'cette œuvre'}`}
+                      title={t.dit('personne.ouvrir', {
+                        titre: oeuvre.titre ?? t.dit('carte.cette_oeuvre'),
+                      })}
                     >
                       {affiche ? (
                         <img src={affiche} alt="" loading="lazy" />
@@ -154,9 +164,16 @@ export function PersonneModale({
                         <span className="personne-affiche-vide" aria-hidden="true" />
                       )}
                       <span className="personne-oeuvre-texte">
-                        <strong dir="auto">{oeuvre.titre ?? 'Sans titre'}</strong>
+                        <strong dir="auto">{oeuvre.titre ?? t.dit('carte.sans_titre')}</strong>
                         <span>
-                          {[oeuvre.annee?.toString(), oeuvre.role].filter(Boolean).join(' · ')}
+                          {[
+                            oeuvre.annee?.toString(),
+                            oeuvre.role && ROLES[oeuvre.role]
+                              ? t.dit(ROLES[oeuvre.role])
+                              : oeuvre.role,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
                         </span>
                       </span>
                     </button>
@@ -169,13 +186,13 @@ export function PersonneModale({
           {/* La pagination : dix par page, et on ne l'affiche pas quand il n'y
               a qu'une page — un « 1 / 1 » n'informe personne. */}
           {pages > 1 && (
-            <nav className="personne-pages" aria-label="Pages de la filmographie">
+            <nav className="personne-pages" aria-label={t.dit('personne.pages')}>
               <button
                 type="button"
                 disabled={page <= 1 || etat === 'en-cours'}
                 onClick={() => setPage((courante) => Math.max(1, courante - 1))}
               >
-                ← Précédentes
+                {t.dit('personne.precedentes')}
               </button>
               <span>
                 {page} / {pages}
@@ -185,7 +202,7 @@ export function PersonneModale({
                 disabled={page >= pages || etat === 'en-cours'}
                 onClick={() => setPage((courante) => Math.min(pages, courante + 1))}
               >
-                Suivantes →
+                {t.dit('personne.suivantes')}
               </button>
             </nav>
           )}

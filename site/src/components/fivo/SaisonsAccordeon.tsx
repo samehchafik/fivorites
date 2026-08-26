@@ -9,6 +9,7 @@ import { Accordion } from '@mantine/core'
 import { useState } from 'react'
 
 import { chargerEpisodes, urlAffiche } from './api'
+import { useTextes } from './textes'
 import type { Episode, Saison, UniversSlug } from './types'
 
 /** L'état de chargement d'UNE saison. Absent de la carte = jamais dépliée. */
@@ -24,6 +25,7 @@ export function SaisonsAccordeon({
   identifiant: number
   saisons: Saison[]
 }) {
+  const t = useTextes()
   const [parSaison, setParSaison] = useState<Record<number, EtatSaison>>({})
 
   const deplier = async (valeur: string | null) => {
@@ -64,11 +66,11 @@ export function SaisonsAccordeon({
         return (
           <Accordion.Item key={saison.numero} value={String(saison.numero)}>
             <Accordion.Control>
-              <span className="saison-titre">{saison.nom ?? `Saison ${saison.numero}`}</span>
+              <span className="saison-titre">{saison.nom ?? t.dit('saison.titre', { numero: saison.numero })}</span>
               <span className="saison-faits">
                 {[
                   saison.annee?.toString(),
-                  saison.episodes ? `${saison.episodes} épisodes` : null,
+                  saison.episodes ? t.dit('fiche.compte_episodes', { nombre: t.nombre(saison.episodes) }) : null,
                 ]
                   .filter(Boolean)
                   .join(' · ')}
@@ -77,14 +79,12 @@ export function SaisonsAccordeon({
             <Accordion.Panel>
               {saison.synopsis && <p className="saison-synopsis">{saison.synopsis}</p>}
 
-              {charge?.etat === 'en-cours' && <p className="saison-note">Chargement des épisodes…</p>}
+              {charge?.etat === 'en-cours' && <p className="saison-note">{t.dit('saison.chargement')}</p>}
               {charge?.etat === 'erreur' && (
-                <p className="saison-note fivo-erreur">
-                  Les épisodes ne répondent pas — refermez et réessayez.
-                </p>
+                <p className="saison-note fivo-erreur">{t.dit('saison.erreur')}</p>
               )}
               {charge?.etat === 'servi' && charge.episodes.length === 0 && (
-                <p className="saison-note">Les épisodes de cette saison ne sont pas encore collectés.</p>
+                <p className="saison-note">{t.dit('saison.vide')}</p>
               )}
 
               {charge?.etat === 'servi' && charge.episodes.length > 0 && (
@@ -100,7 +100,7 @@ export function SaisonsAccordeon({
                         )}
                         <div className="episode-texte">
                           <strong>
-                            {episode.numero}. {episode.titre ?? 'Épisode sans titre'}
+                            {episode.numero}. {episode.titre ?? t.dit('saison.episode_sans_titre')}
                           </strong>
                           <span className="episode-faits">
                             {[

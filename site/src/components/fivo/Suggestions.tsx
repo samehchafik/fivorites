@@ -24,7 +24,9 @@ import { chargerSuggestions } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
 import { retenir, retenu } from './memoire'
 import { PileSuggestions } from './PileSuggestions'
-import { TYPE_LABELS, type Statut, type Suggestion, type UniversSlug } from './types'
+import { useTextes } from './textes'
+import type { Textes } from '../../i18n/textes'
+import { type Statut, type Suggestion, type UniversSlug } from './types'
 
 // Les sources du moteur ne disent pas la même chose, et le visiteur doit
 // pouvoir les distinguer : « des gens comme vous ont aimé » n'est pas « ça
@@ -41,31 +43,26 @@ function vueInitiale(): Vue {
   return retenu(CLE_VUE) === 'liste' ? 'liste' : 'pile'
 }
 
-function expliquer(suggestion: Suggestion): string {
+function expliquer(suggestion: Suggestion, t: Textes): string {
+  const voisins = suggestion.voisins ?? 0
   if (suggestion.corrobore) {
-    const nombre = suggestion.voisins ?? 0
-    const porte =
-      nombre > 1 ? `${nombre} membres qui partagent vos goûts` : 'un membre qui partage vos goûts'
-    return `Proche de vos coups de cœur ET dans le top de ${porte}`
+    return t.compte(voisins, 'raison.corrobore_un', 'raison.corrobore')
   }
   if (suggestion.source === 'voisins') {
-    const nombre = suggestion.voisins ?? 0
-    return nombre > 1
-      ? `Dans le top de ${nombre} membres qui partagent vos goûts`
-      : 'Dans le top d’un membre qui partage vos goûts'
+    return t.compte(voisins, 'raison.voisins_un', 'raison.voisins')
   }
   if (suggestion.source === 'proche') {
     return suggestion.distance != null
-      ? `Empreinte très proche de vos coups de cœur (à ${suggestion.distance.toFixed(2)} points)`
-      : 'Empreinte très proche de vos coups de cœur'
+      ? t.dit('raison.proche_distance', { distance: t.nombre(Number(suggestion.distance.toFixed(2))) })
+      : t.dit('raison.proche')
   }
   // Les affinités : on nomme les genres partagés quand il y en a. Sinon la
   // correspondance s'est faite sur un nom (acteur, réalisateur, auteur) et on
   // reste neutre plutôt que d'affirmer lequel — l'index ne le dit pas.
   if (suggestion.communs.length > 0) {
-    return `Comme vos coups de cœur : ${suggestion.communs.slice(0, 3).join(', ')}`
+    return t.dit('raison.communs', { communs: suggestion.communs.slice(0, 3).join(', ') })
   }
-  return 'Proche de ce que vous avez aimé'
+  return t.dit('raison.defaut')
 }
 
 export function Suggestions({
@@ -91,6 +88,7 @@ export function Suggestions({
   onClasser: (oeuvreId: number, univers: UniversSlug, statut: Statut) => void
   onDeclasser: (oeuvreId: number) => void
 }) {
+  const t = useTextes()
   const [items, setItems] = useState<Suggestion[]>([])
   const [raison, setRaison] = useState<string | null>(null)
   const [etat, setEtat] = useState<'en-cours' | 'servi' | 'erreur'>('en-cours')
@@ -162,22 +160,13 @@ export function Suggestions({
   return (
     <div>
       {etat === 'erreur' && (
-        <p className="fivo-message fivo-erreur">
-          Les suggestions ne répondent pas — réessayez dans un instant.
-        </p>
+        <p className="fivo-message fivo-erreur">{t.dit('suggestions.erreur')}</p>
       )}
       {etat === 'servi' && (raison === 'aucune_session' || raison === 'aucun_aime') && (
-        <p className="fivo-message">
-          Commencez par l'onglet <strong>Recherche</strong> : classez quelques œuvres que vous avez
-          vues et aimées — c'est la graine de vos suggestions.
-        </p>
+        <p className="fivo-message">{t.dit('suggestions.commencez')}</p>
       )}
       {etat === 'servi' && raison === 'aucun_resultat' && (
-        <p className="fivo-message">
-          Rien à proposer dans cet univers pour l'instant — vos coups de cœur y sont d'un autre
-          univers, ou leur fiche n'est pas encore indexée. Classez une œuvre d'ici, et la liste
-          se remplit.
-        </p>
+        <p className="fivo-message">{t.dit('suggestions.aucun_resultat')}</p>
       )}
 
       {items.length > 0 && (
@@ -185,30 +174,30 @@ export function Suggestions({
           {/* Le choix de présentation. Deux boutons plutôt qu'un interrupteur :
               on veut voir les deux possibilités, pas devoir deviner l'état
               courant d'une bascule. */}
-          <div className="fivo-vues" role="group" aria-label="Présentation des suggestions">
+          <div className="fivo-vues" role="group" aria-label={t.dit('vue.groupe')}>
             <UnstyledButton
               className={`fivo-vue${vue === 'pile' ? ' actif' : ''}`}
               aria-pressed={vue === 'pile'}
               onClick={() => choisirVue('pile')}
-              title="Une œuvre à la fois, à jeter d'un geste"
+              title={t.dit('vue.pile_titre')}
             >
-              <span aria-hidden="true">▤</span> Pile
+              <span aria-hidden="true">▤</span> {t.dit('vue.pile')}
             </UnstyledButton>
             <UnstyledButton
               className={`fivo-vue${vue === 'liste' ? ' actif' : ''}`}
               aria-pressed={vue === 'liste'}
               onClick={() => choisirVue('liste')}
-              title="Toutes les propositions, à comparer"
+              title={t.dit('vue.liste_titre')}
             >
-              <span aria-hidden="true">☰</span> Liste
+              <span aria-hidden="true">☰</span> {t.dit('vue.liste')}
             </UnstyledButton>
           </div>
 
           {vue === 'pile' ? (
             <PileSuggestions
               suggestions={items}
-              type={TYPE_LABELS[univers]}
-              explication={expliquer}
+              type={t.dit(`type.${univers}`)}
+              explication={(suggestion) => expliquer(suggestion, t)}
               onClasser={(oeuvreId, statut) => {
                 // Le geste de la pile est absorbé : il ne doit pas rejouer la
                 // requête et réordonner ce qui reste (voir `absorbees`).
@@ -229,9 +218,9 @@ export function Suggestions({
                   key={suggestion.oeuvreId}
                   titre={suggestion.titre}
                   annee={suggestion.annee}
-                  type={TYPE_LABELS[univers]}
+                  type={t.dit(`type.${univers}`)}
                   affiche={suggestion.affiche}
-                  explication={expliquer(suggestion)}
+                  explication={expliquer(suggestion, t)}
                   fort={suggestion.corrobore}
                   statutActuel={statuts[suggestion.oeuvreId] ?? null}
                   classable

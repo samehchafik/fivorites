@@ -21,13 +21,8 @@ import { useEffect, useRef, useState } from 'react'
 import { chargerFiltres, rechercher } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
 import { BarreFiltres } from './BarreFiltres'
-import {
-  TYPE_LABELS,
-  type Carte,
-  type GroupeFiltre,
-  type Statut,
-  type UniversSlug,
-} from './types'
+import { useTextes } from './textes'
+import { type Carte, type GroupeFiltre, type Statut, type UniversSlug } from './types'
 
 const DEBOUNCE_MS = 150
 const FRAPPE_MIN = 2
@@ -55,6 +50,7 @@ export function Recherche({
   onClasser: (oeuvreId: number, univers: UniversSlug, statut: Statut) => void
   onDeclasser: (oeuvreId: number) => void
 }) {
+  const t = useTextes()
   const [texte, setTexte] = useState('')
   const [cartes, setCartes] = useState<Carte[]>([])
   const [etat, setEtat] = useState<'repos' | 'en-cours' | 'servi' | 'erreur'>('repos')
@@ -182,8 +178,8 @@ export function Recherche({
         radius="xl"
         value={texte}
         onChange={(evenement) => setTexte(evenement.currentTarget.value)}
-        placeholder="Un titre, un genre, un acteur, un auteur… (« Dune », « policier », « Spielberg »)"
-        aria-label="Rechercher une œuvre"
+        placeholder={t.dit('recherche.placeholder')}
+        aria-label={t.dit('recherche.aria')}
         autoComplete="off"
       />
 
@@ -197,26 +193,26 @@ export function Recherche({
       />
 
       {etat === 'repos' && (
-        <p className="fivo-message">
-          Cherchez les œuvres qui vous ont marqué, puis classez-les : c'est comme ça que FIVO
-          apprend vos goûts.
-        </p>
+        <p className="fivo-message">{t.dit('recherche.repos')}</p>
       )}
       {etat === 'erreur' && (
-        <p className="fivo-message fivo-erreur">
-          La recherche ne répond pas — réessayez dans un instant.
-        </p>
+        <p className="fivo-message fivo-erreur">{t.dit('recherche.erreur')}</p>
       )}
       {etat === 'servi' && cartes.length === 0 && (
         <p className="fivo-message">
-          Rien trouvé pour « {texte.trim()} »
-          {Object.keys(choisis).length > 0 ? ' avec ces filtres' : ''}. Essayez autrement ?
+          {t.dit(
+            Object.keys(choisis).length > 0 ? 'recherche.vide_filtres' : 'recherche.vide',
+            { texte: texte.trim() },
+          )}
         </p>
       )}
 
       {cartes.length > 0 && (
         <p className="fivo-compte">
-          {cartes.length} sur {approche ? `plus de ${total}` : total}
+          {t.dit(approche ? 'recherche.compte_approche' : 'recherche.compte', {
+            montres: t.nombre(cartes.length),
+            total: t.nombre(total),
+          })}
         </p>
       )}
 
@@ -226,7 +222,7 @@ export function Recherche({
             key={carte.id}
             titre={carte.titre ?? carte.titreOriginal}
             annee={carte.annee}
-            type={TYPE_LABELS[univers]}
+            type={t.dit(`type.${univers}`)}
             affiche={carte.affiche}
             genres={carte.genres}
             synopsis={carte.synopsis}
@@ -251,7 +247,7 @@ export function Recherche({
           disabled={etat === 'en-cours'}
           onClick={() => setSuite(true)}
         >
-          {etat === 'en-cours' ? 'Chargement…' : 'Charger plus'}
+          {t.dit(etat === 'en-cours' ? 'commun.chargement' : 'recherche.charger')}
         </button>
       )}
     </div>

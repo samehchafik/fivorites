@@ -17,37 +17,37 @@ import { useEffect, useState } from 'react'
 import { listerSignaux, poserSignal, retirerSignal } from './api'
 import { FicheModale } from './FicheModale'
 import { Loupe } from './Loupe'
+import { MaListe } from './MaListe'
 import { PersonneModale } from './PersonneModale'
 import { Recherche } from './Recherche'
 import { Suggestions } from './Suggestions'
-import { LANGUES, LANGUE_LABELS, langueInitiale, retenirLangue, type Langue } from './langue'
-import { UNIVERS_LABELS, type Statut, type UniversSlug } from './types'
+import { LANGUES, LANGUE_DEFAUT, LANGUE_LABELS, adresse_dans, type Langue } from './langue'
+import { FournisseurTextes } from './textes'
+import { textes } from '../../i18n/textes'
+import { UNIVERS, type Statut, type UniversSlug } from './types'
 import { theme_fivo } from './theme'
 import '@mantine/core/styles.css'
 import './fivo.css'
 
-type Onglet = 'recherche' | 'suggestions'
+type Onglet = 'recherche' | 'suggestions' | 'liste'
 
-// « FIVO VA TROUVER DES SÉRIES POUR VOUS ! » — le complément varie avec
-// l'univers, comme dans le bandeau V1.
-const COMPLEMENTS: Record<UniversSlug, string> = {
-  series: 'des séries',
-  films: 'des films',
-  livres: 'des livres',
-}
+const ONGLETS: Array<{ cle: Onglet; titre: 'onglet.recherche' | 'onglet.suggestions' | 'onglet.liste' }> = [
+  { cle: 'recherche', titre: 'onglet.recherche' },
+  { cle: 'suggestions', titre: 'onglet.suggestions' },
+  { cle: 'liste', titre: 'onglet.liste' },
+]
 
 export default function FivoSuggest({
   universInitial = 'series',
+  langue = LANGUE_DEFAUT,
 }: {
   /** L'univers présélectionné — la page Films ouvre sur les films. */
   universInitial?: UniversSlug
+  /** La langue de la PAGE, et donc de l'îlot : `/ar/series` le monte en
+   *  arabe. Voir `langue.ts` — l'URL décide, seule. */
+  langue?: Langue
 }) {
   const [univers, setUnivers] = useState<UniversSlug>(universInitial)
-  // La langue de recherche : celle du navigateur au premier passage, puis
-  // celle qu'on a choisie. Elle décide des titres cherchés ET affichés —
-  // sans elle, une frappe courte ramenait des titres de langues qu'on ne lit
-  // pas, présentés dans une autre encore.
-  const [langue, setLangue] = useState<Langue>('fr')
 
   const [onglet, setOnglet] = useState<Onglet>('recherche')
   const [statuts, setStatuts] = useState<Record<number, Statut>>({})
@@ -69,14 +69,6 @@ export default function FivoSuggest({
     photo: string | null
   } | null>(null)
   const [loupe, setLoupe] = useState<{ image: string; legende: string } | null>(null)
-
-  // La langue est lue après le montage, jamais pendant : la page est rendue à
-  // l'avance (HTML statique) et le navigateur de qui la reçoit n'est pas
-  // connu à ce moment-là. La poser dans l'état initial ferait diverger le
-  // premier rendu du navigateur de celui construit au build.
-  useEffect(() => {
-    setLangue(langueInitiale())
-  }, [])
 
   useEffect(() => {
     listerSignaux()
@@ -130,14 +122,27 @@ export default function FivoSuggest({
     setOuverte({ id, oeuvreId })
   }
 
+  // La même ouverture, mais depuis une liste qui mélange les univers (« Ma
+  // liste », une filmographie) : la fiche doit être demandée au bon endroit.
+  const ouvrir_ailleurs = (id: number, oeuvreId: number | null, ailleurs: UniversSlug) => {
+    setUniversFiche(ailleurs)
+    setOuverte({ id, oeuvreId })
+  }
+
   const agrandir = (image: string, legende: string) =>
     image ? setLoupe({ image, legende }) : undefined
 
   const nombre_aimes = Object.values(statuts).filter((statut) => statut === 'aime').length
+  const nombre_classes = Object.keys(statuts).length
+  const t = textes(langue)
 
   return (
     <MantineProvider theme={theme_fivo} forceColorScheme="light">
-      <section className="fivo" aria-label="FIVO, suggère-moi">
+      <FournisseurTextes value={t}>
+      {/* `dir` ici et pas sur la page : l'îlot change de langue sans
+          recharger, et c'est lui qui doit se retourner. `lang` avec, sinon la
+          césure et les guillemets resteraient français. */}
+      <section className="fivo" lang={langue} dir={t.sens} aria-label="FIVO">
         {/* La barre d'univers de la V1 (.tinder-selector) : cellules égales,
             capitales, l'active en aplat carmin sombre. */}
         <Tabs
@@ -146,10 +151,10 @@ export default function FivoSuggest({
           variant="unstyled"
           classNames={{ list: 'fivo-selecteur', tab: 'fivo-selecteur-onglet' }}
         >
-          <Tabs.List aria-label="Choisir un univers">
-            {(Object.keys(UNIVERS_LABELS) as UniversSlug[]).map((slug) => (
+          <Tabs.List aria-label={t.dit('univers.aria')}>
+            {UNIVERS.map((slug) => (
               <Tabs.Tab key={slug} value={slug}>
-                {UNIVERS_LABELS[slug]}
+                {t.dit(`nav.${slug}`)}
               </Tabs.Tab>
             ))}
           </Tabs.List>
@@ -157,25 +162,20 @@ export default function FivoSuggest({
 
         <div className="fivo-panneau">
           <header className="fivo-bandeau">
-            <h3>
-              Fivo va trouver <span className="fivo-bandeau-univers">{COMPLEMENTS[univers]}</span>{' '}
-              pour vous !
-            </h3>
-            <p>
-              Fivo, notre moteur d'inspiration culturelle, apprend de chaque geste : cherchez,
-              classez — et regardez vos suggestions se préciser.
-            </p>
-            {/* La langue de recherche. Un `select` natif : quatre valeurs,
-                aucun comportement à inventer, et il se manipule au clavier
-                comme les gens s'y attendent. */}
+            <h3>{t.dit(`bandeau.${univers}`)}</h3>
+            <p>{t.dit('bandeau.phrase')}</p>
+            {/* La langue du site. Un `select` natif : quatre valeurs, aucun
+                comportement à inventer, et il se manipule au clavier comme
+                les gens s'y attendent. Choisir NAVIGUE vers la même page dans
+                l'autre langue — la coque, le contenu et le composant suivent
+                ensemble, plutôt que de laisser un panneau arabe dans une page
+                française. */}
             <label className="fivo-langue">
-              <span className="accessibilite">Langue de recherche</span>
+              <span className="accessibilite">{t.dit('langue.legende')}</span>
               <select
                 value={langue}
                 onChange={(evenement) => {
-                  const choisie = evenement.currentTarget.value as Langue
-                  setLangue(choisie)
-                  retenirLangue(choisie)
+                  location.assign(adresse_dans(evenement.currentTarget.value as Langue))
                 }}
               >
                 {LANGUES.map((code) => (
@@ -186,24 +186,31 @@ export default function FivoSuggest({
               </select>
             </label>
 
-            <div className="fivo-pilules" role="tablist" aria-label="Recherche ou suggestions">
-              <UnstyledButton
-                role="tab"
-                aria-selected={onglet === 'recherche'}
-                className={`fivo-pilule${onglet === 'recherche' ? ' actif' : ''}`}
-                onClick={() => setOnglet('recherche')}
-              >
-                Recherche
-              </UnstyledButton>
-              <UnstyledButton
-                role="tab"
-                aria-selected={onglet === 'suggestions'}
-                className={`fivo-pilule${onglet === 'suggestions' ? ' actif' : ''}`}
-                onClick={() => setOnglet('suggestions')}
-              >
-                Mes suggestions
-                {nombre_aimes > 0 && <span className="fivo-pastille">{nombre_aimes} ♥</span>}
-              </UnstyledButton>
+            {/* Trois vues, trois pilules. La pastille compte ce qui nourrit
+                la vue : les coups de cœur pour les suggestions, tout ce qui
+                est classé pour la liste. */}
+            <div className="fivo-pilules" role="tablist" aria-label={t.dit('onglet.aria')}>
+              {ONGLETS.map(({ cle, titre }) => {
+                const pastille =
+                  cle === 'suggestions' ? nombre_aimes : cle === 'liste' ? nombre_classes : 0
+                return (
+                  <UnstyledButton
+                    key={cle}
+                    role="tab"
+                    aria-selected={onglet === cle}
+                    className={`fivo-pilule${onglet === cle ? ' actif' : ''}`}
+                    onClick={() => setOnglet(cle)}
+                  >
+                    {t.dit(titre)}
+                    {pastille > 0 && (
+                      <span className="fivo-pastille">
+                        {t.nombre(pastille)}
+                        {cle === 'suggestions' ? ' ♥' : ''}
+                      </span>
+                    )}
+                  </UnstyledButton>
+                )
+              })}
             </div>
           </header>
 
@@ -216,7 +223,7 @@ export default function FivoSuggest({
           <div className="fivo-contenu">
             <div
               role="tabpanel"
-              aria-label="Recherche"
+              aria-label={t.dit('onglet.recherche')}
               hidden={onglet !== 'recherche'}
               className={onglet === 'recherche' ? undefined : 'fivo-panneau-cache'}
             >
@@ -232,7 +239,7 @@ export default function FivoSuggest({
             </div>
             <div
               role="tabpanel"
-              aria-label="Mes suggestions"
+              aria-label={t.dit('onglet.suggestions')}
               hidden={onglet !== 'suggestions'}
               className={onglet === 'suggestions' ? undefined : 'fivo-panneau-cache'}
             >
@@ -242,6 +249,22 @@ export default function FivoSuggest({
                 versionSignaux={versionSignaux}
                 actif={onglet === 'suggestions'}
                 onOuvrir={ouvrir}
+                onClasser={classer}
+                onDeclasser={declasser}
+              />
+            </div>
+            <div
+              role="tabpanel"
+              aria-label={t.dit('onglet.liste')}
+              hidden={onglet !== 'liste'}
+              className={onglet === 'liste' ? undefined : 'fivo-panneau-cache'}
+            >
+              <MaListe
+                langue={langue}
+                statuts={statuts}
+                versionSignaux={versionSignaux}
+                actif={onglet === 'liste'}
+                onOuvrir={ouvrir_ailleurs}
                 onClasser={classer}
                 onDeclasser={declasser}
               />
@@ -272,8 +295,7 @@ export default function FivoSuggest({
             // recharge dessus et le panneau se referme, plutôt que d'empiler
             // une troisième fenêtre.
             setPersonne(null)
-            setUniversFiche(universOeuvre)
-            setOuverte({ id: identifiant, oeuvreId })
+            ouvrir_ailleurs(identifiant, oeuvreId, universOeuvre)
           }}
           onAgrandir={agrandir}
         />
@@ -284,6 +306,7 @@ export default function FivoSuggest({
           onFermer={() => setLoupe(null)}
         />
       </section>
+      </FournisseurTextes>
     </MantineProvider>
   )
 }

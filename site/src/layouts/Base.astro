@@ -9,19 +9,36 @@
 // inline, et disparaît du HTML avec le drapeau.
 import Header from '../components/Header.astro'
 import { AVANT_PREMIERE } from '../config'
+import { LANGUES, LANGUE_SENS, chemin_localise, type Langue } from '../i18n/langues'
+import { traduire } from '../i18n/textes'
 import '../styles/global.css'
 
 interface Props {
   titre: string
   description: string
+  /** La langue de la page. Elle décide de `lang`, de `dir`, des textes de la
+   *  coque — et des `hreflang` qui disent aux moteurs que ces quatre pages
+   *  sont la même, dans quatre langues. */
+  langue: Langue
+  /** Le chemin SANS préfixe de langue (« / », « /series »…). */
+  chemin: string
 }
 
-const { titre, description } = Astro.props
+const { titre, description, langue, chemin } = Astro.props
+const sens = LANGUE_SENS[langue]
 
 // L'URL canonique, bâtie sur `site` (astro.config.mjs) : c'est elle que les
 // moteurs doivent retenir, quel que soit le chemin par lequel la page est
 // arrivée (port direct, variantes d'hôte).
 const canonique = new URL(Astro.url.pathname, Astro.site)
+
+// Les variantes de langue de CETTE page. `x-default` désigne le français :
+// c'est la version servie quand aucune des quatre ne correspond aux
+// préférences du visiteur.
+const variantes = LANGUES.map((code) => ({
+  code,
+  href: new URL(chemin_localise(chemin, code), Astro.site).href,
+}))
 
 // Le script du voile, en chaîne injectée par `set:html` : Astro n'évalue pas
 // d'expression à l'intérieur d'un <script>, et un bloc JSX y deviendrait du
@@ -46,7 +63,7 @@ const script_voile = `(function () {
 ---
 
 <!doctype html>
-<html lang="fr">
+<html lang={langue} dir={sens}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -54,9 +71,12 @@ const script_voile = `(function () {
     <meta name="description" content={description} />
     {AVANT_PREMIERE && <meta name="robots" content="noindex, nofollow" />}
     <link rel="canonical" href={canonique} />
+    {variantes.map((v) => <link rel="alternate" hreflang={v.code} href={v.href} />)}
+    <link rel="alternate" hreflang="x-default" href={variantes[0].href} />
     <meta property="og:title" content={titre} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
+    <meta property="og:locale" content={langue} />
     <meta property="og:url" content={canonique} />
     <meta name="generator" content={Astro.generator} />
     {
@@ -75,30 +95,26 @@ const script_voile = `(function () {
             <p class="voile-marque" aria-hidden="true">
               FIVO
             </p>
-            <h1 id="voile-titre">Bienvenue en avant-première&nbsp;!</h1>
-            <p>
-              Le site est encore en construction&nbsp;: le catalogue se remplit, le moteur
-              apprend. Ce que vous voyez peut bouger d'un jour à l'autre — mais tout ce qui
-              est là marche pour de vrai.
-            </p>
+            <h1 id="voile-titre">{traduire(langue, 'voile.titre')}</h1>
+            <p>{traduire(langue, 'voile.texte')}</p>
             <button type="button" id="voile-ok" class="bouton-cta">
-              OK, montre-moi&nbsp;!
+              {traduire(langue, 'voile.ok')}
             </button>
           </div>
         </div>
       )
     }
-    <Header />
+    <Header langue={langue} chemin={chemin} />
     <main>
       <slot />
     </main>
     <footer class="pied">
       <div class="conteneur">
-        <span>FIVO — vos cinq meilleures œuvres, vos prochaines passions.</span>
-        <nav aria-label="Pied de page">
-          <a href="/series">Séries</a>
-          <a href="/films">Films</a>
-          <a href="/livres">Livres</a>
+        <span>{traduire(langue, 'pied.baseline')}</span>
+        <nav aria-label={traduire(langue, 'pied.aria')}>
+          <a href={chemin_localise('/series', langue)}>{traduire(langue, 'nav.series')}</a>
+          <a href={chemin_localise('/films', langue)}>{traduire(langue, 'nav.films')}</a>
+          <a href={chemin_localise('/livres', langue)}>{traduire(langue, 'nav.livres')}</a>
         </nav>
       </div>
     </footer>

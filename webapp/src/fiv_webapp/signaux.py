@@ -19,6 +19,8 @@ from typing import Any
 
 import psycopg
 
+from fiv_webapp.univers import univers_de_interne
+
 STATUTS = ("aime", "aime_pas", "a_voir")
 
 # La relecture hydrate l'affichage depuis les trois projections d'un coup :
@@ -28,6 +30,7 @@ _LISTE = """
     select s.oeuvre_id,
            s.univers,
            s.statut,
+           coalesce(tv.id, mv.id, lv.id)                          as vignette,
            coalesce(tv.name, mv.name, lv.name, o.titre)           as titre,
            nullif(coalesce(tv.poster_path, mv.poster_path, lv.poster_path), '') as affiche,
            coalesce(extract(year from tv.first_air_date)::int,
@@ -102,16 +105,21 @@ class Signaux:
         async with conn.cursor() as cur:
             await cur.execute(_LISTE, {"session_id": session_id, "statut": statut})
             lignes = await cur.fetchall()
+        # `id` est la clé de VIGNETTE, celle que la fiche demande — sans elle,
+        # une œuvre de la liste s'affichait sans pouvoir s'ouvrir. Elle peut
+        # manquer : un pivot dont la projection n'a pas (encore) de ligne
+        # reste listé, simplement pas cliquable.
         return [
             {
+                "id": vignette,
                 "oeuvreId": oeuvre_id,
-                "univers": univers,
+                "univers": (trouve.slug if (trouve := univers_de_interne(univers)) else univers),
                 "statut": statut_ligne,
                 "titre": titre,
                 "affiche": affiche,
                 "annee": annee,
             }
-            for oeuvre_id, univers, statut_ligne, titre, affiche, annee in lignes
+            for oeuvre_id, univers, statut_ligne, vignette, titre, affiche, annee in lignes
         ]
 
     async def pivots(self, conn: psycopg.AsyncConnection, session_id: str) -> dict[str, list[int]]:
