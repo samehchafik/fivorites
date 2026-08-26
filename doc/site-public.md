@@ -57,26 +57,56 @@ inscription, un cookie signé (HMAC, 180 jours) porte l'identifiant, et le
 jour des vrais comptes une colonne `membre_id` nullable rattachera les
 sessions aux membres sans rien perdre.
 
-## 3. Les suggestions : les voisins d'abord, la distance pour compléter
+## 3. Les suggestions : une fusion pondérée, pas une cascade
 
-Le moteur (`webapp/src/fiv_webapp/suggestions.py`) a deux étages, parce que
-le graphe a deux savoirs :
+*Réécrit le 26 août 2026. La première version était une cascade — les tops
+des voisins, puis l'empreinte, puis les affinités — et c'était une erreur de
+conception : **le savoir communautaire vient de la V1, arrêté en 2019.** Il
+remplissait les vingt-quatre places, si bien que qui aime une œuvre récente
+n'était servi que par des tops qui ne la connaissent pas, et que les sources
+capables de le servir ne s'exécutaient jamais. Une cascade fait de son
+premier étage un plafond.*
 
-1. **La communauté.** Les voisins — les membres V1 qui ont cité les mêmes
-   œuvres que celles que le visiteur a aimées, plafonnés à 50, les plus
-   proches d'abord — et ce qu'ils citent que le visiteur n'a pas classé.
-   Classement : nombre de voisins qui portent l'œuvre, puis rang moyen dans
-   leurs tops (la première place pèse plus que la cinquième) — la formule du
-   graphe d'admin (`routes/membres.py`).
-2. **L'empreinte.** Quand la communauté ne remplit pas la liste, l'index
-   vectoriel euclidien `fivEmpreinteVoisins` complète par distance
-   croissante. La distance se lit en points de note et elle est **plafonnée à
-   2,0** (~2,4 × le MAE de 0,84) : au-delà, ce n'est plus « ce que vous
-   cherchez », et la liste préfère rester courte que mentir.
+Le moteur (`webapp/src/fiv_webapp/suggestions.py`) part des **listes du
+visiteur**, pondérées par ce qu'elles disent :
 
-Tout ce qui a été classé est exclu, quel que soit le statut, et chaque
-suggestion porte sa raison (`voisins` + force, ou `distance`) — le composant
-l'affiche : une suggestion inexpliquée ressemble à de la publicité.
+| Liste | Poids | Pourquoi |
+|---|---|---|
+| `aime` — vu et aimé | 1,0 | un verdict |
+| `a_voir` — je veux voir | 0,4 | une intention : elle dit le goût sans le prouver |
+| `aime_pas` | — | exclue des graines et des résultats |
+
+Trois sources versent ensuite un **apport chiffré** sur chaque candidat, et le
+classement se fait sur le total — aucune ne peut donc occuper la liste seule :
+
+1. **Les voisins d'œuvre par empreinte** (Neo4j, index vectoriel euclidien
+   `fivEmpreinteVoisins`). L'apport décroît linéairement avec la distance et
+   s'annule à 2,0 points de note (~2,4 × le MAE de 0,84), et il est **pondéré
+   par la graine** : être à 0,3 point d'une œuvre vue et aimée vaut plus
+   qu'être à 0,3 point d'une œuvre qu'on veut voir. Cette source ne périme
+   pas — une œuvre notée hier est aussi proche qu'une œuvre de 2019.
+2. **La communauté** (Neo4j : les membres qui citent les graines, puis ce
+   qu'ils citent d'autre). Apport relatif au plus cité de la fournée, modulé
+   par le rang moyen dans les tops. C'est le savoir de 2019, et il a
+   désormais le poids d'une source parmi trois.
+3. **Les affinités** (Elasticsearch : genres et gens des graines). Le signal
+   le plus faible, le seul qui ait toujours de la matière, et le seul qui ne
+   demande pas Neo4j — c'est lui qui garantit une réponse.
+
+Et le geste qui fait la qualité : **la corroboration**. Quand une œuvre est à
+la fois proche par le contenu (empreinte ou affinités) ET portée par la
+communauté, son total est multiplié par 1,8. Deux savoirs indépendants qui
+désignent la même œuvre valent mieux que deux fois le même — c'est ce qui
+laisse la communauté peser fort là où elle a raison, sans lui laisser tenir la
+liste là où elle est muette. L'explication affichée le dit : « Proche de vos
+coups de cœur ET dans le top de 4 membres qui partagent vos goûts ».
+
+Un choix à connaître : quand plusieurs graines désignent le même candidat,
+c'est le **meilleur** apport qui compte, pas leur somme — sinon un profil
+large écraserait un profil précis. Si les listes rendues paraissent trop
+étroites, c'est le premier réglage à revoir (`Candidat.verser`).
+
+Tout ce qui a été classé est exclu, quel que soit le statut.
 
 ## Le front : Mantine habillé de la charte V1
 
@@ -93,14 +123,47 @@ dans `site/src/styles/global.css` et `site/src/components/fivo/fivo.css`.
 
 ## La recherche du composant
 
+*Complété le 26 août 2026 : ce qui suit a été ajouté après des essais à
+l'écran, chaque point corrigeant un défaut constaté.*
+
 Le chemin critique — une requête par frappe débouncée — réutilise les index
-de l'admin tels quels : `match` sur les préfixes `edge_ngram` posés à
-l'indexation, phrase exacte boostée, classement multiplié par la note
-bayésienne (jamais `popularity`, biais occidental documenté), `fiche: true`
-toujours (on ne classe que ce qu'on peut montrer). Pas de pagination : une
-frappe rend une page courte, sinon on précise la requête. ES absent ou en
-panne → disjoncteur 30 s et repli ILIKE sur la projection ; la réponse dit
-quel moteur a servi.
+de l'admin. Ce qui a changé depuis la première version :
+
+* **Le titre principal domine le classement.** `titres` aplatit ~45 langues
+  dans un champ unique, si bien qu'une frappe courte tombait sur un mot
+  courant d'une autre langue : « com » rendait *Morangos com Açúcar* et le
+  titre portugais du *Fils de Sam*, *com* y étant une préposition. Un champ
+  `titre_principal` (nom courant et titre original, sans les traductions)
+  passe devant, d'un facteur 4 — pas d'un cheveu : la note bayésienne
+  multiplie le score et renversait un écart plus mince (mesuré à 29,1 contre
+  28,8 avant, 81,7 contre 35,0 après).
+* **Les titres sont indexés par langue** (fr, en, es, ar) et la requête
+  cherche dans la langue de qui cherche, qui vient du navigateur et se change
+  par un sélecteur. Le champ fourre-tout reste, en dernier rang, pour
+  retrouver une œuvre dont on ne connaît que le titre en turc. L'arabe a sa
+  propre chaîne d'analyse : l'article défini se colle au mot, si bien que
+  « سيد الخواتم » s'indexait en `الخواتم` et que taper `خواتم` ne trouvait
+  rien.
+* **Le titre affiché suit la langue demandée**, et il vient de l'index : la
+  projection n'en porte qu'un, celui de la collecte. Le synopsis, lui, reste
+  français — limite connue.
+* **Les filtres** sont peuplés par une agrégation sur l'index, donc par ce que
+  le catalogue contient vraiment. La dimension s'adapte : genres pour les
+  séries et les films, **langues** pour les livres, qui n'ont aucun genre en
+  base (Wikidata ne rend qu'auteurs, langues, pays, année). Le jour où le
+  crawler collectera P136, deux lignes de `univers.py` suffiront.
+* **La liste se pagine** : total annoncé (compté jusqu'à 500, puis « plus
+  de »), et un bouton qui ajoute à la suite. Le repli SQL pagine et filtre
+  lui aussi.
+
+ES absent ou en panne → disjoncteur 30 s et repli ILIKE sur la projection ; la
+réponse dit quel moteur a servi.
+
+⚠️ Chacun de ces lots a changé le **mapping** : `search reindex` est à
+repasser par univers au déploiement. Et sur le poste, la commande ne
+s'invoque que par le script console `fiv-admin` — `python -m fiv_admin.cli`
+ne lance pas l'application Typer et sort silencieusement en 0, ce qui a fait
+croire à deux réindexations réussies qui n'avaient rien fait.
 
 ## Ce qui reste devant
 

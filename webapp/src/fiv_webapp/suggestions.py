@@ -1,53 +1,45 @@
-"""Le moteur de suggestions : trois étages, du signal le plus fort au plus large.
+"""Le moteur de suggestions : une fusion pondérée, pas une cascade.
 
-La règle demandée au cahier des charges — les voisins d'abord, la distance
-d'empreinte pour compléter — est celle des deux premiers étages. Le
-troisième a été ajouté après coup, et il faut dire pourquoi : **les deux
-premiers ne répondaient presque jamais.**
+**Ce qu'il faisait, et pourquoi c'était faux.** Trois étages en cascade — les
+tops des voisins, puis la distance d'empreinte, puis les affinités — le
+premier remplissant les vingt-quatre places avant que les suivants ne
+tournent. Or le savoir communautaire est celui de la V1, **arrêté en 2019** :
+qui aime une œuvre récente n'était servi que par des tops qui ne la
+connaissent pas, et les étages capables de le servir ne s'exécutaient jamais.
+Une cascade fait de son premier étage un plafond.
 
-Ce qu'ils exigent, mesuré sur le catalogue : qu'un membre de la V1 ait cité
-l'œuvre aimée (66 878 citations pour 228 000 séries — l'immense majorité du
-catalogue n'est citée par personne), ou qu'elle porte une empreinte, donc
-qu'elle ait été notée (une campagne à la fois, quelques milliers d'œuvres).
-Aimer une série ordinaire ne déclenchait donc rien, et l'onglet restait vide
-sans qu'on sache si c'était une panne ou un état.
+**Ce qu'il fait maintenant.** Chaque source propose des candidats avec un
+apport chiffré, les apports s'additionnent, et le classement se fait sur le
+total. Aucune source ne peut donc occuper la liste à elle seule.
 
-Le troisième étage n'a pas cette faiblesse : **un genre et une distribution,
-toute œuvre collectée en a.** Il est servi par l'index Elasticsearch, qui
-porte les deux depuis le lot précédent, et il ne demande pas Neo4j — les
-suggestions existent donc même sans graphe projeté.
+Les GRAINES sont les listes du visiteur, pondérées par ce qu'elles disent :
 
-Les trois, dans l'ordre :
+* `aime` — « j'ai vu et aimé » : un verdict. Poids plein.
+* `a_voir` — « je veux voir » : une intention, qui dit le goût sans le
+  prouver. Poids réduit — et c'est un gain, elles étaient jusqu'ici ignorées
+  comme graines.
+* `aime_pas` — exclu des graines et des résultats.
 
-1. **Les voisins, par ordre de priorité.** Un voisin est un membre qui a cité
-   les mêmes œuvres que celles que le visiteur a aimées — le savoir
-   communautaire, hérité des 66 878 positions de tops de la V1. Ce que ces
-   voisins citent et que le visiteur n'a pas classé, c'est la suggestion au
-   sens propre. Le classement dit pourquoi une œuvre est là : d'abord le
-   nombre de voisins qui la citent, puis leur rang moyen — une œuvre mise en
-   première place pèse plus que la même en cinquième (même formule que le
-   graphe d'admin, `routes/membres.py`).
+Les SOURCES, et ce que chacune sait :
 
-2. **La distance de note, petite, pour compléter.** Quand la communauté ne
-   suffit pas à remplir la liste, on interroge l'index vectoriel euclidien
-   `fivEmpreinteVoisins` : les œuvres dont l'empreinte (les six axes de goût)
-   est la plus proche de celles qui ont été aimées. La distance euclidienne
-   s'y lit en points de note — la même unité que le MAE de 0,84 du système —
-   et elle est PLAFONNÉE : au-delà de `DISTANCE_MAX`, une œuvre n'est plus
-   « ce que vous cherchez », c'est du remplissage, et on préfère une liste
-   courte à une liste qui ment.
+1. **Les voisins d'œuvre par empreinte** (Neo4j, index vectoriel euclidien).
+   La distance se lit en points de note — la même unité que le MAE de 0,84 du
+   système — et l'apport décroît avec elle jusqu'à s'annuler à
+   `DISTANCE_MAX`. Couvre tout ce qui est noté, sans date de péremption.
+2. **Les affinités** (Elasticsearch : genres et gens des graines). Le signal
+   le plus faible — partager un genre n'est pas partager un goût — mais le
+   seul qui ait toujours de la matière, sur tout le catalogue.
+3. **La communauté** (Neo4j : les membres qui citent les graines, et ce
+   qu'ils citent d'autre). Un apport propre, plus modeste qu'avant.
 
-3. **Les affinités, pour qu'il y ait toujours une réponse.** Les genres et
-   les gens des œuvres aimées, cherchés dans l'index : classement par nombre
-   de points communs multiplié par la note bayésienne, affiche exigée. C'est
-   le plus faible des trois signaux — partager un genre n'est pas partager un
-   goût — d'où sa place, en dernier, et l'explication qui l'accompagne à
-   l'écran : le visiteur doit pouvoir faire la différence entre « des gens
-   comme vous ont aimé » et « ça ressemble ».
+Et le geste que ce lot ajoute : **la corroboration**. Quand une œuvre est à la
+fois proche par le contenu ET portée par la communauté, son total est
+multiplié. Deux savoirs indépendants qui désignent la même œuvre valent mieux
+que deux fois le même — c'est le cœur de ce qui a été demandé, et c'est aussi
+ce qui laisse la communauté peser fort là où elle a raison, sans lui laisser
+tenir la liste là où elle est muette.
 
-Tout ce qui a déjà été classé est exclu, quel que soit le statut : ce qui est
-aimé est connu, ce qui est rejeté a été écarté, ce qui est à voir est une
-suggestion déjà acceptée.
+Tout ce qui a déjà été classé reste exclu, quel que soit le statut.
 """
 
 from __future__ import annotations
@@ -63,6 +55,36 @@ from fiv_webapp.graphe import Graphe
 from fiv_webapp.recherche import Recherche
 from fiv_webapp.univers import Univers
 
+# --- Les poids des graines -------------------------------------------------
+#
+# « J'ai vu et aimé » est un verdict, « je veux voir » une intention : les
+# traiter à égalité ferait dériver le profil vers une liste d'envies, dont
+# rien ne dit encore qu'elles ont plu.
+POIDS_STATUT = {"aime": 1.0, "a_voir": 0.4}
+
+# Les graines retenues, les plus récemment classées d'abord : un profil se
+# déplace, et soixante coups de cœur feraient une requête aussi large que le
+# catalogue.
+GRAINES_MAX = 12
+
+# --- Les apports des sources ----------------------------------------------
+#
+# Ils se lisent comme un ordre de confiance : l'empreinte (six axes de goût
+# mesurés) au-dessus de la communauté (des gens qui ont aimé les mêmes
+# choses), elle-même au-dessus des affinités (un genre, un acteur en commun).
+APPORT_EMPREINTE = 1.0
+APPORT_COMMUNAUTE = 0.8
+APPORT_AFFINITE = 0.55
+
+# La corroboration : le multiplicateur appliqué au total d'une œuvre que DEUX
+# familles de sources désignent — le contenu (empreinte ou affinités) et la
+# communauté. C'est la demande à l'origine de ce lot, et le chiffre est
+# volontairement fort : un accord entre deux savoirs indépendants est ce qu'on
+# a de plus proche d'une preuve.
+MULTIPLICATEUR_CORROBORATION = 1.8
+
+# --- Les plafonds ----------------------------------------------------------
+
 # Les voisins retenus. Un voisin à une œuvre commune, il y en a des milliers
 # et ils ne disent rien ; on garde ceux qui partagent le plus, et ce plafond
 # borne aussi la traversée — une œuvre populaire est citée par 13 817 membres.
@@ -71,31 +93,33 @@ VOISINS_MAX = 50
 # La liste rendue au composant : une page de cartes, pas un catalogue.
 SUGGESTIONS_MAX = 24
 
-# Le nombre de candidats demandés à l'index vectoriel PAR œuvre aimée, avant
-# filtrage (univers, exclusions) et plafond de distance.
-CANDIDATS_VECTEUR = 50
+# Les candidats demandés à chaque source avant fusion. Large : c'est le
+# recouvrement entre sources qui fait la corroboration, et un pool étroit le
+# rendrait rare par construction.
+CANDIDATS_PAR_SOURCE = 60
+
+# Le nombre de voisins vectoriels demandés PAR graine.
+CANDIDATS_VECTEUR = 40
 
 # Au-delà, deux empreintes ne se ressemblent plus assez pour être proposées :
 # ~2,4 fois le MAE du système (0,84) — la limite entre « proche » et
-# « vaguement dans le même quadrant ». La liste préfère rester courte.
+# « vaguement dans le même quadrant ». L'apport décroît linéairement jusque-là
+# puis s'annule.
 DISTANCE_MAX = 2.0
 
-# Les œuvres aimées dont on lit les genres et les gens pour bâtir l'étage des
-# affinités. Les plus récemment classées d'abord : un profil se déplace, et
-# soixante coups de cœur feraient une requête aussi large que le catalogue.
-GRAINES_AFFINITE = 8
-
-# Ce qu'on retient d'une graine. Trois genres, c'est déjà tout ce qu'une fiche
-# TMDB porte ; six personnes, c'est la tête d'affiche — au-delà, on relie des
-# œuvres par un second rôle, ce qui ne veut rien dire.
+# Ce qu'on retient d'une graine pour bâtir la requête d'affinités. Trois
+# genres, c'est déjà tout ce qu'une fiche TMDB porte ; six personnes, c'est la
+# tête d'affiche — au-delà, on relie des œuvres par un second rôle.
 GENRES_PAR_GRAINE = 3
 PERSONNES_PAR_GRAINE = 6
 
-# Le voisinage : qui partage le plus d'œuvres aimées avec le visiteur. La
-# première étape est bornée par $voisinsMax, et c'est elle qui protège des
-# supernœuds — la suite ne traverse plus que 50 membres.
+# Le voisinage : qui partage le plus de graines avec le visiteur. La première
+# étape est bornée par $voisinsMax, et c'est elle qui protège des supernœuds —
+# la suite ne traverse plus que cinquante membres.
+#
+# `graines` porte les pivots ; leur poids reste côté Python, où il se lit.
 _CY_VOISINS = """
-MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $aimes
+MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $graines
 MATCH (s)<-[:FIV_CITE]-(v:FivMembre)
 WITH v, count(DISTINCT s) AS communes
 ORDER BY communes DESC, v.membreId
@@ -104,8 +128,7 @@ RETURN v.membreId AS membreId, communes
 """
 
 # Ce que ces voisins citent et que le visiteur n'a pas classé — restreint à
-# l'univers demandé : l'onglet « Mes suggestions » se regarde univers par
-# univers, comme le reste du site.
+# l'univers demandé : l'onglet se regarde univers par univers.
 _CY_CITATIONS_VOISINS = """
 MATCH (v:FivMembre)-[c:FIV_CITE]->(reco:FivOeuvre)
 WHERE v.membreId IN $voisins
@@ -119,15 +142,18 @@ ORDER BY voisins DESC, force DESC, reco.oeuvreId
 LIMIT $limite
 """
 
-# Le complément par l'empreinte : les plus proches voisins vectoriels de
-# chaque œuvre aimée. Le score de Neo4j vaut 1/(1+d²) — la distance en points
-# de note se retrouve par sqrt(1/score − 1), et c'est SUR ELLE qu'on filtre et
-# qu'on classe : un score sans unité ne dirait rien à personne.
+# Les voisins d'ŒUVRE par empreinte : pour chaque graine, ses plus proches
+# dans l'espace des six axes. Le score de Neo4j vaut 1/(1+d²) — la distance en
+# points de note se retrouve par sqrt(1/score − 1), et c'est sur elle qu'on
+# raisonne : un score sans unité ne dirait rien à personne.
 #
-# `max(score)` par œuvre : être proche d'UNE œuvre aimée suffit — prendre la
-# moyenne noierait une correspondance parfaite sous les autres graines.
+# La requête rend UNE LIGNE PAR COUPLE (graine, candidat), là où elle prenait
+# avant le `max` par candidat. C'est ce qui permet de pondérer par la graine :
+# être proche d'une œuvre qu'on a vue et aimée ne vaut pas être proche d'une
+# œuvre qu'on veut voir. Le volume reste borné — douze graines par quarante
+# candidats.
 _CY_PROCHES = """
-UNWIND $aimes AS graine
+UNWIND $graines AS graine
 MATCH (s:FivOeuvre {oeuvreId: graine})
 WHERE s.empreinte IS NOT NULL
 CALL db.index.vector.queryNodes('fivEmpreinteVoisins', $candidats, s.empreinte)
@@ -135,10 +161,9 @@ YIELD node, score
 WHERE node.univers = $univers
   AND NOT node.oeuvreId IN $exclues
   AND node.oeuvreId <> s.oeuvreId
-WITH node, max(score) AS score
-RETURN node.oeuvreId AS oeuvreId, node.idTmdb AS idTmdb, node.titre AS titre,
+RETURN graine, node.oeuvreId AS oeuvreId, node.idTmdb AS idTmdb, node.titre AS titre,
        node.annee AS annee, node.affiche AS affiche, node.univers AS univers, score
-ORDER BY score DESC, node.oeuvreId
+ORDER BY score DESC
 LIMIT $limite
 """
 
@@ -152,42 +177,124 @@ def distance_depuis_score(score: float) -> float:
 
 
 @dataclass(frozen=True, slots=True)
+class Graine:
+    """Une œuvre du visiteur et ce qu'elle pèse.
+
+    Le poids vient du statut : un verdict (« vu et aimé ») ne dit pas la même
+    chose qu'une intention (« je veux voir »), et le moteur ne doit pas les
+    confondre.
+    """
+
+    oeuvre_id: int
+    poids: float
+
+
+@dataclass(slots=True)
+class Candidat:
+    """Une œuvre proposée, en cours de construction.
+
+    Mutable, contrairement au reste du module : c'est un accumulateur, les
+    sources y versent leurs apports l'une après l'autre. Il devient une
+    `Suggestion` — figée — au moment du classement.
+    """
+
+    oeuvre_id: int
+    id_tmdb: int | None = None
+    titre: str | None = None
+    annee: int | None = None
+    affiche: str | None = None
+    univers_interne: str = ""
+    # L'apport de chaque source, nommé. Garder le détail plutôt qu'un total
+    # opaque, c'est pouvoir expliquer la suggestion à l'écran et pouvoir
+    # régler les poids en regardant ce qu'ils produisent.
+    apports: dict[str, float] = field(default_factory=dict)
+    # Ce que les sources ont appris en passant, pour l'explication.
+    voisins: int | None = None
+    force: float | None = None
+    distance: float | None = None
+    communs: list[str] = field(default_factory=list)
+
+    def verser(self, source: str, apport: float) -> None:
+        """Ajoute un apport. Le plus fort gagne quand une source parle deux
+        fois de la même œuvre — deux graines proches ne doivent pas valoir le
+        double d'une graine très proche, sinon un profil large écraserait un
+        profil précis."""
+        if apport > self.apports.get(source, 0.0):
+            self.apports[source] = apport
+
+    @property
+    def corrobore(self) -> bool:
+        """Le contenu ET la communauté désignent-ils cette œuvre ?
+
+        C'est le geste demandé : deux savoirs indépendants qui tombent
+        d'accord valent mieux que deux fois le même.
+        """
+        contenu = self.apports.get("proche", 0.0) + self.apports.get("affinite", 0.0)
+        return contenu > 0.0 and self.apports.get("voisins", 0.0) > 0.0
+
+    @property
+    def score(self) -> float:
+        total = sum(self.apports.values())
+        return total * MULTIPLICATEUR_CORROBORATION if self.corrobore else total
+
+    @property
+    def source_dominante(self) -> str:
+        """La source qui a le plus apporté — celle dont l'explication parle en
+        premier."""
+        return max(self.apports, key=lambda source: self.apports[source])
+
+
+@dataclass(frozen=True, slots=True)
 class Suggestion:
-    """Une œuvre proposée, avec la raison de sa présence — le composant
-    l'affiche : une suggestion inexpliquée ressemble à de la publicité."""
+    """Une œuvre proposée, avec de quoi l'expliquer — le composant l'affiche :
+    une suggestion inexpliquée ressemble à de la publicité."""
 
     oeuvre_id: int
     titre: str | None
     annee: int | None
     affiche: str | None
     univers_interne: str
-    # D'où elle vient : `voisins` quand la communauté la porte, `proche`
-    # quand c'est l'empreinte, `affinite` quand ce sont les genres et les
-    # gens. Le front l'affiche — une suggestion inexpliquée ressemble à de la
-    # publicité, et les trois n'ont pas la même force.
+    # La source dominante : `voisins` la communauté, `proche` l'empreinte,
+    # `affinite` les genres et les gens.
     source: str
-    # L'identifiant TMDB, porté par le nœud — nul pour un livre, qui n'en a
-    # pas. C'est lui qui donne la clé de vignette (voir `cle_vignette`), celle
-    # que la fiche détaillée attend.
+    # L'identifiant TMDB, nul pour un livre. Donne la clé de vignette, celle
+    # que la carte et la fiche attendent.
     id_tmdb: int | None = None
     voisins: int | None = None
     force: float | None = None
     distance: float | None = None
-    # Ce que l'œuvre partage avec les coups de cœur — les genres communs,
-    # nommés. Sert l'explication de l'étage des affinités.
     communs: list[str] = field(default_factory=list)
+    # Le contenu et la communauté sont-ils d'accord ? Le front le dit, parce
+    # que c'est la suggestion la plus solide qu'on sache produire.
+    corrobore: bool = False
+    score: float = 0.0
 
     @property
     def cle_vignette(self) -> int:
         """La clé que la carte et la fiche manipulent : l'identifiant TMDB
-        quand il existe, le pivot sinon — exactement la règle de
-        `univers.pivot_card`."""
+        quand il existe, le pivot sinon — la règle de `univers.pivot_card`."""
         return self.id_tmdb if self.id_tmdb is not None else self.oeuvre_id
+
+    @classmethod
+    def depuis(cls, candidat: Candidat) -> Suggestion:
+        return cls(
+            oeuvre_id=candidat.oeuvre_id,
+            id_tmdb=candidat.id_tmdb,
+            titre=candidat.titre,
+            annee=candidat.annee,
+            affiche=candidat.affiche,
+            univers_interne=candidat.univers_interne,
+            source=candidat.source_dominante,
+            voisins=candidat.voisins,
+            force=candidat.force,
+            distance=candidat.distance,
+            communs=candidat.communs,
+            corrobore=candidat.corrobore,
+            score=round(candidat.score, 3),
+        )
 
     def publique(self, slug: str) -> dict[str, Any]:
         return {
-            # `id` est nommé comme sur une carte de recherche, et pour la même
-            # raison : c'est la clé qui ouvre la fiche.
             "id": self.cle_vignette,
             "oeuvreId": self.oeuvre_id,
             "titre": self.titre,
@@ -199,6 +306,7 @@ class Suggestion:
             "force": self.force,
             "distance": self.distance,
             "communs": self.communs,
+            "corrobore": self.corrobore,
         }
 
 
@@ -230,13 +338,13 @@ class Cles:
             return {pivot: id_tmdb for pivot, id_tmdb in await cur.fetchall()}
 
 
-class Affinites:
-    """Le troisième étage : ce qui partage les genres et les gens des œuvres
-    aimées, servi par l'index de recherche.
+class SourceAffinites:
+    """Ce qui partage les genres et les gens des graines, par l'index.
 
-    Il ne demande ni graphe projeté ni œuvre notée — c'est sa raison d'être :
-    tant que les deux étages du dessus restent creux, c'est lui qui fait que
-    l'onglet répond quelque chose.
+    Le signal le plus faible des trois — partager un genre n'est pas partager
+    un goût — mais le seul qui ait toujours de la matière : une œuvre
+    collectée a des genres et une distribution, là où être citée par un membre
+    ou porter une empreinte notée reste l'exception. Il ne demande pas Neo4j.
     """
 
     def __init__(self, recherche: Recherche, cartes: Cartes) -> None:
@@ -244,23 +352,25 @@ class Affinites:
         self._cartes = cartes
         self._cles = Cles()
 
-    async def pour(
+    async def verser(
         self,
         conn: psycopg.AsyncConnection,
         univers: Univers,
         *,
-        aimes: list[int],
+        graines: list[Graine],
         exclues: list[int],
-        limite: int,
-    ) -> list[Suggestion]:
-        cles = await self._cles.vignettes(conn, univers, aimes + exclues)
-        graines = [cles[pivot] for pivot in aimes[:GRAINES_AFFINITE] if pivot in cles]
-        if not graines:
-            return []
+        candidats: dict[int, Candidat],
+    ) -> None:
+        """Ajoute ses apports aux candidats — en créant ceux qu'elle découvre."""
+        pivots = [graine.oeuvre_id for graine in graines]
+        cles = await self._cles.vignettes(conn, univers, pivots + exclues)
+        semences = [cles[pivot] for pivot in pivots if pivot in cles]
+        if not semences:
+            return
 
-        documents = await self._recherche.documents(univers, graines)
+        documents = await self._recherche.documents(univers, semences)
         if not documents:
-            return []
+            return
 
         genres = self._retenir(documents, "genres", GENRES_PAR_GRAINE)
         personnes = self._retenir(documents, "personnes", PERSONNES_PAR_GRAINE)
@@ -269,39 +379,40 @@ class Affinites:
             genres=genres,
             personnes=personnes,
             exclus=[cles[pivot] for pivot in exclues if pivot in cles],
-            taille=limite,
+            taille=CANDIDATS_PAR_SOURCE,
         )
         if not trouvees:
-            return []
+            return
 
         # L'hydratation passe par les vignettes, comme la recherche : une
         # seule source de vérité pour ce qui s'affiche.
         cartes = await self._cartes.hydrater(conn, univers, trouvees)
-        aimes_genres = set(genres)
-        return [
-            Suggestion(
-                oeuvre_id=carte.oeuvre_id,
-                id_tmdb=None if univers.pivot_card else carte.id,
-                titre=carte.titre or carte.titre_original,
-                annee=carte.annee,
-                affiche=carte.affiche,
-                univers_interne=univers.interne,
-                source="affinite",
-                # Les genres partagés, nommés : c'est ce qui rend la
-                # suggestion explicable. Vide quand la correspondance s'est
-                # faite sur un nom — on ne l'affirme pas faute de le savoir.
-                communs=[genre for genre in carte.genres if genre in aimes_genres],
-            )
-            for carte in cartes
-            if carte.oeuvre_id is not None
-        ]
+        attendus = set(genres)
+        for rang, carte in enumerate(cartes):
+            if carte.oeuvre_id is None:
+                continue
+            candidat = candidats.setdefault(carte.oeuvre_id, Candidat(oeuvre_id=carte.oeuvre_id))
+            candidat.id_tmdb = None if univers.pivot_card else carte.id
+            candidat.titre = candidat.titre or carte.titre or carte.titre_original
+            candidat.annee = candidat.annee if candidat.annee is not None else carte.annee
+            candidat.affiche = candidat.affiche or carte.affiche
+            candidat.univers_interne = univers.interne
+            # Les genres partagés, nommés : c'est ce qui rend la suggestion
+            # explicable. Vide quand la correspondance s'est faite sur un nom —
+            # on ne l'affirme pas faute de le savoir.
+            candidat.communs = [genre for genre in carte.genres if genre in attendus]
+            # L'apport décroît avec le rang rendu par ES : le premier résultat
+            # ressemble plus aux graines que le soixantième, et l'index le sait
+            # mieux que nous. Pas de score brut : il n'est comparable qu'au
+            # sein d'une requête, alors qu'on fusionne ici trois échelles.
+            decroissance = 1.0 - rang / max(1, len(cartes))
+            candidat.verser("affinite", APPORT_AFFINITE * decroissance)
 
     def _retenir(self, documents: list[dict[str, Any]], champ: str, par_document: int) -> list[str]:
         """Les valeurs les plus fréquentes du champ, dédupliquées.
 
         Fréquentes d'abord : un genre que trois coups de cœur partagent dit
-        mieux le goût qu'un genre vu une fois, et c'est lui qu'on veut au
-        cœur de la requête.
+        mieux le goût qu'un genre vu une fois.
         """
         comptes: dict[str, int] = {}
         for document in documents:
@@ -315,175 +426,193 @@ class Affinites:
         return sorted(comptes, key=lambda valeur: (-comptes[valeur], valeur))
 
 
-class Suggestions:
-    """Les deux étages du graphe : la communauté, puis l'empreinte.
+class SourceEmpreinte:
+    """Les voisins d'ŒUVRE dans l'espace des six axes de goût.
 
-    L'ordre EST la promesse de l'onglet : d'abord ce que les voisins portent
-    (par nombre de voisins puis force), ensuite ce qui ressemble (par distance
-    croissante) — jamais l'inverse, et jamais mélangé.
+    C'est la source que le lot précédent n'atteignait presque jamais : la
+    cascade la plaçait derrière la communauté, qui remplissait la liste. Elle
+    a pourtant la propriété qui manquait — elle ne périme pas. Une œuvre notée
+    hier est aussi proche d'une graine qu'une œuvre de 2019.
     """
 
     def __init__(self, graphe: Graphe) -> None:
         self._graphe = graphe
 
-    async def pour(
+    async def verser(
         self,
+        univers: Univers,
         *,
-        aimes: list[int],
+        graines: list[Graine],
         exclues: list[int],
-        univers_interne: str,
-        limite: int = SUGGESTIONS_MAX,
-    ) -> list[Suggestion]:
-        """Les suggestions d'une session : `aimes` est la graine, `exclues`
-        tout ce qui a déjà été classé (les aimées comprises)."""
-        if not aimes:
-            return []
-
-        retenues: list[Suggestion] = []
-        vues: set[int] = set(exclues)
-
-        for suggestion in await self._par_voisins(aimes, exclues, univers_interne, limite):
-            if suggestion.oeuvre_id not in vues:
-                vues.add(suggestion.oeuvre_id)
-                retenues.append(suggestion)
-
-        # Le complément vectoriel ne travaille que s'il reste de la place —
-        # c'est un complément, pas un concurrent.
-        if len(retenues) < limite:
-            manque = limite - len(retenues)
-            for suggestion in await self._par_distance(aimes, list(vues), univers_interne, manque):
-                if suggestion.oeuvre_id not in vues:
-                    vues.add(suggestion.oeuvre_id)
-                    retenues.append(suggestion)
-
-        return retenues[:limite]
-
-    async def _par_voisins(
-        self, aimes: list[int], exclues: list[int], univers_interne: str, limite: int
-    ) -> list[Suggestion]:
-        voisins = await self._graphe.executer(_CY_VOISINS, aimes=aimes, voisinsMax=VOISINS_MAX)
-        if not voisins:
-            return []
-        lignes = await self._graphe.executer(
-            _CY_CITATIONS_VOISINS,
-            voisins=[v["membreId"] for v in voisins],
-            univers=univers_interne,
-            exclues=exclues,
-            limite=limite,
-        )
-        return [
-            Suggestion(
-                oeuvre_id=ligne["oeuvreId"],
-                id_tmdb=ligne.get("idTmdb"),
-                titre=ligne["titre"],
-                annee=ligne["annee"],
-                affiche=ligne["affiche"],
-                univers_interne=ligne["univers"],
-                source="voisins",
-                voisins=int(ligne["voisins"]),
-                force=round(float(ligne["force"]), 2) if ligne["force"] is not None else None,
-            )
-            for ligne in lignes
-        ]
-
-    async def _par_distance(
-        self, aimes: list[int], exclues: list[int], univers_interne: str, limite: int
-    ) -> list[Suggestion]:
+        candidats: dict[int, Candidat],
+    ) -> None:
+        poids = {graine.oeuvre_id: graine.poids for graine in graines}
         lignes = await self._graphe.executer(
             _CY_PROCHES,
-            aimes=aimes,
+            graines=list(poids),
             candidats=CANDIDATS_VECTEUR,
-            univers=univers_interne,
+            univers=univers.interne,
             exclues=exclues,
-            limite=limite,
+            limite=CANDIDATS_PAR_SOURCE * 3,
         )
-        retenues: list[Suggestion] = []
         for ligne in lignes:
             distance = distance_depuis_score(float(ligne["score"]))
-            # Le plafond s'applique ici et pas dans le Cypher : la conversion
-            # score → distance est à nous, et un filtre exprimé dans l'unité
-            # qu'on affiche est un filtre qu'on peut relire.
-            if distance > DISTANCE_MAX:
+            # Au-delà du plafond, l'apport est nul : une œuvre « vaguement du
+            # même quadrant » n'a pas à entrer dans la liste par ce chemin.
+            if distance >= DISTANCE_MAX:
                 continue
-            retenues.append(
-                Suggestion(
-                    oeuvre_id=ligne["oeuvreId"],
-                    id_tmdb=ligne.get("idTmdb"),
-                    titre=ligne["titre"],
-                    annee=ligne["annee"],
-                    affiche=ligne["affiche"],
-                    univers_interne=ligne["univers"],
-                    source="proche",
-                    distance=round(distance, 2),
-                )
+            oeuvre_id = ligne["oeuvreId"]
+            candidat = candidats.setdefault(oeuvre_id, Candidat(oeuvre_id=oeuvre_id))
+            candidat.id_tmdb = candidat.id_tmdb or ligne.get("idTmdb")
+            candidat.titre = candidat.titre or ligne.get("titre")
+            candidat.annee = candidat.annee if candidat.annee is not None else ligne.get("annee")
+            candidat.affiche = candidat.affiche or ligne.get("affiche")
+            candidat.univers_interne = ligne.get("univers") or univers.interne
+            # L'apport décroît linéairement avec la distance et se pondère par
+            # la graine : être à 0,3 point d'une œuvre qu'on a vue et aimée
+            # vaut plus qu'être à 0,3 point d'une œuvre qu'on veut voir.
+            proximite = 1.0 - distance / DISTANCE_MAX
+            candidat.verser(
+                "proche", APPORT_EMPREINTE * proximite * poids.get(ligne["graine"], 1.0)
             )
-        return retenues
+            # La distance affichée est la meilleure trouvée, toutes graines
+            # confondues : c'est celle qui explique la présence de l'œuvre.
+            if candidat.distance is None or distance < candidat.distance:
+                candidat.distance = round(distance, 2)
+
+
+class SourceCommunaute:
+    """Les membres qui citent les graines, et ce qu'ils citent d'autre.
+
+    Le savoir de la V1 — 66 878 positions de tops — et sa limite : **il
+    s'arrête en 2019**. Il ne peut donc rien dire d'une œuvre récente, et c'est
+    la raison pour laquelle il n'est plus l'étage qui remplit la liste mais une
+    source parmi trois. Là où il parle, en revanche, il parle bien : c'est lui
+    qui déclenche la corroboration.
+    """
+
+    def __init__(self, graphe: Graphe) -> None:
+        self._graphe = graphe
+
+    async def verser(
+        self,
+        univers: Univers,
+        *,
+        graines: list[Graine],
+        exclues: list[int],
+        candidats: dict[int, Candidat],
+    ) -> None:
+        voisins = await self._graphe.executer(
+            _CY_VOISINS,
+            graines=[graine.oeuvre_id for graine in graines],
+            voisinsMax=VOISINS_MAX,
+        )
+        if not voisins:
+            return
+        lignes = await self._graphe.executer(
+            _CY_CITATIONS_VOISINS,
+            voisins=[voisin["membreId"] for voisin in voisins],
+            univers=univers.interne,
+            exclues=exclues,
+            limite=CANDIDATS_PAR_SOURCE,
+        )
+        if not lignes:
+            return
+        # Le plus cité sert d'échelle : l'apport est relatif au meilleur de la
+        # fournée, jamais un compte brut — dix voisins sur un catalogue de
+        # niche ne valent pas dix voisins sur un feuilleton.
+        plafond = max(int(ligne["voisins"]) for ligne in lignes) or 1
+        for ligne in lignes:
+            oeuvre_id = ligne["oeuvreId"]
+            candidat = candidats.setdefault(oeuvre_id, Candidat(oeuvre_id=oeuvre_id))
+            candidat.id_tmdb = candidat.id_tmdb or ligne.get("idTmdb")
+            candidat.titre = candidat.titre or ligne.get("titre")
+            candidat.annee = candidat.annee if candidat.annee is not None else ligne.get("annee")
+            candidat.affiche = candidat.affiche or ligne.get("affiche")
+            candidat.univers_interne = ligne.get("univers") or univers.interne
+            candidat.voisins = int(ligne["voisins"])
+            force = ligne.get("force")
+            candidat.force = round(float(force), 2) if force is not None else None
+            # Le nombre de voisins d'abord, leur rang moyen ensuite : une œuvre
+            # portée par six membres vaut mieux qu'une portée par un, et une
+            # œuvre citée en tête de top vaut mieux que la même citée en queue.
+            part_voisins = candidat.voisins / plafond
+            part_rang = (candidat.force or 3.0) / 5.0
+            candidat.verser("voisins", APPORT_COMMUNAUTE * part_voisins * part_rang)
 
 
 class Moteur:
-    """Les trois étages, dans l'ordre, et l'arrêt dès que la liste est pleine.
+    """La fusion des trois sources, et le classement qui en sort.
 
-    C'est le seul objet que la route connaît. Il tient deux promesses :
+    C'est le seul objet que la route connaît. Il tient trois promesses :
 
-    * **l'ordre** — la communauté, puis l'empreinte, puis les affinités ; un
-      signal faible ne passe jamais devant un signal fort ;
-    * **une réponse** — le dernier étage ne demande ni graphe ni notation, si
-      bien qu'un visiteur qui a aimé une œuvre collectée obtient toujours
-      quelque chose. Quand il n'obtient rien, `raison` dit laquelle des
-      conditions manque, et le front l'affiche : une liste vide sans
-      explication se confond avec une panne.
+    * **aucune source ne plafonne les autres** — elles versent toutes leurs
+      apports avant qu'on ne classe, là où la cascade laissait la première
+      occuper les vingt-quatre places ;
+    * **l'accord entre savoirs indépendants gagne** — une œuvre proche par le
+      contenu ET portée par la communauté voit son total multiplié ;
+    * **une réponse, ou la raison de son absence** — les affinités ne
+      demandent ni graphe ni notation, si bien qu'un visiteur qui a classé une
+      œuvre collectée obtient toujours quelque chose.
     """
 
     def __init__(self, recherche: Recherche, cartes: Cartes, graphe: Graphe | None = None) -> None:
         self._graphe = graphe
-        self._affinites = Affinites(recherche, cartes)
+        self._affinites = SourceAffinites(recherche, cartes)
+
+    def graines(self, pivots_par_statut: dict[str, list[int]]) -> list[Graine]:
+        """Les graines pondérées, les plus fortes d'abord et plafonnées.
+
+        `aime_pas` n'en produit aucune : ce qui a été écarté ne décrit pas un
+        goût à poursuivre. Il reste exclu des résultats, ce qui est son rôle.
+        """
+        retenues = [
+            Graine(oeuvre_id=pivot, poids=POIDS_STATUT[statut])
+            for statut, pivots in pivots_par_statut.items()
+            if statut in POIDS_STATUT
+            for pivot in pivots
+        ]
+        retenues.sort(key=lambda graine: -graine.poids)
+        return retenues[:GRAINES_MAX]
 
     async def pour(
         self,
         conn: psycopg.AsyncConnection,
         univers: Univers,
         *,
-        aimes: list[int],
-        exclues: list[int],
+        pivots_par_statut: dict[str, list[int]],
         limite: int = SUGGESTIONS_MAX,
     ) -> tuple[list[Suggestion], str | None]:
-        """La liste et, si elle est vide, la raison de l'être."""
-        if not aimes:
+        """La liste classée et, si elle est vide, la raison de l'être."""
+        graines = self.graines(pivots_par_statut)
+        if not graines:
             return [], "aucun_aime"
 
-        retenues: list[Suggestion] = []
-        vues: set[int] = set(exclues)
+        # Tout ce qui est classé est exclu, quel que soit le statut : le connu
+        # n'est pas une suggestion, l'écarté ne se repropose pas, et l'envie
+        # est déjà une suggestion acceptée.
+        exclues = sorted({pivot for pivots in pivots_par_statut.values() for pivot in pivots})
 
+        candidats: dict[int, Candidat] = {}
         if self._graphe is not None:
-            graphe = Suggestions(self._graphe)
-            for suggestion in await graphe.pour(
-                aimes=aimes,
-                exclues=exclues,
-                univers_interne=univers.interne,
-                limite=limite,
-            ):
-                if suggestion.oeuvre_id not in vues:
-                    vues.add(suggestion.oeuvre_id)
-                    retenues.append(suggestion)
+            empreinte = SourceEmpreinte(self._graphe)
+            await empreinte.verser(univers, graines=graines, exclues=exclues, candidats=candidats)
+            communaute = SourceCommunaute(self._graphe)
+            await communaute.verser(univers, graines=graines, exclues=exclues, candidats=candidats)
+        await self._affinites.verser(
+            conn, univers, graines=graines, exclues=exclues, candidats=candidats
+        )
 
-        # Les affinités ne travaillent que s'il reste de la place : elles
-        # complètent la communauté et l'empreinte, elles ne les remplacent pas.
-        if len(retenues) < limite:
-            for suggestion in await self._affinites.pour(
-                conn,
-                univers,
-                aimes=aimes,
-                exclues=sorted(vues),
-                limite=limite - len(retenues),
-            ):
-                if suggestion.oeuvre_id not in vues:
-                    vues.add(suggestion.oeuvre_id)
-                    retenues.append(suggestion)
-
-        if retenues:
-            return retenues[:limite], None
-        # Rien du tout : la cause est presque toujours la même — l'œuvre
-        # aimée n'est pas dans l'index de cet univers (jamais collectée, ou
-        # `search reindex` pas encore passé). Le dire vaut mieux que laisser
-        # croire à une panne.
+        retenus = sorted(
+            candidats.values(),
+            # Le score, puis le pivot : sans ce départage, deux œuvres à
+            # égalité changeraient de place d'un appel à l'autre.
+            key=lambda candidat: (-candidat.score, candidat.oeuvre_id),
+        )
+        suggestions = [Suggestion.depuis(candidat) for candidat in retenus[:limite]]
+        if suggestions:
+            return suggestions, None
+        # Rien : la cause est presque toujours la même — les œuvres classées
+        # ne sont pas dans l'index de cet univers (jamais collectées, ou
+        # `search reindex` pas encore passé).
         return [], "aucun_resultat"

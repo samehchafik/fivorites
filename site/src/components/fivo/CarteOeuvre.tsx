@@ -15,6 +15,7 @@ export function CarteOeuvre({
   synopsis,
   note,
   explication,
+  fort,
   statutActuel,
   classable,
   onOuvrir,
@@ -32,6 +33,9 @@ export function CarteOeuvre({
   note?: number | null
   /** Pourquoi cette carte est là — affichée sur les suggestions seulement. */
   explication?: string
+  /** La suggestion est corroborée : le contenu et la communauté tombent
+   *  d'accord. C'est la plus solide, et son explication se détache. */
+  fort?: boolean
   statutActuel: Statut | null
   classable: boolean
   /** Ouvre la fiche détaillée. Toute la carte y mène sauf les trois gestes,
@@ -86,7 +90,12 @@ export function CarteOeuvre({
           )}
           {genres && genres.length > 0 && <> · {genres.slice(0, 3).join(', ')}</>}
         </p>
-        {explication && <p className="fivo-explication">{explication}</p>}
+        {explication && (
+          <p className={`fivo-explication${fort ? ' fivo-explication-forte' : ''}`}>
+            {fort && <span aria-hidden="true">✦ </span>}
+            {explication}
+          </p>
+        )}
         {synopsis && (
           <p className="fivo-synopsis" dir="auto">
             {synopsis}

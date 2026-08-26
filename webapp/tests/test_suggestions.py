@@ -1,8 +1,15 @@
-"""Le moteur de suggestions : l'ordre, la dédup, le plafond de distance.
+"""Le moteur de suggestions : la pondération, la fusion, la corroboration.
 
-Le graphe est simulé — ces tests vérifient la POLITIQUE du moteur (voisins
-d'abord, complément par distance croissante, rien en double, rien au-delà du
-plafond), pas le Cypher, qui ne se teste que contre un vrai Neo4j.
+Sources simulées — ces tests vérifient la POLITIQUE du moteur, pas le Cypher
+ni le corps ES, qui ne se testent que contre un vrai service :
+
+* les graines sont pondérées par ce qu'elles disent (un verdict pèse plus
+  qu'une intention) ;
+* aucune source ne plafonne les autres — c'était le défaut de la cascade,
+  dont le premier étage (la communauté, arrêtée en 2019) occupait toute la
+  liste ;
+* deux savoirs indépendants qui désignent la même œuvre l'emportent sur un
+  seul, même très confiant.
 """
 
 from __future__ import annotations
@@ -14,10 +21,14 @@ import pytest
 
 from fiv_webapp.cartes import Carte
 from fiv_webapp.suggestions import (
+    APPORT_COMMUNAUTE,
+    APPORT_EMPREINTE,
     DISTANCE_MAX,
-    Affinites,
+    MULTIPLICATEUR_CORROBORATION,
+    POIDS_STATUT,
+    Candidat,
     Moteur,
-    Suggestions,
+    Suggestion,
     distance_depuis_score,
 )
 from fiv_webapp.univers import UNIVERS
@@ -29,51 +40,9 @@ def score_de_distance(distance: float) -> float:
     return 1.0 / (1.0 + distance * distance)
 
 
-class FauxGraphe:
-    """Rend des lignes préparées selon la requête reçue : le voisinage, les
-    citations des voisins, ou les proches vectoriels."""
-
-    def __init__(
-        self,
-        voisins: list[dict[str, Any]],
-        citations: list[dict[str, Any]],
-        proches: list[dict[str, Any]],
-    ) -> None:
-        self._voisins = voisins
-        self._citations = citations
-        self._proches = proches
-        self.parametres_vus: list[dict[str, Any]] = []
-
-    async def executer(self, cypher: str, **parametres: Any) -> list[dict[str, Any]]:
-        self.parametres_vus.append({"cypher": cypher, **parametres})
-        if "queryNodes" in cypher:
-            return self._proches[: parametres["limite"]]
-        if "count(DISTINCT s)" in cypher:
-            return self._voisins
-        return self._citations[: parametres["limite"]]
-
-
-def citation(oeuvre_id: int, voisins: int, force: float) -> dict[str, Any]:
-    return {
-        "oeuvreId": oeuvre_id,
-        "titre": f"Œuvre {oeuvre_id}",
-        "annee": 2020,
-        "affiche": None,
-        "univers": "series",
-        "voisins": voisins,
-        "force": force,
-    }
-
-
-def proche(oeuvre_id: int, distance: float) -> dict[str, Any]:
-    return {
-        "oeuvreId": oeuvre_id,
-        "titre": f"Œuvre {oeuvre_id}",
-        "annee": 2020,
-        "affiche": None,
-        "univers": "series",
-        "score": score_de_distance(distance),
-    }
+# ---------------------------------------------------------------------------
+# Les briques
+# ---------------------------------------------------------------------------
 
 
 def test_distance_depuis_score() -> None:
@@ -83,65 +52,100 @@ def test_distance_depuis_score() -> None:
     assert distance_depuis_score(0.0) == math.inf
 
 
-async def test_voisins_d_abord_puis_distance() -> None:
-    graphe = FauxGraphe(
-        voisins=[{"membreId": 7, "communes": 3}],
-        citations=[citation(101, voisins=5, force=4.0), citation(102, voisins=2, force=3.0)],
-        proches=[proche(201, 0.5), proche(202, 1.1)],
-    )
-    moteur = Suggestions(graphe)  # type: ignore[arg-type]
-    retenues = await moteur.pour(aimes=[1], exclues=[1], univers_interne="series", limite=10)
+class TestCandidat:
+    def test_le_plus_fort_apport_gagne(self) -> None:
+        """Une source qui parle deux fois de la même œuvre ne cumule pas :
+        deux graines vaguement proches ne doivent pas battre une graine très
+        proche, sinon un profil large écrase un profil précis."""
+        candidat = Candidat(oeuvre_id=1)
+        candidat.verser("proche", 0.3)
+        candidat.verser("proche", 0.9)
+        candidat.verser("proche", 0.5)
+        assert candidat.apports["proche"] == 0.9
+        assert candidat.score == pytest.approx(0.9)
 
-    # L'ordre est la promesse : la communauté avant l'empreinte.
-    assert [s.oeuvre_id for s in retenues] == [101, 102, 201, 202]
-    assert [s.source for s in retenues] == ["voisins", "voisins", "proche", "proche"]
-    assert retenues[2].distance == pytest.approx(0.5)
+    def test_corroboration_multiplie(self) -> None:
+        """Le geste demandé : contenu ET communauté d'accord → total multiplié."""
+        seul = Candidat(oeuvre_id=1)
+        seul.verser("proche", 0.5)
+        assert not seul.corrobore
 
+        accord = Candidat(oeuvre_id=2)
+        accord.verser("proche", 0.5)
+        accord.verser("voisins", 0.5)
+        assert accord.corrobore
+        assert accord.score == pytest.approx(1.0 * MULTIPLICATEUR_CORROBORATION)
 
-async def test_dedup_et_exclusions() -> None:
-    graphe = FauxGraphe(
-        voisins=[{"membreId": 7, "communes": 1}],
-        # 101 sort deux fois (voisins ET proche), 1 est la graine exclue.
-        citations=[citation(101, voisins=3, force=4.0)],
-        proches=[proche(101, 0.3), proche(1, 0.1), proche(202, 0.8)],
-    )
-    moteur = Suggestions(graphe)  # type: ignore[arg-type]
-    retenues = await moteur.pour(aimes=[1], exclues=[1], univers_interne="series", limite=10)
+    def test_deux_sources_de_contenu_ne_corroborent_pas(self) -> None:
+        """L'empreinte et les affinités regardent la même matière : leur
+        accord n'est pas une confirmation indépendante."""
+        candidat = Candidat(oeuvre_id=1)
+        candidat.verser("proche", 0.4)
+        candidat.verser("affinite", 0.4)
+        assert not candidat.corrobore
 
-    assert [s.oeuvre_id for s in retenues] == [101, 202]
-    # 101 garde sa raison communautaire — la première voix l'emporte.
-    assert retenues[0].source == "voisins"
-
-
-async def test_plafond_de_distance() -> None:
-    graphe = FauxGraphe(
-        voisins=[],
-        citations=[],
-        proches=[proche(201, DISTANCE_MAX - 0.1), proche(202, DISTANCE_MAX + 0.1)],
-    )
-    moteur = Suggestions(graphe)  # type: ignore[arg-type]
-    retenues = await moteur.pour(aimes=[1], exclues=[1], univers_interne="series", limite=10)
-
-    # Au-delà du plafond, la liste préfère rester courte.
-    assert [s.oeuvre_id for s in retenues] == [201]
+    def test_source_dominante(self) -> None:
+        candidat = Candidat(oeuvre_id=1)
+        candidat.verser("affinite", 0.2)
+        candidat.verser("voisins", 0.7)
+        assert candidat.source_dominante == "voisins"
+        assert Suggestion.depuis(candidat).source == "voisins"
 
 
-async def test_sans_aime_rien() -> None:
-    graphe = FauxGraphe(voisins=[], citations=[], proches=[])
-    moteur = Suggestions(graphe)  # type: ignore[arg-type]
-    assert await moteur.pour(aimes=[], exclues=[], univers_interne="series") == []
-    # Et surtout : aucun appel au graphe — pas de requête pour rien.
-    assert graphe.parametres_vus == []
+class TestGraines:
+    def test_ponderees_par_statut(self) -> None:
+        """« Vu et aimé » est un verdict, « je veux voir » une intention —
+        et `aime_pas` ne décrit pas un goût à poursuivre."""
+        moteur = Moteur(None, None, None)  # type: ignore[arg-type]
+        graines = moteur.graines({"aime": [1, 2], "a_voir": [3], "aime_pas": [4]})
+        poids = {graine.oeuvre_id: graine.poids for graine in graines}
+        assert poids == {
+            1: POIDS_STATUT["aime"],
+            2: POIDS_STATUT["aime"],
+            3: POIDS_STATUT["a_voir"],
+        }
+        assert 4 not in poids
+        # Les plus fortes d'abord : c'est ce qui survit au plafond.
+        assert graines[0].poids >= graines[-1].poids
+
+    def test_a_voir_seul_suffit_a_semer(self) -> None:
+        """Une liste d'envies dit déjà quelque chose : elle ne doit pas
+        laisser l'onglet muet (elle était ignorée avant ce lot)."""
+        moteur = Moteur(None, None, None)  # type: ignore[arg-type]
+        assert len(moteur.graines({"aime": [], "a_voir": [7]})) == 1
 
 
 # ---------------------------------------------------------------------------
-# Le troisième étage, et l'orchestration des trois
+# Les sources simulées
 # ---------------------------------------------------------------------------
+
+
+class FauxGraphe:
+    """Rend des lignes préparées selon la requête reçue : le voisinage, les
+    citations des voisins, ou les proches vectoriels."""
+
+    def __init__(
+        self,
+        voisins: list[dict[str, Any]] | None = None,
+        citations: list[dict[str, Any]] | None = None,
+        proches: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._voisins = voisins or []
+        self._citations = citations or []
+        self._proches = proches or []
+        self.vues: list[dict[str, Any]] = []
+
+    async def executer(self, cypher: str, **parametres: Any) -> list[dict[str, Any]]:
+        self.vues.append({"cypher": cypher, **parametres})
+        if "queryNodes" in cypher:
+            return self._proches
+        if "count(DISTINCT s)" in cypher:
+            return self._voisins
+        return self._citations
 
 
 class FauxRecherche:
-    """Un Elasticsearch simulé : les documents des graines, puis les
-    affinités. `None` simule une panne ou un index absent."""
+    """Un Elasticsearch simulé. `None` simule une panne ou un index absent."""
 
     def __init__(
         self,
@@ -166,13 +170,7 @@ class FauxRecherche:
         taille: int,
     ) -> list[int] | None:
         self.demandes.append(
-            {
-                "quoi": "affinites",
-                "genres": genres,
-                "personnes": personnes,
-                "exclus": exclus,
-                "taille": taille,
-            }
+            {"quoi": "affinites", "genres": genres, "personnes": personnes, "exclus": exclus}
         )
         return self._affinites
 
@@ -204,7 +202,7 @@ class FauxCartes:
 
 
 class FauxConn:
-    """Le pivot d'une œuvre TMDB, lu en base par `Cles` : ici l'identité."""
+    """La traduction pivot → clé de vignette, telle que `Cles` la lit."""
 
     def cursor(self) -> Any:
         return self
@@ -219,119 +217,155 @@ class FauxConn:
         self._pivots = list(parametres["pivots"]) if parametres else []
 
     async def fetchall(self) -> list[tuple[int, int]]:
-        # pivot → clé de vignette : le décalage de mille de FauxCartes,
-        # à l'envers.
         return [(pivot, pivot - 1000) for pivot in self._pivots]
 
 
-async def test_affinites_batissent_la_requete_et_expliquent() -> None:
-    """Les genres les plus fréquents d'abord, les exclusions traduites en
-    clés de vignette, et les genres partagés nommés pour l'explication."""
-    recherche = FauxRecherche(
-        documents=[
-            {"genres": ["Drame", "Fantastique"], "personnes": ["Emilia Clarke"]},
-            {"genres": ["Drame"], "personnes": ["Kit Harington"]},
-        ],
-        affinites=[42],
-    )
-    cartes = FauxCartes({42: ["Drame", "Comédie"]})
-    moteur = Affinites(recherche, cartes)  # type: ignore[arg-type]
+def proche(oeuvre_id: int, distance: float, graine: int = 1001) -> dict[str, Any]:
+    return {
+        "graine": graine,
+        "oeuvreId": oeuvre_id,
+        "idTmdb": oeuvre_id - 1000,
+        "titre": f"Œuvre {oeuvre_id}",
+        "annee": 2020,
+        "affiche": None,
+        "univers": "series",
+        "score": score_de_distance(distance),
+    }
 
-    retenues = await moteur.pour(
+
+def citation(oeuvre_id: int, voisins: int, force: float = 4.0) -> dict[str, Any]:
+    return {
+        "oeuvreId": oeuvre_id,
+        "idTmdb": oeuvre_id - 1000,
+        "titre": f"Œuvre {oeuvre_id}",
+        "annee": 2019,
+        "affiche": None,
+        "univers": "series",
+        "voisins": voisins,
+        "force": force,
+    }
+
+
+async def lancer(
+    graphe: FauxGraphe | None,
+    recherche: FauxRecherche | None = None,
+    cartes: FauxCartes | None = None,
+    statuts: dict[str, list[int]] | None = None,
+) -> tuple[list[Suggestion], str | None]:
+    moteur = Moteur(
+        recherche or FauxRecherche(),  # type: ignore[arg-type]
+        cartes or FauxCartes(),  # type: ignore[arg-type]
+        graphe,  # type: ignore[arg-type]
+    )
+    return await moteur.pour(
         FauxConn(),  # type: ignore[arg-type]
         UNIVERS["series"],
-        aimes=[1001],
-        exclues=[1001, 1002],
-        limite=10,
+        pivots_par_statut=statuts or {"aime": [1001], "aime_pas": [], "a_voir": []},
     )
 
-    demande = recherche.demandes[-1]
-    # « Drame » est dans deux graines sur deux : il passe devant.
-    assert demande["genres"][0] == "Drame"
-    assert "Emilia Clarke" in demande["personnes"]
-    # Les exclusions partent en clés de vignette, pas en pivots.
-    assert demande["exclus"] == [1, 2]
 
-    assert len(retenues) == 1
-    assert retenues[0].source == "affinite"
-    assert retenues[0].oeuvre_id == 1042
-    assert retenues[0].cle_vignette == 42
-    # Seuls les genres réellement partagés sont nommés — « Comédie » n'est
-    # pas dans les coups de cœur, elle n'a rien à expliquer.
+# ---------------------------------------------------------------------------
+# La fusion
+# ---------------------------------------------------------------------------
+
+
+async def test_empreinte_ponderee_par_la_graine() -> None:
+    """À distance égale, être proche d'une œuvre vue et aimée vaut plus que
+    d'être proche d'une œuvre qu'on veut seulement voir."""
+    graphe = FauxGraphe(proches=[proche(2001, 0.5, graine=1001), proche(2002, 0.5, graine=1002)])
+    retenues, _ = await lancer(graphe, statuts={"aime": [1001], "a_voir": [1002]})
+    par_id = {s.oeuvre_id: s.score for s in retenues}
+    assert par_id[2001] > par_id[2002]
+    # Et l'apport suit la formule : (1 − d/DISTANCE_MAX) × poids × apport.
+    attendu = APPORT_EMPREINTE * (1 - 0.5 / DISTANCE_MAX) * POIDS_STATUT["aime"]
+    assert par_id[2001] == pytest.approx(round(attendu, 3), abs=0.01)
+
+
+async def test_le_plafond_de_distance_ecarte() -> None:
+    graphe = FauxGraphe(
+        proches=[proche(2001, DISTANCE_MAX - 0.1), proche(2002, DISTANCE_MAX + 0.1)]
+    )
+    retenues, _ = await lancer(graphe)
+    assert [s.oeuvre_id for s in retenues] == [2001]
+
+
+async def test_la_communaute_ne_plafonne_plus_les_autres() -> None:
+    """LE défaut corrigé : la cascade laissait les tops des voisins — arrêtés
+    en 2019 — occuper toutes les places. Ici les deux familles coexistent, et
+    une œuvre très proche par l'empreinte passe devant une œuvre portée par
+    un seul voisin."""
+    graphe = FauxGraphe(
+        voisins=[{"membreId": 7, "communes": 1}],
+        citations=[citation(3001, voisins=1, force=2.0)],
+        proches=[proche(2001, 0.1)],
+    )
+    retenues, _ = await lancer(graphe)
+    assert [s.oeuvre_id for s in retenues] == [2001, 3001]
+    assert {s.source for s in retenues} == {"proche", "voisins"}
+
+
+async def test_la_corroboration_l_emporte() -> None:
+    """Une œuvre moyennement proche mais confirmée par la communauté passe
+    devant une œuvre très proche que personne ne cite. C'est la demande :
+    deux savoirs indépendants valent mieux qu'un seul très confiant."""
+    graphe = FauxGraphe(
+        voisins=[{"membreId": 7, "communes": 2}],
+        citations=[citation(2002, voisins=5, force=5.0)],
+        proches=[proche(2001, 0.15), proche(2002, 0.9)],
+    )
+    retenues, _ = await lancer(graphe)
+    assert retenues[0].oeuvre_id == 2002
+    assert retenues[0].corrobore is True
+    assert retenues[1].corrobore is False
+
+
+async def test_la_communaute_seule_reste_possible() -> None:
+    """Une œuvre que rien ne rapproche du contenu mais que six voisins citent
+    doit pouvoir entrer : le savoir communautaire garde sa voix propre."""
+    graphe = FauxGraphe(
+        voisins=[{"membreId": 7, "communes": 3}],
+        citations=[citation(3001, voisins=6, force=5.0)],
+    )
+    retenues, _ = await lancer(graphe)
+    assert [s.oeuvre_id for s in retenues] == [3001]
+    assert retenues[0].voisins == 6
+    # L'apport plafonne à APPORT_COMMUNAUTE : le plus cité de la fournée sert
+    # d'échelle, jamais un compte brut.
+    assert retenues[0].score == pytest.approx(APPORT_COMMUNAUTE, abs=0.01)
+
+
+async def test_sans_graphe_les_affinites_repondent() -> None:
+    """Ni graphe projeté ni œuvre notée : l'onglet répond quand même."""
+    recherche = FauxRecherche(documents=[{"genres": ["Drame"], "personnes": []}], affinites=[7])
+    retenues, raison = await lancer(None, recherche, FauxCartes({7: ["Drame", "Comédie"]}))
+    assert raison is None
+    assert [s.source for s in retenues] == ["affinite"]
+    assert retenues[0].oeuvre_id == 1007
+    assert retenues[0].cle_vignette == 7
+    # Seuls les genres réellement partagés sont nommés.
     assert retenues[0].communs == ["Drame"]
 
 
-async def test_affinites_sans_index_ne_cassent_rien() -> None:
-    """ES absent ou index vide : l'étage rend une liste vide, pas une
-    exception — la route doit répondre quand même."""
-    moteur = Affinites(FauxRecherche(documents=None), FauxCartes())  # type: ignore[arg-type]
-    assert (
-        await moteur.pour(
-            FauxConn(),  # type: ignore[arg-type]
-            UNIVERS["series"],
-            aimes=[1001],
-            exclues=[1001],
-            limite=10,
-        )
-        == []
-    )
+async def test_les_exclusions_couvrent_tous_les_statuts() -> None:
+    """Le connu n'est pas une suggestion, l'écarté ne se repropose pas, et
+    l'envie est une suggestion déjà acceptée."""
+    graphe = FauxGraphe(proches=[proche(2001, 0.2)])
+    await lancer(graphe, statuts={"aime": [1001], "aime_pas": [1002], "a_voir": [1003]})
+    envoyees = [vue for vue in graphe.vues if "queryNodes" in vue["cypher"]][0]
+    assert envoyees["exclues"] == [1001, 1002, 1003]
 
 
-async def test_moteur_sans_graphe_repond_par_les_affinites() -> None:
-    """LE cas qui a motivé le troisième étage : pas de graphe (ou un graphe
-    qui ne connaît pas l'œuvre aimée), et l'onglet répond quand même."""
-    recherche = FauxRecherche(documents=[{"genres": ["Drame"], "personnes": []}], affinites=[7])
-    moteur = Moteur(recherche, FauxCartes({7: ["Drame"]}), None)  # type: ignore[arg-type]
-
-    retenues, raison = await moteur.pour(
-        FauxConn(),  # type: ignore[arg-type]
-        UNIVERS["series"],
-        aimes=[1001],
-        exclues=[1001],
-    )
-    assert raison is None
-    assert [suggestion.source for suggestion in retenues] == ["affinite"]
-
-
-async def test_moteur_garde_l_ordre_des_etages() -> None:
-    """La communauté d'abord, les affinités pour compléter : un signal faible
-    ne passe jamais devant un signal fort."""
-    graphe = FauxGraphe(
-        voisins=[{"membreId": 7, "communes": 2}],
-        citations=[citation(101, voisins=4, force=4.0)],
-        proches=[],
-    )
-    recherche = FauxRecherche(documents=[{"genres": ["Drame"], "personnes": []}], affinites=[7])
-    moteur = Moteur(recherche, FauxCartes({7: ["Drame"]}), graphe)  # type: ignore[arg-type]
-
-    retenues, raison = await moteur.pour(
-        FauxConn(),  # type: ignore[arg-type]
-        UNIVERS["series"],
-        aimes=[1001],
-        exclues=[1001],
-    )
-    assert raison is None
-    assert [suggestion.source for suggestion in retenues] == ["voisins", "affinite"]
-
-
-async def test_moteur_dit_pourquoi_il_est_vide() -> None:
-    """Deux vides, deux raisons : rien d'aimé, ou rien de trouvé. Le front
-    n'affiche pas le même message, et surtout pas « panne »."""
-    recherche = FauxRecherche(documents=[], affinites=[])
-    moteur = Moteur(recherche, FauxCartes(), None)  # type: ignore[arg-type]
-
-    _, sans_graine = await moteur.pour(
-        FauxConn(),  # type: ignore[arg-type]
-        UNIVERS["series"],
-        aimes=[],
-        exclues=[],
-    )
+async def test_les_raisons_du_vide() -> None:
+    """Deux vides, deux raisons — et jamais « panne »."""
+    _, sans_graine = await lancer(None, statuts={"aime": [], "aime_pas": [9], "a_voir": []})
     assert sans_graine == "aucun_aime"
-
-    _, sans_resultat = await moteur.pour(
-        FauxConn(),  # type: ignore[arg-type]
-        UNIVERS["series"],
-        aimes=[1001],
-        exclues=[1001],
-    )
+    _, sans_resultat = await lancer(FauxGraphe())
     assert sans_resultat == "aucun_resultat"
+
+
+async def test_departage_stable() -> None:
+    """À score égal, l'ordre ne doit pas changer d'un appel à l'autre."""
+    graphe = FauxGraphe(proches=[proche(2002, 0.3), proche(2001, 0.3)])
+    premier, _ = await lancer(graphe)
+    second, _ = await lancer(graphe)
+    assert [s.oeuvre_id for s in premier] == [s.oeuvre_id for s in second] == [2001, 2002]

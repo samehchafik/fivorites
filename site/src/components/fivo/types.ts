@@ -117,6 +117,9 @@ export interface Suggestion {
   /** Les genres partagés avec les coups de cœur — l'explication de l'étage
    *  des affinités. Vide quand la correspondance s'est faite sur un nom. */
   communs: string[]
+  /** Le contenu ET la communauté désignent-ils cette œuvre ? C'est la
+   *  suggestion la plus solide que le moteur sache produire, et elle se dit. */
+  corrobore: boolean
 }
 
 /** Le type d'une œuvre, au singulier — affiché en gras sur la carte à côté

@@ -15,12 +15,22 @@ import { useEffect, useRef, useState } from 'react'
 
 import { chargerSuggestions } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
-import type { Statut, Suggestion, UniversSlug } from './types'
+import { TYPE_LABELS, type Statut, type Suggestion, type UniversSlug } from './types'
 
-// Les trois étages du moteur ne disent pas la même chose, et le visiteur
-// doit pouvoir les distinguer : « des gens comme vous ont aimé » n'est pas
-// « ça ressemble ». Une suggestion inexpliquée ressemble à de la publicité.
+// Les sources du moteur ne disent pas la même chose, et le visiteur doit
+// pouvoir les distinguer : « des gens comme vous ont aimé » n'est pas « ça
+// ressemble ». Une suggestion inexpliquée ressemble à de la publicité.
+//
+// La CORROBORATION passe devant tout : quand le contenu et la communauté
+// désignent la même œuvre, c'est la meilleure raison qu'on sache donner, et
+// c'est aussi ce que le moteur a le plus fortement classé.
 function expliquer(suggestion: Suggestion): string {
+  if (suggestion.corrobore) {
+    const nombre = suggestion.voisins ?? 0
+    const porte =
+      nombre > 1 ? `${nombre} membres qui partagent vos goûts` : 'un membre qui partage vos goûts'
+    return `Proche de vos coups de cœur ET dans le top de ${porte}`
+  }
   if (suggestion.source === 'voisins') {
     const nombre = suggestion.voisins ?? 0
     return nombre > 1
@@ -125,8 +135,10 @@ export function Suggestions({
             key={suggestion.oeuvreId}
             titre={suggestion.titre}
             annee={suggestion.annee}
+            type={TYPE_LABELS[univers]}
             affiche={suggestion.affiche}
             explication={expliquer(suggestion)}
+            fort={suggestion.corrobore}
             statutActuel={statuts[suggestion.oeuvreId] ?? null}
             classable
             onOuvrir={() => onOuvrir(suggestion.id, suggestion.oeuvreId)}

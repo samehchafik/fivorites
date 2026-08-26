@@ -389,6 +389,14 @@
   font-weight: 600;
 }
 
+/* La suggestion corroborée — le contenu ET la communauté d'accord. Elle se
+   détache par la couleur signature plutôt que par du gras de plus : la ligne
+   est déjà en 600. */
+.fivo-explication-forte {
+  color: var(--red, #fa0036);
+  font-weight: 700;
+}
+
 .fivo-synopsis {
   margin: 0;
   color: var(--texte-sur-clair, #262626);

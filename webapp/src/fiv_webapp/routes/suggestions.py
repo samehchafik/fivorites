@@ -6,9 +6,13 @@ une réponse qui dit toujours POURQUOI elle est vide quand elle l'est. Une
 liste vide sans raison ressemble à une panne ; avec la raison, c'est un état
 du parcours.
 
-Le graphe n'est plus une condition : sans lui, les deux premiers étages sont
-sautés et les affinités répondent seules. C'est ce qui a changé le jour où
-l'on a constaté que l'onglet restait vide sur une œuvre ordinaire.
+Le graphe n'est plus une condition : sans lui, les deux sources qui en
+dépendent sont sautées et les affinités répondent seules.
+
+La route ne connaît plus les statuts un par un : elle passe au moteur la carte
+complète des pivots par statut, et c'est lui qui décide de ce qui fait graine
+et de ce que ça pèse — « vu et aimé » n'est pas « je veux voir », et cette
+règle appartient au moteur, pas à la route.
 """
 
 from __future__ import annotations
@@ -45,13 +49,13 @@ async def suggestions(
         return {"items": [], "raison": "aucune_session", "graine": 0}
 
     pivots = await signaux.pivots(conn, session_id)
-    aimes = pivots["aime"]
-    exclues = [oeuvre for groupe in pivots.values() for oeuvre in groupe]
-
     moteur = Moteur(recherche, cartes, graphe)
-    retenues, raison = await moteur.pour(conn, univers, aimes=aimes, exclues=exclues)
+    retenues, raison = await moteur.pour(conn, univers, pivots_par_statut=pivots)
     return {
         "items": [suggestion.publique(univers.slug) for suggestion in retenues],
         "raison": raison,
-        "graine": len(aimes),
+        # Le nombre de graines réellement retenues, pondérations comprises :
+        # c'est ce que le moteur a eu pour travailler, et ce que le front dit
+        # au visiteur quand la liste est courte.
+        "graine": len(moteur.graines(pivots)),
     }
