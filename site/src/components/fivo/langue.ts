@@ -20,6 +20,8 @@ export const LANGUE_LABELS: Record<Langue, string> = {
   ar: 'العربية',
 }
 
+import { retenir, retenu } from './memoire'
+
 const CLE = 'fivo-langue'
 
 function servie(brut: string | null | undefined): Langue | null {
@@ -34,12 +36,8 @@ function servie(brut: string | null | undefined): Langue | null {
  *  navigateur réglé sur « pt-BR, fr » n'a pas de portugais servi, mais son
  *  second choix, oui — le prendre vaut mieux que retomber sur le défaut. */
 export function langueInitiale(): Langue {
-  try {
-    const retenue = servie(localStorage.getItem(CLE))
-    if (retenue) return retenue
-  } catch {
-    // Navigation privée : on suit le navigateur, sans mémoriser.
-  }
+  const choisie = servie(retenu(CLE))
+  if (choisie) return choisie
   if (typeof navigator !== 'undefined') {
     for (const candidate of navigator.languages ?? [navigator.language]) {
       const trouvee = servie(candidate)
@@ -49,11 +47,7 @@ export function langueInitiale(): Langue {
   return LANGUE_DEFAUT
 }
 
-/** Retient le choix pour les visites suivantes. Silencieux en cas de refus. */
+/** Retient le choix pour les visites suivantes. */
 export function retenirLangue(langue: Langue): void {
-  try {
-    localStorage.setItem(CLE, langue)
-  } catch {
-    // Sans mémoire, le choix vaut pour la session : c'est déjà l'essentiel.
-  }
+  retenir(CLE, langue)
 }

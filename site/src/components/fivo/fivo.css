@@ -467,6 +467,41 @@
   color: white;
 }
 
+/* --- Le choix de présentation (pile ou liste) ---------------------------- */
+
+.fivo-vues {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  margin-top: 0.6rem;
+}
+
+.fivo-vue {
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 1rem;
+  padding: 0.15rem 0.7rem;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: white;
+  cursor: pointer;
+}
+
+.fivo-vue:hover {
+  border-color: white;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* La vue courante en aplat blanc : le même vocabulaire que les pastilles de
+   filtre et les pilules d'onglet — un état choisi se lit toujours pareil. */
+.fivo-vue.actif {
+  background: white;
+  color: var(--fivorites2, #700031);
+  border-color: white;
+}
+
 /* --- La pile de l'onglet Suggestions (le geste de la V1) ----------------- */
 /*
  * Les chiffres sont ceux de `block-tinder.css` : carte de 220 × 350, plateau

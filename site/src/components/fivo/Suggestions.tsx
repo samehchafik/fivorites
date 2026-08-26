@@ -10,10 +10,19 @@
 //
 // C'est ce qui donne le comportement attendu : on cherche, on classe, on
 // bascule — et les suggestions arrivent enrichies de ce qu'on vient de faire.
+//
+// DEUX PRÉSENTATIONS, et elles ne servent pas la même chose. La **pile** —
+// celle de la V1 — fait décider vite : une œuvre à la fois, un geste, la
+// suivante. La **liste** fait comparer : on voit dix propositions côte à côte
+// avec leur raison, on choisit. Le choix est retenu, parce que c'est une
+// habitude, pas une humeur.
 
+import { UnstyledButton } from '@mantine/core'
 import { useEffect, useRef, useState } from 'react'
 
 import { chargerSuggestions } from './api'
+import { CarteOeuvre } from './CarteOeuvre'
+import { retenir, retenu } from './memoire'
 import { PileSuggestions } from './PileSuggestions'
 import { TYPE_LABELS, type Statut, type Suggestion, type UniversSlug } from './types'
 
@@ -24,6 +33,14 @@ import { TYPE_LABELS, type Statut, type Suggestion, type UniversSlug } from './t
 // La CORROBORATION passe devant tout : quand le contenu et la communauté
 // désignent la même œuvre, c'est la meilleure raison qu'on sache donner, et
 // c'est aussi ce que le moteur a le plus fortement classé.
+type Vue = 'pile' | 'liste'
+
+const CLE_VUE = 'fivo-vue-suggestions'
+
+function vueInitiale(): Vue {
+  return retenu(CLE_VUE) === 'liste' ? 'liste' : 'pile'
+}
+
 function expliquer(suggestion: Suggestion): string {
   if (suggestion.corrobore) {
     const nombre = suggestion.voisins ?? 0
@@ -53,12 +70,18 @@ function expliquer(suggestion: Suggestion): string {
 
 export function Suggestions({
   univers,
+  statuts,
   versionSignaux,
   actif,
   onOuvrir,
   onClasser,
+  onDeclasser,
 }: {
   univers: UniversSlug
+  /** Les classements de la session, par pivot. La LISTE s'en sert pour
+   *  rallumer ses boutons ; la pile n'en a pas besoin — une carte jetée
+   *  quitte la pile. */
+  statuts: Record<number, Statut>
   /** Incrémentée à chaque geste de classement — le déclencheur du rechargement. */
   versionSignaux: number
   /** L'onglet est-il celui qu'on regarde ? Le panneau reste monté quand il ne
@@ -66,6 +89,7 @@ export function Suggestions({
   actif: boolean
   onOuvrir: (identifiant: number, oeuvreId: number | null) => void
   onClasser: (oeuvreId: number, univers: UniversSlug, statut: Statut) => void
+  onDeclasser: (oeuvreId: number) => void
 }) {
   const [items, setItems] = useState<Suggestion[]>([])
   const [raison, setRaison] = useState<string | null>(null)
@@ -79,6 +103,19 @@ export function Suggestions({
   // Les demandes de la pile quand elle s'épuise — le seul rechargement
   // qu'elle déclenche.
   const [recharges, setRecharges] = useState(0)
+  // La vue démarre sur la pile puis suit le choix retenu, lu après le montage
+  // — la page est construite à l'avance, le navigateur de qui la reçoit n'est
+  // pas connu au build.
+  const [vue, setVue] = useState<Vue>('pile')
+
+  useEffect(() => {
+    setVue(vueInitiale())
+  }, [])
+
+  const choisirVue = (choisie: Vue) => {
+    setVue(choisie)
+    retenir(CLE_VUE, choisie)
+  }
   // Ce que la liste affichée reflète déjà. Une référence plutôt qu'un état :
   // elle ne décide d'aucun rendu, elle évite seulement de recharger ce qui
   // est à jour — la mettre en `useState` relancerait l'effet pour rien.
@@ -144,19 +181,74 @@ export function Suggestions({
       )}
 
       {items.length > 0 && (
-        <PileSuggestions
-          suggestions={items}
-          type={TYPE_LABELS[univers]}
-          explication={expliquer}
-          onClasser={(oeuvreId, statut) => {
-            // Le geste de la pile est absorbé : il ne doit pas rejouer la
-            // requête et réordonner ce qui reste (voir `absorbees`).
-            absorbees.current += 1
-            onClasser(oeuvreId, univers, statut)
-          }}
-          onOuvrir={onOuvrir}
-          onRecharger={() => setRecharges((tour) => tour + 1)}
-        />
+        <>
+          {/* Le choix de présentation. Deux boutons plutôt qu'un interrupteur :
+              on veut voir les deux possibilités, pas devoir deviner l'état
+              courant d'une bascule. */}
+          <div className="fivo-vues" role="group" aria-label="Présentation des suggestions">
+            <UnstyledButton
+              className={`fivo-vue${vue === 'pile' ? ' actif' : ''}`}
+              aria-pressed={vue === 'pile'}
+              onClick={() => choisirVue('pile')}
+              title="Une œuvre à la fois, à jeter d'un geste"
+            >
+              <span aria-hidden="true">▤</span> Pile
+            </UnstyledButton>
+            <UnstyledButton
+              className={`fivo-vue${vue === 'liste' ? ' actif' : ''}`}
+              aria-pressed={vue === 'liste'}
+              onClick={() => choisirVue('liste')}
+              title="Toutes les propositions, à comparer"
+            >
+              <span aria-hidden="true">☰</span> Liste
+            </UnstyledButton>
+          </div>
+
+          {vue === 'pile' ? (
+            <PileSuggestions
+              suggestions={items}
+              type={TYPE_LABELS[univers]}
+              explication={expliquer}
+              onClasser={(oeuvreId, statut) => {
+                // Le geste de la pile est absorbé : il ne doit pas rejouer la
+                // requête et réordonner ce qui reste (voir `absorbees`).
+                absorbees.current += 1
+                onClasser(oeuvreId, univers, statut)
+              }}
+              onOuvrir={onOuvrir}
+              onRecharger={() => setRecharges((tour) => tour + 1)}
+            />
+          ) : (
+            // La liste garde ses cartes classées, boutons allumés : ici on
+            // compare, et faire disparaître ce qu'on vient de classer ferait
+            // sauter la ligne qu'on lisait. Le geste est absorbé de la même
+            // façon — c'est à la bascule d'onglet que la liste se renouvelle.
+            <div className="fivo-liste">
+              {items.map((suggestion) => (
+                <CarteOeuvre
+                  key={suggestion.oeuvreId}
+                  titre={suggestion.titre}
+                  annee={suggestion.annee}
+                  type={TYPE_LABELS[univers]}
+                  affiche={suggestion.affiche}
+                  explication={expliquer(suggestion)}
+                  fort={suggestion.corrobore}
+                  statutActuel={statuts[suggestion.oeuvreId] ?? null}
+                  classable
+                  onOuvrir={() => onOuvrir(suggestion.id, suggestion.oeuvreId)}
+                  onClasser={(statut) => {
+                    absorbees.current += 1
+                    onClasser(suggestion.oeuvreId, univers, statut)
+                  }}
+                  onDeclasser={() => {
+                    absorbees.current += 1
+                    onDeclasser(suggestion.oeuvreId)
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
