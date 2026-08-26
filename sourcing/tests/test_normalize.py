@@ -40,6 +40,7 @@ WIKIDATA_LIVRE_COMPLET = {
     "olid": "OL27258W",
     "sitelinks": 99,
     "auteurs": [{"qid": "Q5878", "nom": "Gabriel García Márquez"}],
+    "genres": [{"qid": "Q193606", "nom": "réalisme magique"}, {"qid": "Q9", "nom": ""}],
     "langues": ["es"],
     "pays": ["CO"],
     "annee": 1967,
@@ -137,6 +138,8 @@ def test_wikidata_livre_produit_les_faits_attendus():
         # Le proxy de popularité de l'univers livre : les autres le tiennent
         # de l'export TMDB, celui-ci est un fait de la source.
         "sitelinks": 99,
+        # Le genre sans libellé est écarté : un genre n'existe que par son nom.
+        "genres": [{"qid": "Q193606", "nom": "réalisme magique"}],
         "auteurs": [{"qid": "Q5878", "nom": "Gabriel García Márquez"}],
         "ids": {"wikidata": "Q189378", "openlibrary": "OL27258W"},
     }

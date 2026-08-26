@@ -25,6 +25,7 @@ Le schéma (doc/architecture-sourcing.md §3) :
     episodes            {"total": int, "dates": int, "resumes": int}
     auteurs             [{"qid": str?, "nom": str?}]   (livres)
     sitelinks           int   (livres) — le proxy de notoriété
+    genres              [{"qid": str, "nom": str}]   (livres)
     editions            {"par_langue": [{"langue", "nombre", "isbn"?, "annee"?}],
                          "total": int, "sans_langue": int, "tronque": bool}   (livres)
     ids                 {"tmdb": int, "imdb": str, "wikidata": str, "tvmaze": int,
@@ -56,6 +57,7 @@ CLES = frozenset(
         "episodes",
         "auteurs",
         "sitelinks",
+        "genres",
         "editions",
         "ids",
     }
@@ -117,6 +119,17 @@ def depuis_wikidata_livre(faits: dict[str, Any]) -> dict[str, Any]:
         if forme:
             auteurs.append(forme)
     _si(canonique, "auteurs", auteurs)
+
+    # Le genre littéraire (P136) : la taxonomie de contenu d'un livre, celle
+    # que la grille filtre et que le graphe relie. Les autres univers la
+    # tiennent du payload TMDB, hors des `facts` ; un livre n'a pas de
+    # payload, elle vit donc ici.
+    genres = [
+        {"qid": genre["qid"], "nom": genre["nom"]}
+        for genre in faits.get("genres") or []
+        if genre.get("qid") and genre.get("nom")
+    ]
+    _si(canonique, "genres", genres)
 
     ids: dict[str, Any] = {}
     _si(ids, "wikidata", faits.get("qid"))

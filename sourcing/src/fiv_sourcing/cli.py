@@ -708,6 +708,14 @@ def crawl_wikidata_cmd(
             "sans matière à notation.",
         ),
     ] = 5,
+    refaire: Annotated[
+        bool,
+        typer.Option(
+            "--refaire",
+            help="Rejouer les œuvres déjà collectées au lieu de les sauter. "
+            "À utiliser quand la collecte a appris à extraire un fait de plus.",
+        ),
+    ] = False,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Compter le reste à faire, sans rien écrire.")
     ] = False,
@@ -775,7 +783,19 @@ def crawl_wikidata_cmd(
                     sitelinks_min=min_sitelinks,
                     max_items=None,
                 )
-                vus = await deja_regardes(conn, [i["qid"] for i in items], kind=monde.lookup_kind)
+                # R4 : rejouer l'enrichissement, c'est réinterroger. Quand
+                # l'extraction apprend un fait de plus — les genres, les
+                # couvertures — les œuvres déjà collectées ne l'ont pas, et
+                # seule une nouvelle interrogation le leur donne.
+                # `upsert_riche_source` remplace la ligne au lieu d'en créer
+                # une seconde : rejouer ne duplique rien.
+                vus = (
+                    set()
+                    if refaire
+                    else await deja_regardes(
+                        conn, [i["qid"] for i in items], kind=monde.lookup_kind
+                    )
+                )
                 restants = [i for i in items if i["qid"] not in vus]
                 if limit is not None:
                     restants = restants[:limit]
@@ -801,6 +821,8 @@ def crawl_wikidata_cmd(
                 )
 
     perimetre = f"langue={langue}" if langue else "toutes langues"
+    if refaire:
+        perimetre += ", en rejouant le déjà-vu"
     if monde.openlibrary:
         perimetre += f", sitelinks >= {min_sitelinks}"
         typer.echo(f"périmètre : œuvres littéraires par notoriété — {perimetre}")
@@ -860,6 +882,14 @@ def crawl_livres_cmd(
     concurrency: Annotated[
         int, typer.Option("--concurrency", help="Items traités en parallèle.")
     ] = 4,
+    refaire: Annotated[
+        bool,
+        typer.Option(
+            "--refaire",
+            help="Rejouer les livres déjà collectés — quand la collecte a "
+            "appris à extraire un fait de plus (genres, couvertures…).",
+        ),
+    ] = False,
 ) -> None:
     """Les quatre langues cibles, l'une après l'autre : fr, en, es, ar.
 
@@ -890,6 +920,7 @@ def crawl_livres_cmd(
             limit=limit,
             concurrency=concurrency,
             min_sitelinks=plancher,
+            refaire=refaire,
             dry_run=False,
         )
         bilan.append((langue, report.swept, report.enriched, report.errors))

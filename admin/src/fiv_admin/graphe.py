@@ -413,7 +413,7 @@ _EXTRACTION = sql.SQL(
            -- Le libellé seul ferait deux nœuds pour « Science-Fiction » et
            -- « Science Fiction » le jour où TMDB retouche une chaîne.
            (select coalesce(jsonb_agg(jsonb_build_object(
-                       'cle', 'tmdb:' || (g ->> 'id'),
+                       'cle', {prefixe_genre} || (g ->> 'id'),
                        'nom', g ->> 'name')), '[]'::jsonb)
             from jsonb_array_elements(coalesce(v.genres, '[]'::jsonb)) g
             where g ->> 'id' is not null
@@ -470,6 +470,11 @@ def requete_extraction(media: Media) -> sql.Composed:
         note=note_ponderee("v"),
         # Les vignettes des livres sont keyées par le pivot — pas d'id TMDB.
         vue_cle=sql.SQL("o.id") if media.pivot_card else sql.SQL("o.id_tmdb"),
+        # Le préfixe de la clé de genre. Les genres d'un livre viennent de
+        # Wikidata (P136), ceux des séries et des films de TMDB : deux
+        # espaces de numérotation qui ne doivent jamais se rencontrer, comme
+        # pour les personnes.
+        prefixe_genre=sql.Literal("wd:") if media.pivot_card else sql.Literal("tmdb:"),
     )
 
 

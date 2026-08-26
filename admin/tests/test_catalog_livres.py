@@ -31,6 +31,10 @@ FACTS_WIKIDATA = {
     "pays": ["CO"],
     "langues": ["es"],
     "auteurs": [{"qid": "Q5878", "nom": "Gabriel García Márquez"}],
+    "genres": [
+        {"qid": "Q1submit", "nom": ""},  # sans libellé : écarté par la projection
+        {"qid": "Q193606", "nom": "réalisme magique"},
+    ],
     "ids": {"wikidata": "Q189378", "openlibrary": "OL27258W"},
 }
 
@@ -420,3 +424,47 @@ async def test_les_titres_wikipedia_entrent_dans_l_index(
         rows = await cur.fetchall()
     doc = construire_doc(rows[0], media.univers)
     assert "Cent ans de solitude" in doc["titres"]
+
+
+async def test_les_genres_du_livre_viennent_de_wikidata(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Un livre n'a pas de genres TMDB : les siens sont le genre littéraire
+    P136 de Wikidata, projeté sous la même forme `[{id, name}]` pour que la
+    grille, le filtre et l'index n'aient rien à savoir de la provenance."""
+    from fiv_admin.catalog import genres_disponibles
+
+    await seed_livre(conn)
+
+    rows, _ = await fetch_cards(conn, CardQuery(lang="fr-FR", media="book"))
+    assert rows[0]["genres"] == ["réalisme magique"], (
+        "le genre sans libellé est écarté : un genre n'existe que par son nom"
+    )
+
+    facettes = await genres_disponibles(conn, "book")
+    assert ("réalisme magique", 1) in [(g["name"], g["count"]) for g in facettes]
+
+    _, retenus = await fetch_cards(
+        conn, CardQuery(lang="fr-FR", media="book", genres=("réalisme magique",))
+    )
+    assert retenus == 1
+
+
+async def test_le_graphe_prefixe_les_genres_de_livre_en_wd(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    """Les genres d'un livre viennent de Wikidata, ceux d'une série de TMDB :
+    deux numérotations qui ne doivent jamais se rencontrer dans le graphe."""
+    from psycopg.rows import dict_row
+
+    from fiv_admin.graphe import construire_oeuvre, parametres_extraction, requete_extraction
+    from fiv_admin.media import MEDIA
+
+    await seed_livre(conn)
+    media = MEDIA["book"]
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(requete_extraction(media), parametres_extraction(media))
+        rows = await cur.fetchall()
+
+    noeud = construire_oeuvre(rows[0], media.univers)
+    assert noeud["genres"] == [{"cle": "wd:Q193606", "nom": "réalisme magique"}]

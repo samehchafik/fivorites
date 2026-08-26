@@ -184,6 +184,7 @@ ORDER BY ?item
 LOOKUP_QID_LIVRE = """
 SELECT ?item ?olid ?sitelinks
        (GROUP_CONCAT(DISTINCT ?auteurPaire; separator="|") AS ?auteurs)
+       (GROUP_CONCAT(DISTINCT ?genrePaire; separator="|") AS ?genres)
        (GROUP_CONCAT(DISTINCT ?langueCode; separator="|") AS ?langues)
        (GROUP_CONCAT(DISTINCT ?paysCode; separator="|") AS ?pays)
        (MIN(?anneePub) AS ?annee)
@@ -201,6 +202,22 @@ WHERE {
     OPTIONAL { ?auteur rdfs:label ?lAr . FILTER(lang(?lAr) = "ar") }
     BIND(CONCAT(STRAFTER(STR(?auteur), "/entity/"), "~", COALESCE(?lEn, ?lAr, ""))
          AS ?auteurPaire)
+  }
+  # Le genre litteraire (P136) — l'equivalent des genres TMDB, et la seule
+  # taxonomie de contenu dont dispose un livre. Mesure du 2026-08-22 sur le
+  # haut du corpus : 90 pour cent des oeuvres francaises le portent, 81 des
+  # espagnoles, 50 des arabes. Les libelles sont pris en francais, anglais en
+  # repli — meme convention que les genres TMDB, collectes en `fr-FR`.
+  #
+  # (Aucun signe pour cent dans ce bloc, ni ailleurs dans cette requete : elle
+  # est assemblee par formatage Python, qui l'interpreterait comme une
+  # specification de format et leverait « not enough arguments ».)
+  OPTIONAL {
+    ?item wdt:P136 ?genre .
+    OPTIONAL { ?genre rdfs:label ?gFr . FILTER(lang(?gFr) = "fr") }
+    OPTIONAL { ?genre rdfs:label ?gEn . FILTER(lang(?gEn) = "en") }
+    BIND(CONCAT(STRAFTER(STR(?genre), "/entity/"), "~", COALESCE(?gFr, ?gEn, ""))
+         AS ?genrePaire)
   }
   OPTIONAL { ?item wdt:P407 ?langueItem . ?langueItem wdt:P218 ?langueCode }
   OPTIONAL { ?item wdt:P495 ?paysItem . ?paysItem wdt:P297 ?paysCode }
@@ -365,7 +382,7 @@ def lire_lookup_lot(payload: dict[str, Any] | None) -> dict[int, dict[str, Any]]
 # Les champs agrégés par GROUP_CONCAT dans les requêtes de lookup — séries,
 # films et livres confondus : un champ absent d'une réponse est simplement
 # ignoré.
-_CHAMPS_GROUPES = ("pays", "langues", "tournage", "action", "auteurs")
+_CHAMPS_GROUPES = ("pays", "langues", "tournage", "action", "auteurs", "genres")
 
 
 def canonicaliser(payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -433,6 +450,14 @@ def lire_lookup_livre(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         auteur_qid, _, nom = paire.partition("~")
         if auteur_qid.startswith("Q"):
             auteurs.append({"qid": auteur_qid, "nom": nom or None})
+    # Un genre sans libellé n'est pas affichable : contrairement à un auteur,
+    # dont le QID reste une identité utile au graphe, un genre n'existe que
+    # par son nom. On l'écarte.
+    genres = []
+    for paire in liste("genres"):
+        genre_qid, _, nom = paire.partition("~")
+        if genre_qid.startswith("Q") and nom:
+            genres.append({"qid": genre_qid, "nom": nom})
     annee = champ("annee")
     sitelinks = champ("sitelinks")
     return {
@@ -440,6 +465,7 @@ def lire_lookup_livre(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         "olid": champ("olid") or None,
         "sitelinks": int(sitelinks) if sitelinks.isdigit() else None,
         "auteurs": auteurs,
+        "genres": genres,
         "langues": liste("langues"),
         "pays": liste("pays"),
         "annee": int(annee) if annee.lstrip("-").isdigit() and int(annee) > 0 else None,

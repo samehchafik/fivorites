@@ -115,6 +115,12 @@ Le contrat change de nature pour cet univers, et l'admin le sait par
   l'ordre par lequel le crawler les fait entrer. L'échelle n'est pas celle de
   TMDB (unités à deux cents contre des centaines), ce qui est sans
   conséquence — la grille trie à l'intérieur d'un univers, jamais entre deux ;
+- **les genres viennent de Wikidata (P136)**, pas de TMDB : `facts.genres`
+  porte `[{qid, nom}]`, la projection les rend sous la forme TMDB
+  `[{id, name}]` — la grille, le filtre et l'index ne savent donc rien de la
+  provenance. Le graphe, lui, préfixe la clé en `wd:` : deux numérotations
+  qui ne se rencontrent jamais. Couverture mesurée le 2026-08-22 sur le haut
+  du corpus : 90 % en français, 81 % en espagnol, 50 % en arabe ;
 - **les traductions affichées sont les langues d'édition Open Library**
   (`facts.editions.par_langue`), la donnée que l'univers existe pour porter ;
 - le pivot gagne `id_openlibrary`, et `facts` deux clés (`auteurs`,

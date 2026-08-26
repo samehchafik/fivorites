@@ -131,6 +131,7 @@ inventée. Produit exclusivement par `normalize.py`.
 | `episodes` | {total, dates, resumes} | TVmaze, TMDB |
 | `auteurs` | [{qid?, nom?}] | Wikidata (P50) — livres |
 | `sitelinks` | int | Wikidata — livres, le proxy de popularité |
+| `genres` | [{qid, nom}] | Wikidata (P136) — livres, libellés fr |
 | `editions` | {par_langue, total, sans_langue, tronque} | Open Library — livres |
 | `ids` | {tmdb?, imdb?, wikidata?, tvmaze?, openlibrary?} | toutes |
 

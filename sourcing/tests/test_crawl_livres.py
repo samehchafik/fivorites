@@ -9,6 +9,8 @@ repli par titre fonctionne quand Wikidata ne porte pas P648.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 import pytest
 import respx
@@ -233,3 +235,26 @@ def test_la_recherche_saute_les_editions_orphelines():
 def test_l_edition_p648_remonte_a_son_work():
     assert openlibrary.work_de_l_edition({"works": [{"key": "/works/OL27258W"}]}) == "OL27258W"
     assert openlibrary.work_de_l_edition({"title": "orpheline"}) is None
+
+
+def test_aucune_requete_sparql_ne_porte_de_pourcent_libre():
+    """Les requêtes sont assemblées par formatage `%` de Python : un signe
+    pour cent isolé — dans un commentaire, typiquement — y devient une
+    spécification de format et fait échouer la collecte entière sur
+    « not enough arguments for format string ». Constaté le 2026-08-22 en
+    ajoutant les genres ; le message ne dit pas où chercher, d'où ce test.
+    """
+    from fiv_sourcing.sources import wikidata as w
+
+    motifs = {
+        "LOOKUP": w.LOOKUP,
+        "LOOKUP_LOT": w.LOOKUP_LOT,
+        "LOOKUP_QID": w.LOOKUP_QID,
+        "LOOKUP_QID_LIVRE": w.LOOKUP_QID_LIVRE,
+        "SWEEP": w.SWEEP,
+        "SWEEP_LIVRES": w.SWEEP_LIVRES,
+    }
+    for nom, motif in motifs.items():
+        # Un `%` valide est suivi de `(cle)s` ou `(cle)d`, ou doublé.
+        restant = re.sub(r"%\([a-z_]+\)[sd]|%%", "", motif)
+        assert "%" not in restant, f"{nom} porte un signe pour cent isolé"
