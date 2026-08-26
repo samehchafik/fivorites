@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { chargerSuggestions } from './api'
-import { CarteOeuvre } from './CarteOeuvre'
+import { PileSuggestions } from './PileSuggestions'
 import { TYPE_LABELS, type Statut, type Suggestion, type UniversSlug } from './types'
 
 // Les sources du moteur ne disent pas la même chose, et le visiteur doit
@@ -53,15 +53,12 @@ function expliquer(suggestion: Suggestion): string {
 
 export function Suggestions({
   univers,
-  statuts,
   versionSignaux,
   actif,
   onOuvrir,
   onClasser,
-  onDeclasser,
 }: {
   univers: UniversSlug
-  statuts: Record<number, Statut>
   /** Incrémentée à chaque geste de classement — le déclencheur du rechargement. */
   versionSignaux: number
   /** L'onglet est-il celui qu'on regarde ? Le panneau reste monté quand il ne
@@ -69,22 +66,39 @@ export function Suggestions({
   actif: boolean
   onOuvrir: (identifiant: number, oeuvreId: number | null) => void
   onClasser: (oeuvreId: number, univers: UniversSlug, statut: Statut) => void
-  onDeclasser: (oeuvreId: number) => void
 }) {
   const [items, setItems] = useState<Suggestion[]>([])
   const [raison, setRaison] = useState<string | null>(null)
   const [etat, setEtat] = useState<'en-cours' | 'servi' | 'erreur'>('en-cours')
+  // Les classements faits DANS la pile. Ils font monter `versionSignaux`
+  // comme les autres, mais ne doivent pas provoquer de rechargement : la pile
+  // gère sa file elle-même, et refaire la requête à chaque carte jetée
+  // réordonnerait ce qui reste sous la main. On les retranche donc de la
+  // version qu'on compare.
+  const absorbees = useRef(0)
+  // Les demandes de la pile quand elle s'épuise — le seul rechargement
+  // qu'elle déclenche.
+  const [recharges, setRecharges] = useState(0)
   // Ce que la liste affichée reflète déjà. Une référence plutôt qu'un état :
   // elle ne décide d'aucun rendu, elle évite seulement de recharger ce qui
   // est à jour — la mettre en `useState` relancerait l'effet pour rien.
-  const charge = useRef<{ univers: UniversSlug; version: number } | null>(null)
+  const charge = useRef<{
+    univers: UniversSlug
+    version: number
+    recharges: number
+  } | null>(null)
 
   useEffect(() => {
     if (!actif) return
+    // La version « utile » ignore ce que la pile a absorbé : seuls les
+    // classements venus d'ailleurs (l'onglet Recherche, la fiche) justifient
+    // de rejouer la requête.
+    const utile = versionSignaux - absorbees.current
     const dejaVu =
       charge.current !== null &&
       charge.current.univers === univers &&
-      charge.current.version === versionSignaux
+      charge.current.version === utile &&
+      charge.current.recharges === recharges
     if (dejaVu) return
 
     let abandonne = false
@@ -95,7 +109,7 @@ export function Suggestions({
         setItems(reponse.items)
         setRaison(reponse.raison)
         setEtat('servi')
-        charge.current = { univers, version: versionSignaux }
+        charge.current = { univers, version: utile, recharges }
       })
       .catch(() => {
         if (!abandonne) setEtat('erreur')
@@ -103,7 +117,7 @@ export function Suggestions({
     return () => {
       abandonne = true
     }
-  }, [univers, versionSignaux, actif])
+  }, [univers, versionSignaux, actif, recharges])
 
   // Les suggestions déjà classées pendant la consultation restent affichées
   // (avec leur bouton allumé) jusqu'au prochain rechargement : les faire
@@ -129,24 +143,21 @@ export function Suggestions({
         </p>
       )}
 
-      <div className="fivo-liste" aria-busy={etat === 'en-cours'}>
-        {items.map((suggestion) => (
-          <CarteOeuvre
-            key={suggestion.oeuvreId}
-            titre={suggestion.titre}
-            annee={suggestion.annee}
-            type={TYPE_LABELS[univers]}
-            affiche={suggestion.affiche}
-            explication={expliquer(suggestion)}
-            fort={suggestion.corrobore}
-            statutActuel={statuts[suggestion.oeuvreId] ?? null}
-            classable
-            onOuvrir={() => onOuvrir(suggestion.id, suggestion.oeuvreId)}
-            onClasser={(statut) => onClasser(suggestion.oeuvreId, univers, statut)}
-            onDeclasser={() => onDeclasser(suggestion.oeuvreId)}
-          />
-        ))}
-      </div>
+      {items.length > 0 && (
+        <PileSuggestions
+          suggestions={items}
+          type={TYPE_LABELS[univers]}
+          explication={expliquer}
+          onClasser={(oeuvreId, statut) => {
+            // Le geste de la pile est absorbé : il ne doit pas rejouer la
+            // requête et réordonner ce qui reste (voir `absorbees`).
+            absorbees.current += 1
+            onClasser(oeuvreId, univers, statut)
+          }}
+          onOuvrir={onOuvrir}
+          onRecharger={() => setRecharges((tour) => tour + 1)}
+        />
+      )}
     </div>
   )
 }

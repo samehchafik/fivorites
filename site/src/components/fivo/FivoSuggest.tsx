@@ -217,12 +217,10 @@ export default function FivoSuggest({
             >
               <Suggestions
                 univers={univers}
-                statuts={statuts}
                 versionSignaux={versionSignaux}
                 actif={onglet === 'suggestions'}
                 onOuvrir={ouvrir}
                 onClasser={classer}
-                onDeclasser={declasser}
               />
             </div>
           </div>
