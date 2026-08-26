@@ -126,21 +126,22 @@ class FauxGraphe:
 
     def __init__(
         self,
-        voisins: list[dict[str, Any]] | None = None,
         citations: list[dict[str, Any]] | None = None,
         proches: list[dict[str, Any]] | None = None,
+        membres: int = 1000,
     ) -> None:
-        self._voisins = voisins or []
         self._citations = citations or []
         self._proches = proches or []
+        self.membres = membres
         self.vues: list[dict[str, Any]] = []
 
     async def executer(self, cypher: str, **parametres: Any) -> list[dict[str, Any]]:
         self.vues.append({"cypher": cypher, **parametres})
         if "queryNodes" in cypher:
             return self._proches
-        if "count(DISTINCT s)" in cypher:
-            return self._voisins
+        if "count(m)" in cypher:
+            # Le total des membres, dénominateur du taux général.
+            return [{"total": self.membres}]
         return self._citations
 
 
@@ -233,7 +234,21 @@ def proche(oeuvre_id: int, distance: float, graine: int = 1001) -> dict[str, Any
     }
 
 
-def citation(oeuvre_id: int, voisins: int, force: float = 4.0) -> dict[str, Any]:
+def citation(
+    oeuvre_id: int,
+    voisins: int,
+    force: float = 4.0,
+    *,
+    taille: int = 100,
+    citations: int = 50,
+) -> dict[str, Any]:
+    """Une ligne de la requête communautaire.
+
+    `taille` est le voisinage, `citations` la popularité globale de l'œuvre :
+    c'est leur rapport qui décide, pas le compte brut. Avec les valeurs par
+    défaut (100 voisins, 50 citations sur 1 000 membres), une œuvre citée par
+    20 voisins est à 20 % chez les voisins contre 5 % partout, soit ×4.
+    """
     return {
         "oeuvreId": oeuvre_id,
         "idTmdb": oeuvre_id - 1000,
@@ -243,6 +258,8 @@ def citation(oeuvre_id: int, voisins: int, force: float = 4.0) -> dict[str, Any]
         "univers": "series",
         "voisins": voisins,
         "force": force,
+        "taille": taille,
+        "citations": citations,
     }
 
 
@@ -290,18 +307,25 @@ async def test_le_plafond_de_distance_ecarte() -> None:
 
 
 async def test_la_communaute_ne_plafonne_plus_les_autres() -> None:
-    """LE défaut corrigé : la cascade laissait les tops des voisins — arrêtés
-    en 2019 — occuper toutes les places. Ici les deux familles coexistent, et
-    une œuvre très proche par l'empreinte passe devant une œuvre portée par
-    un seul voisin."""
+    """DEUX défauts corrigés d'un coup.
+
+    La cascade laissait les tops des voisins — arrêtés en 2019 — occuper
+    toutes les places : les familles coexistent désormais. Et une œuvre citée
+    chez les voisins au même taux que partout ne dit rien : elle se taît, au
+    lieu d'arriver première comme Grey's Anatomy le faisait sur une graine
+    « Lucifer » (7,4 % chez les fans, 7,9 % partout — mesuré en production).
+    """
     graphe = FauxGraphe(
-        voisins=[{"membreId": 7, "communes": 1}],
-        citations=[citation(3001, voisins=1, force=2.0)],
+        # Citée par 4 voisins sur 100 (4 %) contre 50 sur 1 000 partout
+        # (5 %) : sous-représentée, donc muette — c'est le défaut corrigé.
+        citations=[citation(3001, voisins=4, force=2.0)],
         proches=[proche(2001, 0.1)],
     )
     retenues, _ = await lancer(graphe)
-    assert [s.oeuvre_id for s in retenues] == [2001, 3001]
-    assert {s.source for s in retenues} == {"proche", "voisins"}
+    # Seule l'œuvre proche par l'empreinte reste : la sous-représentée n'a
+    # versé aucun apport.
+    assert [s.oeuvre_id for s in retenues] == [2001]
+    assert retenues[0].source == "proche"
 
 
 async def test_la_corroboration_l_emporte() -> None:
@@ -309,8 +333,7 @@ async def test_la_corroboration_l_emporte() -> None:
     devant une œuvre très proche que personne ne cite. C'est la demande :
     deux savoirs indépendants valent mieux qu'un seul très confiant."""
     graphe = FauxGraphe(
-        voisins=[{"membreId": 7, "communes": 2}],
-        citations=[citation(2002, voisins=5, force=5.0)],
+        citations=[citation(2002, voisins=30, force=5.0)],
         proches=[proche(2001, 0.15), proche(2002, 0.9)],
     )
     retenues, _ = await lancer(graphe)
@@ -322,15 +345,15 @@ async def test_la_corroboration_l_emporte() -> None:
 async def test_la_communaute_seule_reste_possible() -> None:
     """Une œuvre que rien ne rapproche du contenu mais que six voisins citent
     doit pouvoir entrer : le savoir communautaire garde sa voix propre."""
-    graphe = FauxGraphe(
-        voisins=[{"membreId": 7, "communes": 3}],
-        citations=[citation(3001, voisins=6, force=5.0)],
-    )
+    graphe = FauxGraphe(citations=[citation(3001, voisins=30, force=5.0)])
     retenues, _ = await lancer(graphe)
     assert [s.oeuvre_id for s in retenues] == [3001]
-    assert retenues[0].voisins == 6
-    # L'apport plafonne à APPORT_COMMUNAUTE : le plus cité de la fournée sert
-    # d'échelle, jamais un compte brut.
+    assert retenues[0].voisins == 30
+    # 30 voisins sur 100 (30 %) contre 50 citations sur 1 000 membres (5 %) :
+    # six fois plus souvent que la moyenne. C'est un signal, et il est nommé.
+    assert retenues[0].surrepresentation == pytest.approx(6.0)
+    # L'apport sature au repère : au-delà, « six fois » et « dix fois » ne se
+    # distinguent plus utilement.
     assert retenues[0].score == pytest.approx(APPORT_COMMUNAUTE, abs=0.01)
 
 

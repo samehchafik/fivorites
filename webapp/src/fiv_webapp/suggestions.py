@@ -85,10 +85,21 @@ MULTIPLICATEUR_CORROBORATION = 1.8
 
 # --- Les plafonds ----------------------------------------------------------
 
-# Les voisins retenus. Un voisin à une œuvre commune, il y en a des milliers
-# et ils ne disent rien ; on garde ceux qui partagent le plus, et ce plafond
-# borne aussi la traversée — une œuvre populaire est citée par 13 817 membres.
-VOISINS_MAX = 50
+# Le nombre de voisins qu'il faut pour qu'un rapport veuille dire quelque
+# chose. Trois : en dessous, la sur-représentation se calcule sur du bruit —
+# une œuvre citée par un seul voisin et par un seul membre au monde
+# afficherait un rapport énorme sans rien prouver.
+VOISINS_MINIMUM = 3
+
+# Le seuil en dessous duquel la communauté se taît : une œuvre citée chez les
+# voisins au même taux que partout ne dit rien de vos goûts. 1,2 laisse passer
+# ce qui est franchement plus fréquent, pas ce qui l'est marginalement.
+SURREPRESENTATION_MINIMUM = 1.2
+
+# Le repère de saturation. Au-delà, « trois fois plus souvent » et « dix fois
+# plus souvent » ne se distinguent plus utilement, et les grands rapports sont
+# ceux des œuvres rares, donc les moins solides.
+SURREPRESENTATION_REPERE = 4.0
 
 # La liste rendue au composant : une page de cartes, pas un catalogue.
 SUGGESTIONS_MAX = 24
@@ -113,32 +124,44 @@ DISTANCE_MAX = 2.0
 GENRES_PAR_GRAINE = 3
 PERSONNES_PAR_GRAINE = 6
 
-# Le voisinage : qui partage le plus de graines avec le visiteur. La première
-# étape est bornée par $voisinsMax, et c'est elle qui protège des supernœuds —
-# la suite ne traverse plus que cinquante membres.
+# La communauté, en UNE traversée : les membres qui citent les graines, ce
+# qu'ils citent d'autre, et — c'est le point — la popularité GLOBALE de chaque
+# candidat.
 #
-# `graines` porte les pivots ; leur poids reste côté Python, où il se lit.
-_CY_VOISINS = """
+# Pourquoi cette forme, mesurée sur la production le 26 août 2026. La version
+# précédente prenait « les 50 membres qui partagent le plus », puis comptait
+# leurs citations. Avec UNE seule graine, tout le monde partage exactement une
+# œuvre : l'ordre `communes DESC, membreId` dégénérait en « les 50 plus petits
+# identifiants » — un échantillon arbitraire de 4 719 fans, dans le cas de
+# Lucifer. Et compter des citations brutes mesure la popularité, pas
+# l'affinité : Grey's Anatomy sortait PREMIÈRE, alors qu'elle est citée par
+# 7,4 % des fans de Lucifer contre 7,9 % de tous les membres — soit une
+# sur-représentation de 0,94, c'est-à-dire une contre-indication.
+#
+# Deux corrections, donc : tout le voisinage plutôt qu'un échantillon, et un
+# classement sur la SUR-REPRÉSENTATION — le taux chez les voisins divisé par
+# le taux général. Sur la même graine, ce classement rend Shadow Hunter
+# (×2,83), Sabrina (×2,40), Teen Wolf (×2,01) : du surnaturel, ce qu'un
+# amateur de Lucifer attend.
+#
+# `count {}` plutôt qu'un second aller-retour : c'est un décompte de degré,
+# que Neo4j lit sans traverser.
+_CY_COMMUNAUTE = """
 MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $graines
 MATCH (s)<-[:FIV_CITE]-(v:FivMembre)
-WITH v, count(DISTINCT s) AS communes
-ORDER BY communes DESC, v.membreId
-LIMIT $voisinsMax
-RETURN v.membreId AS membreId, communes
-"""
-
-# Ce que ces voisins citent et que le visiteur n'a pas classé — restreint à
-# l'univers demandé : l'onglet se regarde univers par univers.
-_CY_CITATIONS_VOISINS = """
-MATCH (v:FivMembre)-[c:FIV_CITE]->(reco:FivOeuvre)
-WHERE v.membreId IN $voisins
-  AND reco.univers = $univers
-  AND NOT reco.oeuvreId IN $exclues
-WITH reco, count(DISTINCT v) AS voisins, avg(6 - coalesce(c.rang, 5)) AS force
+WITH collect(DISTINCT v) AS voisinage
+WITH voisinage, size(voisinage) AS taille
+UNWIND voisinage AS voisin
+MATCH (voisin)-[c:FIV_CITE]->(reco:FivOeuvre)
+WHERE reco.univers = $univers AND NOT reco.oeuvreId IN $exclues
+WITH reco, taille, count(DISTINCT voisin) AS voisins, avg(6 - coalesce(c.rang, 5)) AS force
+WHERE voisins >= $minimum
+WITH reco, taille, voisins, force,
+     count { (reco)<-[:FIV_CITE]-(:FivMembre) } AS citations
 RETURN reco.oeuvreId AS oeuvreId, reco.idTmdb AS idTmdb, reco.titre AS titre,
        reco.annee AS annee, reco.affiche AS affiche, reco.univers AS univers,
-       voisins, force
-ORDER BY voisins DESC, force DESC, reco.oeuvreId
+       voisins, force, citations, taille
+ORDER BY (1.0 * voisins / taille) / (1.0 * citations / $membres) DESC, voisins DESC
 LIMIT $limite
 """
 
@@ -213,6 +236,9 @@ class Candidat:
     force: float | None = None
     distance: float | None = None
     communs: list[str] = field(default_factory=list)
+    # Combien de fois plus souvent les voisins citent cette œuvre que la base
+    # entière. C'est ce qui distingue un signal d'une popularité.
+    surrepresentation: float | None = None
 
     def verser(self, source: str, apport: float) -> None:
         """Ajoute un apport. Le plus fort gagne quand une source parle deux
@@ -236,6 +262,19 @@ class Candidat:
     def score(self) -> float:
         total = sum(self.apports.values())
         return total * MULTIPLICATEUR_CORROBORATION if self.corrobore else total
+
+    @property
+    def retenu(self) -> bool:
+        """A-t-il reçu le moindre apport ?
+
+        Un candidat peut être CRÉÉ sans en recevoir : la communauté note ce
+        qu'elle sait d'une œuvre (titre, affiche, voisins) puis se taît si
+        elle est sous-représentée — l'œuvre reste alors candidate pour une
+        source de contenu, mais n'est pas une suggestion en soi. Sans ce
+        garde-fou, une telle carte partait au classement sans score, et
+        `source_dominante` tombait sur un `max()` vide.
+        """
+        return bool(self.apports)
 
     @property
     def source_dominante(self) -> str:
@@ -264,6 +303,7 @@ class Suggestion:
     force: float | None = None
     distance: float | None = None
     communs: list[str] = field(default_factory=list)
+    surrepresentation: float | None = None
     # Le contenu et la communauté sont-ils d'accord ? Le front le dit, parce
     # que c'est la suggestion la plus solide qu'on sache produire.
     corrobore: bool = False
@@ -289,6 +329,7 @@ class Suggestion:
             force=candidat.force,
             distance=candidat.distance,
             communs=candidat.communs,
+            surrepresentation=candidat.surrepresentation,
             corrobore=candidat.corrobore,
             score=round(candidat.score, 3),
         )
@@ -306,6 +347,7 @@ class Suggestion:
             "force": self.force,
             "distance": self.distance,
             "communs": self.communs,
+            "surrepresentation": self.surrepresentation,
             "corrobore": self.corrobore,
         }
 
@@ -484,15 +526,37 @@ class SourceEmpreinte:
 class SourceCommunaute:
     """Les membres qui citent les graines, et ce qu'ils citent d'autre.
 
-    Le savoir de la V1 — 66 878 positions de tops — et sa limite : **il
-    s'arrête en 2019**. Il ne peut donc rien dire d'une œuvre récente, et c'est
-    la raison pour laquelle il n'est plus l'étage qui remplit la liste mais une
-    source parmi trois. Là où il parle, en revanche, il parle bien : c'est lui
-    qui déclenche la corroboration.
+    Le savoir de la V1 — 66 878 positions de tops, 58 409 membres — et ses
+    deux limites, dont une mesurée le 26 août 2026 sur la production :
+
+    * **il s'arrête en 2019** : il ne peut rien dire d'une œuvre récente, ce
+      qui lui a valu de n'être plus l'étage qui remplit la liste ;
+    * **compter des citations brutes mesure la popularité, pas l'affinité.**
+      Grey's Anatomy sortait première sur une graine « Lucifer », alors
+      qu'elle est citée par 7,4 % des fans de Lucifer contre 7,9 % de tous
+      les membres. La série la plus citée d'une base remonte quelle que soit
+      la graine, et une contre-indication passait pour une recommandation.
+
+    D'où le classement par **sur-représentation** : le taux chez les voisins
+    divisé par le taux général. Un plancher de voisins l'accompagne, parce
+    qu'un rapport calculé sur deux citations ne mesure rien.
     """
 
     def __init__(self, graphe: Graphe) -> None:
         self._graphe = graphe
+        self._membres: int | None = None
+
+    async def _total_membres(self) -> int:
+        """Le nombre de membres du graphe, lu une fois par instance.
+
+        Il sert de dénominateur au taux général. Une valeur figée dans le code
+        périmerait au premier import de membres ; un décompte par requête de
+        suggestion serait un balayage de label de trop.
+        """
+        if self._membres is None:
+            lignes = await self._graphe.executer("MATCH (m:FivMembre) RETURN count(m) AS total")
+            self._membres = int(lignes[0]["total"]) if lignes else 1
+        return max(1, self._membres)
 
     async def verser(
         self,
@@ -502,26 +566,18 @@ class SourceCommunaute:
         exclues: list[int],
         candidats: dict[int, Candidat],
     ) -> None:
-        voisins = await self._graphe.executer(
-            _CY_VOISINS,
-            graines=[graine.oeuvre_id for graine in graines],
-            voisinsMax=VOISINS_MAX,
-        )
-        if not voisins:
-            return
+        membres = await self._total_membres()
         lignes = await self._graphe.executer(
-            _CY_CITATIONS_VOISINS,
-            voisins=[voisin["membreId"] for voisin in voisins],
+            _CY_COMMUNAUTE,
+            graines=[graine.oeuvre_id for graine in graines],
             univers=univers.interne,
             exclues=exclues,
+            minimum=VOISINS_MINIMUM,
+            membres=membres,
             limite=CANDIDATS_PAR_SOURCE,
         )
         if not lignes:
             return
-        # Le plus cité sert d'échelle : l'apport est relatif au meilleur de la
-        # fournée, jamais un compte brut — dix voisins sur un catalogue de
-        # niche ne valent pas dix voisins sur un feuilleton.
-        plafond = max(int(ligne["voisins"]) for ligne in lignes) or 1
         for ligne in lignes:
             oeuvre_id = ligne["oeuvreId"]
             candidat = candidats.setdefault(oeuvre_id, Candidat(oeuvre_id=oeuvre_id))
@@ -533,12 +589,29 @@ class SourceCommunaute:
             candidat.voisins = int(ligne["voisins"])
             force = ligne.get("force")
             candidat.force = round(float(force), 2) if force is not None else None
-            # Le nombre de voisins d'abord, leur rang moyen ensuite : une œuvre
-            # portée par six membres vaut mieux qu'une portée par un, et une
-            # œuvre citée en tête de top vaut mieux que la même citée en queue.
-            part_voisins = candidat.voisins / plafond
+
+            taille = max(1, int(ligne["taille"]))
+            citations = max(1, int(ligne["citations"]))
+            # La sur-représentation : combien de fois plus souvent cette œuvre
+            # est citée chez les voisins que dans la base entière. 1,0 = pas
+            # de signal, en dessous = une contre-indication.
+            surrepresentation = (candidat.voisins / taille) / (citations / membres)
+            candidat.surrepresentation = round(surrepresentation, 2)
+            # En dessous du seuil, l'apport est nul : l'œuvre est là parce
+            # qu'elle est populaire, pas parce qu'elle vous ressemble. Elle
+            # reste candidate si une source de CONTENU la porte.
+            if surrepresentation < SURREPRESENTATION_MINIMUM:
+                continue
+            # L'apport croît avec la sur-représentation, en saturant : au-delà
+            # du repère, « beaucoup plus souvent » ne se distingue plus utilement
+            # de « énormément plus souvent », et un rapport calculé sur peu de
+            # citations est bruité.
+            confiance = min(
+                1.0,
+                math.log(1 + surrepresentation) / math.log(1 + SURREPRESENTATION_REPERE),
+            )
             part_rang = (candidat.force or 3.0) / 5.0
-            candidat.verser("voisins", APPORT_COMMUNAUTE * part_voisins * part_rang)
+            candidat.verser("voisins", APPORT_COMMUNAUTE * confiance * part_rang)
 
 
 class Moteur:
@@ -604,7 +677,7 @@ class Moteur:
         )
 
         retenus = sorted(
-            candidats.values(),
+            (candidat for candidat in candidats.values() if candidat.retenu),
             # Le score, puis le pivot : sans ce départage, deux œuvres à
             # égalité changeraient de place d'un appel à l'autre.
             key=lambda candidat: (-candidat.score, candidat.oeuvre_id),

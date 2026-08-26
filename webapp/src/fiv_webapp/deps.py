@@ -52,7 +52,11 @@ def obtenir_signaux(request: Request) -> Signaux:
 
 
 def obtenir_graphe(request: Request) -> Graphe | None:
-    return request.app.state.graphe
+    """Le graphe, ou `None`. `getattr` et non un accès direct : il est
+    facultatif par conception (sans `NEO4J_PASSWORD`, il n'y en a pas), et une
+    lecture qui lèverait sur son absence transformerait une dégradation prévue
+    en erreur 500."""
+    return getattr(request.app.state, "graphe", None)
 
 
 RechercheDep = Annotated[Recherche, Depends(obtenir_recherche)]

@@ -43,7 +43,11 @@ webapp/vendor/
 webapp/.venv/
 webapp/.pytest_cache/
 webapp/.ruff_cache/
-webapp/.env
+# `.env*` et non `.env` : un `.env.prod` porteur d'identifiants de
+# production ne doit pas pouvoir entrer dans un commit par un `git add -A`.
+# Le motif exact laissait passer toutes les variantes.
+webapp/.env*
+!webapp/.env.example
 site/vendor/
 site/node_modules/
 site/.astro/

@@ -58,7 +58,17 @@ async def recherche(
             "encore": False,
         }
 
-    choisis = [valeur for valeur in (filtres or []) if valeur.strip()]
+    # Les valeurs cochées, par dimension, résolues en champs d'index : c'est
+    # ici que « plateformes » devient « plateformes_fr » — le client envoie la
+    # dimension, le serveur sait où elle vit. Une dimension que cet univers ne
+    # porte pas est ignorée : la liste est un contrat que le client découvre.
+    choisis: dict[str, list[str]] = {}
+    for champ, valeurs in (("genres", genres), ("plateformes", plateformes)):
+        dimension = univers.dimension(champ)
+        propres = [valeur for valeur in (valeurs or []) if valeur.strip()]
+        if dimension and propres:
+            choisis[dimension.champ_index(retenue)] = propres
+
     depuis = (page - 1) * taille
 
     trouvee = await moteur.page(
@@ -108,7 +118,7 @@ async def recherche(
 
 
 @router.get("/filtres")
-async def filtres(
+async def dimensions_de_filtre(
     moteur: RechercheDep,
     univers: UniversDep,
     langue: Annotated[str | None, Query(max_length=10)] = None,
