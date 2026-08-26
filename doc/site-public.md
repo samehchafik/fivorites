@@ -145,8 +145,16 @@ de l'admin. Ce qui a changé depuis la première version :
   « سيد الخواتم » s'indexait en `الخواتم` et que taper `خواتم` ne trouvait
   rien.
 * **Le titre affiché suit la langue demandée**, et il vient de l'index : la
-  projection n'en porte qu'un, celui de la collecte. Le synopsis, lui, reste
-  français — limite connue.
+  projection n'en porte qu'un, celui de la collecte.
+* **Le synopsis descend une cascade** : la langue demandée, puis l'anglais,
+  puis la racine (collectée en `fr-FR`). L'anglais au milieu et pas en
+  dernier, parce que c'est le cas courant — mesuré en lecture seule sur la
+  production, sur 500 séries échantillonnées, 334 n'ont aucun synopsis à la
+  racine et 325 d'entre elles en ont un en anglais. C'est le « pas de
+  description » constaté, et une fiche muette faisait conclure à un catalogue
+  vide. La langue retenue part dans la réponse (`synopsisLangue`) et la fiche
+  la mentionne : un texte anglais servi sans le dire passerait pour une
+  traduction.
 * **Les filtres** sont peuplés par une agrégation sur l'index, donc par ce que
   le catalogue contient vraiment. La dimension s'adapte : genres pour les
   séries et les films, genres **et plateformes** pour eux (un livre ne se
@@ -247,9 +255,5 @@ ils tiennent.
   (import V1), et l'app React « connectée » complète.
 * **BD et musiques** : entreront par `webapp/src/fiv_webapp/univers.py` et
   une entrée de contenu — nulle part ailleurs.
-* **Le synopsis dans la langue demandée** : il reste français. Mesuré sur la
-  production : 334 séries sur 500 échantillonnées n'ont pas de synopsis à la
-  racine, et 325 d'entre elles en ont un en anglais — la cascade langue →
-  anglais → racine est le prochain geste.
 * **Le sitemap et les pages de taxonomie SEO** (par origine notamment — voir
   `doc/etude-couverture-marche-arabe.md` §4) : la structure Astro les attend.

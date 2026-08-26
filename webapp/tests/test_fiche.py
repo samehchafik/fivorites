@@ -189,3 +189,38 @@ class TestParametresCredits:
         assert "department" in series["p_crew"]
         assert "aggregate_credits" not in films["p_cast_agg"]
         assert '@.job == "Director"' in films["p_crew"]
+
+
+class TestSynopsis:
+    """La cascade du synopsis : la langue demandée, puis l'anglais, puis la
+    racine — et la langue retenue est dite."""
+
+    def test_la_langue_demandee_passe_devant(self) -> None:
+        texte, langue = Fiches()._synopsis(
+            {
+                "traductions": [{"overview": "En français"}],
+                "traductions_en": [{"overview": "In English"}],
+                "synopsis": "La racine",
+            },
+            "fr",
+        )
+        assert (texte, langue) == ("En français", "fr")
+
+    def test_sans_traduction_ni_racine_l_anglais_sauve_la_fiche(self) -> None:
+        """Le cas courant : 334 séries sur 500 n'ont pas de synopsis racine, et
+        325 d'entre elles en ont un en anglais (mesuré sur la production)."""
+        texte, langue = Fiches()._synopsis(
+            {"traductions": [], "traductions_en": [{"overview": "In English"}], "synopsis": None},
+            "ar",
+        )
+        assert (texte, langue) == ("In English", "en")
+
+    def test_un_champ_vide_n_efface_pas_le_texte_qu_on_a(self) -> None:
+        texte, langue = Fiches()._synopsis(
+            {"traductions": [{"overview": "   "}], "traductions_en": [], "synopsis": "La racine"},
+            "es",
+        )
+        assert (texte, langue) == ("La racine", "fr")
+
+    def test_rien_nulle_part_ne_leve_pas(self) -> None:
+        assert Fiches()._synopsis({}, "fr") == (None, None)

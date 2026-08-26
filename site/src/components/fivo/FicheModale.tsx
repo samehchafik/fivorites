@@ -163,9 +163,21 @@ export function FicheModale({
 
           <div className="fiche-contenu">
             {fiche.synopsis && (
-              <p className="fiche-synopsis" dir="auto">
-                {fiche.synopsis}
-              </p>
+              <>
+                <p className="fiche-synopsis" dir="auto">
+                  {fiche.synopsis}
+                </p>
+                {/* Le serveur retombe sur l'anglais quand la langue demandée
+                    n'a pas de résumé : le taire ferait passer un texte
+                    anglais pour une traduction. */}
+                {fiche.synopsisLangue && fiche.synopsisLangue !== langue && (
+                  <p className="fiche-synopsis-source">
+                    {t.dit('fiche.synopsis_autre_langue', {
+                      langue: t.dit(`langue.${fiche.synopsisLangue}` as 'langue.en'),
+                    })}
+                  </p>
+                )}
+              </>
             )}
 
             {fiche.realisation.length > 0 && (

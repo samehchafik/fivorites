@@ -1832,3 +1832,13 @@
     top: 36%;
   }
 }
+
+/* La langue du résumé, quand ce n'est pas celle demandée — discret mais
+   présent : un texte anglais présenté sans mention passerait pour une
+   traduction qui n'existe pas. */
+.fiche-synopsis-source {
+  margin: -0.4rem 0 0.9rem;
+  font-size: 0.76rem;
+  font-style: italic;
+  color: var(--texte-doux-sur-sombre, #b9b9b9);
+}

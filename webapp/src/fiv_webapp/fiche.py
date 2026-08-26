@@ -244,6 +244,10 @@ OFFRES = (
 
 # Le pays dont on lit la disponibilité, par langue — la même correspondance
 # que l'index (`fiv_admin.search.PAYS_DE_LANGUE`).
+# La langue dans laquelle les payloads TMDB ont été collectés : c'est celle du
+# synopsis « racine », le dernier recours de la cascade.
+LANGUE_COLLECTE = "fr"
+
 PAYS_DE_LANGUE = {"fr": "FR", "en": "US", "es": "ES", "ar": "SA"}
 
 
@@ -261,6 +265,11 @@ class Fiche:
     accroche: str | None = None
     annee: int | None = None
     synopsis: str | None = None
+    # La langue du synopsis servi. Elle peut différer de celle demandée : la
+    # cascade retombe sur l'anglais quand rien n'existe dans la langue, et le
+    # front le dit plutôt que de faire passer un texte anglais pour une
+    # traduction.
+    synopsis_langue: str | None = None
     affiche: str | None = None
     fond: str | None = None
     genres: list[str] = field(default_factory=list)
@@ -295,6 +304,7 @@ class Fiche:
             "accroche": self.accroche,
             "annee": self.annee,
             "synopsis": self.synopsis,
+            "synopsisLangue": self.synopsis_langue,
             "affiche": self.affiche,
             "fond": self.fond,
             "genres": self.genres,
@@ -359,6 +369,19 @@ _FICHE_TMDB = """
                    coalesce(r.payload -> 'translations' -> 'translations', '[]'::jsonb)) tr
                where tr ->> 'iso_639_1' = %(langue)s
            ), '[]'::jsonb)                                                  as traductions,
+           -- L'ANGLAIS, systématiquement, comme second recours. Mesuré en
+           -- lecture seule sur la production : sur 500 séries échantillonnées,
+           -- 334 n'ont aucun synopsis à la racine — et 325 d'entre elles en
+           -- ont un en anglais. Sans cette colonne, deux fiches sur trois
+           -- s'ouvraient sans une ligne de résumé alors que le texte dormait
+           -- dans le même payload.
+           coalesce((
+               select jsonb_agg(tr -> 'data')
+               from jsonb_array_elements(
+                   coalesce(r.payload -> 'translations' -> 'translations', '[]'::jsonb)) tr
+               where tr ->> 'iso_639_1' = 'en'
+                 and nullif(btrim(coalesce(tr -> 'data' ->> 'overview', '')), '') is not null
+           ), '[]'::jsonb)                                                  as traductions_en,
            -- Où regarder, dans le pays de la langue. TMDB en porte une
            -- centaine ; les envoyer tous ferait transiter un catalogue
            -- mondial pour afficher trois logos.
@@ -526,6 +549,30 @@ class Fiches:
             )
         return sorted(retenus, key=lambda episode: episode.numero)
 
+    def _synopsis(self, ligne: dict[str, Any], langue: str) -> tuple[str | None, str | None]:
+        """Le synopsis à servir, et la langue dans laquelle il est écrit.
+
+        La cascade : **la langue demandée, puis l'anglais, puis la racine**
+        (collectée en `fr-FR`). L'anglais au milieu et pas en dernier parce que
+        c'est le cas courant — mesuré en lecture seule sur la production, sur
+        500 séries échantillonnées, 334 n'ont aucun synopsis à la racine et 325
+        d'entre elles en ont un en anglais. Une fiche muette est ce qui faisait
+        conclure à un catalogue vide.
+
+        La langue retenue est rendue avec le texte : afficher un résumé anglais
+        sans le dire serait le faire passer pour une traduction.
+        """
+        candidats = (
+            (((ligne.get("traductions") or [{}])[0] or {}).get("overview"), langue),
+            (((ligne.get("traductions_en") or [{}])[0] or {}).get("overview"), "en"),
+            (ligne.get("synopsis"), LANGUE_COLLECTE),
+        )
+        for texte, code in candidats:
+            propre = (texte or "").strip()
+            if propre:
+                return propre, code
+        return None, None
+
     # --- séries et films ----------------------------------------------------
 
     async def _tmdb(
@@ -575,6 +622,7 @@ class Fiches:
         traduction = (ligne.get("traductions") or [{}])[0] or {}
         titre_traduit = (traduction.get("name") or traduction.get("title") or "").strip()
         synopsis_traduit = (traduction.get("overview") or "").strip()
+        synopsis, synopsis_langue = self._synopsis(ligne, langue)
         return Fiche(
             id=identifiant,
             oeuvre_id=pivot["id"] if pivot else None,
@@ -583,7 +631,8 @@ class Fiches:
             titre_original=ligne.get("titre_original"),
             accroche=ligne.get("accroche"),
             annee=int(sortie[:4]) if sortie else None,
-            synopsis=synopsis_traduit or ligne.get("synopsis"),
+            synopsis=synopsis,
+            synopsis_langue=synopsis_langue,
             affiche=ligne.get("affiche"),
             fond=ligne.get("fond"),
             genres=[

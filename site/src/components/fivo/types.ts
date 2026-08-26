@@ -127,6 +127,10 @@ export interface Fiche {
   accroche: string | null
   annee: number | null
   synopsis: string | null
+  /** La langue du synopsis servi. Elle peut différer de celle demandée : la
+   *  cascade du serveur retombe sur l'anglais quand rien n'existe dans la
+   *  langue (le cas de deux séries sur trois), et la fiche le dit. */
+  synopsisLangue: string | null
   affiche: string | null
   fond: string | null
   genres: string[]
