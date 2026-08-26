@@ -30,6 +30,22 @@ export interface Signal {
   annee: number | null
 }
 
+/** Une valeur de filtre et son nombre d'œuvres. */
+export interface Facette {
+  valeur: string
+  nombre: number
+}
+
+/** Ce sur quoi cet univers se filtre. La dimension varie — genres pour les
+ *  séries et les films, langues pour les livres, qui n'ont aucun genre en
+ *  base — et le front n'en sait rien d'avance : il affiche ce qu'on lui
+ *  répond, libellé compris. */
+export interface Filtres {
+  dimension: string
+  libelle: string
+  valeurs: Facette[]
+}
+
 export interface Personne {
   nom: string
   /** Le personnage joué, « Création », « Réalisation » ou « Auteur ». */

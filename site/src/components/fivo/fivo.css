@@ -157,6 +157,95 @@
   font-family: inherit;
 }
 
+/* --- Les filtres (genres, ou langues pour les livres) -------------------- */
+
+.fivo-filtres {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.8rem;
+}
+
+.fivo-filtres-titre {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.85);
+  margin-right: 0.2rem;
+}
+
+/* Sur le carmin : le contour blanc translucide suffit à poser la pastille,
+   et l'état coché se lit d'un aplat blanc — le même vocabulaire que les
+   pilules Recherche / Mes suggestions. */
+.fivo-filtre {
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 1rem;
+  padding: 0.15rem 0.65rem;
+  font-family: inherit;
+  font-size: 0.78rem;
+  color: white;
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.fivo-filtre:hover {
+  border-color: white;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.fivo-filtre.actif {
+  background: white;
+  color: var(--fivorites2, #700031);
+  border-color: white;
+  font-weight: 600;
+}
+
+.fivo-filtre-plus,
+.fivo-filtre-effacer {
+  border-style: dashed;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* --- Le compte et la suite ----------------------------------------------- */
+
+.fivo-compte {
+  margin: 0.9rem 0 0;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.fivo-suite {
+  display: block;
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 0.6rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 1.5rem;
+  background: rgba(0, 0, 0, 0.15);
+  color: white;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.fivo-suite:hover:not(:disabled) {
+  background: white;
+  color: var(--fivorites2, #700031);
+  border-color: white;
+}
+
+.fivo-suite:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 /* --- Les messages d'état ------------------------------------------------- */
 
 .fivo-message {

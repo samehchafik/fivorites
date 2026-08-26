@@ -13,6 +13,7 @@ signal et le graphe manipulent.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -87,10 +88,22 @@ _REPLI_ILIKE = sql.SQL(
     """
     select v.id
     from {vue} v
-    where v.name ilike %(motif)s or v.original_name ilike %(motif)s
+    where (v.name ilike %(motif)s or v.original_name ilike %(motif)s)
+      {clause_filtre}
     order by v.vote_count desc nulls last, v.id
-    limit %(taille)s
+    limit %(taille)s offset %(depuis)s
     """
+)
+
+# Le filtre du repli, par dimension. Les genres vivent dans un jsonb de la
+# projection, les langues des livres dans une colonne jsonb elle aussi : les
+# deux se testent par existence d'un élément, sans index — c'est lent, et
+# c'est acceptable : on est déjà sur le chemin dégradé.
+_FILTRE_JSONB = sql.SQL(
+    """and exists (
+        select 1 from jsonb_array_elements(coalesce(v.{champ}, '[]'::jsonb)) e
+        where coalesce(e ->> 'name', e #>> '{{}}') = any (%(filtres)s)
+    )"""
 )
 
 
@@ -138,13 +151,38 @@ class Cartes:
         return [par_id[i] for i in ids if i in par_id]
 
     async def chercher_sql(
-        self, conn: psycopg.AsyncConnection, univers: Univers, texte: str, *, taille: int
+        self,
+        conn: psycopg.AsyncConnection,
+        univers: Univers,
+        texte: str,
+        *,
+        taille: int,
+        depuis: int = 0,
+        filtres: Sequence[str] = (),
     ) -> list[int]:
-        """Les ids du repli ILIKE — la recherche quand ES ne répond pas."""
+        """Les ids du repli ILIKE — la recherche quand ES ne répond pas.
+
+        Il pagine et filtre comme le chemin normal : « charger plus » et les
+        cases cochées ne doivent pas cesser de fonctionner parce qu'ES tousse.
+        Moins bon, oui — deux champs au lieu de ~45 langues, pas de pertinence
+        — mais jamais menteur.
+        """
+        clause = (
+            _FILTRE_JSONB.format(champ=sql.Identifier(univers.champ_filtre))
+            if filtres
+            else sql.SQL("")
+        )
         async with conn.cursor() as cur:
             await cur.execute(
-                _REPLI_ILIKE.format(vue=sql.Identifier("admin", univers.card_view)),
-                {"motif": f"%{texte}%", "taille": taille},
+                _REPLI_ILIKE.format(
+                    vue=sql.Identifier("admin", univers.card_view), clause_filtre=clause
+                ),
+                {
+                    "motif": f"%{texte}%",
+                    "taille": taille,
+                    "depuis": depuis,
+                    "filtres": list(filtres),
+                },
             )
             return [ligne[0] for ligne in await cur.fetchall()]
 

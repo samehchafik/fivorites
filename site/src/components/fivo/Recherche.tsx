@@ -1,21 +1,27 @@
-// L'onglet Recherche : la frappe débouncée, les cartes en temps réel.
+// L'onglet Recherche : la frappe débouncée, les filtres, les cartes.
 //
 // Le débounce est court (150 ms) et chaque frappe ANNULE la requête
 // précédente (AbortController) : c'est ce qui garantit que la liste affichée
 // correspond toujours au texte du champ, jamais à une réponse en retard.
 //
 // Le panneau **reste monté** quand on regarde les suggestions (voir
-// `FivoSuggest`) : la frappe, les cartes et la position de défilement
-// survivent à la bascule — on retrouve sa recherche là où on l'a laissée.
-// Caché, il ne cherche pas : un univers changé pendant qu'on lit les
+// `FivoSuggest`) : la frappe, les filtres, les cartes et la position de
+// défilement survivent à la bascule — on retrouve sa recherche là où on l'a
+// laissée. Caché, il ne cherche pas : un univers changé pendant qu'on lit les
 // suggestions n'est rattrapé qu'au retour, et une seule fois.
+//
+// La liste se PAGINE. Elle rendait douze cartes sans rien dire de la suite,
+// ce qui laissait croire que le catalogue s'arrêtait là ; elle annonce
+// maintenant son total et se prolonge d'un bouton, en ajoutant à la suite
+// plutôt qu'en remplaçant — on ne perd pas ce qu'on lisait.
 
 import { TextInput } from '@mantine/core'
 import { useEffect, useRef, useState } from 'react'
 
-import { rechercher } from './api'
+import { chargerFiltres, rechercher } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
-import type { Carte, Statut, UniversSlug } from './types'
+import { FiltresGenres } from './FiltresGenres'
+import type { Carte, Facette, Statut, UniversSlug } from './types'
 
 const DEBOUNCE_MS = 150
 const FRAPPE_MIN = 2
@@ -42,41 +48,100 @@ export function Recherche({
   const [texte, setTexte] = useState('')
   const [cartes, setCartes] = useState<Carte[]>([])
   const [etat, setEtat] = useState<'repos' | 'en-cours' | 'servi' | 'erreur'>('repos')
+  const [total, setTotal] = useState(0)
+  const [approche, setApproche] = useState(false)
+  const [encore, setEncore] = useState(false)
+  const [page, setPage] = useState(1)
+  const [suite, setSuite] = useState(false)
+
+  const [filtres, setFiltres] = useState<{ libelle: string; valeurs: Facette[] }>({
+    libelle: '',
+    valeurs: [],
+  })
+  const [choisis, setChoisis] = useState<string[]>([])
+  const [deplie, setDeplie] = useState(false)
+
   // Ce que les cartes affichées reflètent déjà — même rôle que dans
   // `Suggestions` : revenir sur l'onglet ne doit pas rejouer la requête qui
-  // rendrait exactement la liste qui est là.
-  const charge = useRef<{ texte: string; univers: UniversSlug } | null>(null)
+  // rendrait exactement la liste qui est là. Les filtres en font partie : les
+  // cocher est une nouvelle recherche, pas un nouvel affichage.
+  const charge = useRef<{ texte: string; univers: UniversSlug; filtres: string } | null>(null)
 
+  // Les valeurs de filtre de l'univers, chargées une fois par univers. En
+  // échec (ES absent), la barre disparaît : la recherche marche toujours.
+  useEffect(() => {
+    let abandonne = false
+    setChoisis([])
+    setDeplie(false)
+    chargerFiltres(univers)
+      .then((reponse) => {
+        if (!abandonne) setFiltres({ libelle: reponse.libelle, valeurs: reponse.valeurs })
+      })
+      .catch(() => {
+        if (!abandonne) setFiltres({ libelle: '', valeurs: [] })
+      })
+    return () => {
+      abandonne = true
+    }
+  }, [univers])
+
+  // La recherche : première page à chaque changement de frappe, de filtre ou
+  // d'univers ; page suivante quand on demande la suite.
   useEffect(() => {
     const propre = texte.trim()
+    const signature = choisis.join('|')
     if (propre.length < FRAPPE_MIN) {
       setCartes([])
       setEtat('repos')
+      setTotal(0)
+      setEncore(false)
       charge.current = null
       return
     }
     if (!actif) return
-    if (charge.current?.texte === propre && charge.current.univers === univers) return
+    const dejaVu =
+      charge.current?.texte === propre &&
+      charge.current.univers === univers &&
+      charge.current.filtres === signature
+    if (dejaVu && !suite) return
 
+    const demandee = suite ? page + 1 : 1
     setEtat('en-cours')
     const controleur = new AbortController()
     const minuterie = setTimeout(async () => {
       try {
-        const { items } = await rechercher(univers, propre, controleur.signal)
-        setCartes(items)
+        const reponse = await rechercher(univers, propre, {
+          page: demandee,
+          filtres: choisis,
+          signal: controleur.signal,
+        })
+        // On AJOUTE à la suite pour une page suivante, on remplace sinon :
+        // charger plus ne doit pas faire sauter ce qu'on lisait.
+        setCartes((actuelles) =>
+          demandee > 1 ? [...actuelles, ...reponse.items] : reponse.items,
+        )
+        setTotal(reponse.total)
+        setApproche(reponse.totalApproche)
+        setEncore(reponse.encore)
+        setPage(demandee)
         setEtat('servi')
-        charge.current = { texte: propre, univers }
+        charge.current = { texte: propre, univers, filtres: signature }
       } catch {
-        if (!controleur.signal.aborted) {
-          setEtat('erreur')
-        }
+        if (!controleur.signal.aborted) setEtat('erreur')
+      } finally {
+        setSuite(false)
       }
-    }, DEBOUNCE_MS)
+    }, demandee > 1 ? 0 : DEBOUNCE_MS)
     return () => {
       clearTimeout(minuterie)
       controleur.abort()
     }
-  }, [texte, univers, actif])
+  }, [texte, univers, actif, choisis, suite, page])
+
+  const basculer = (valeur: string) =>
+    setChoisis((actuels) =>
+      actuels.includes(valeur) ? actuels.filter((v) => v !== valeur) : [...actuels, valeur],
+    )
 
   return (
     <div>
@@ -92,6 +157,16 @@ export function Recherche({
         autoComplete="off"
       />
 
+      <FiltresGenres
+        libelle={filtres.libelle}
+        valeurs={filtres.valeurs}
+        choisis={choisis}
+        deplie={deplie}
+        onBasculer={basculer}
+        onDeplier={() => setDeplie(true)}
+        onEffacer={() => setChoisis([])}
+      />
+
       {etat === 'repos' && (
         <p className="fivo-message">
           Cherchez les œuvres qui vous ont marqué, puis classez-les : c'est comme ça que FIVO
@@ -104,7 +179,16 @@ export function Recherche({
         </p>
       )}
       {etat === 'servi' && cartes.length === 0 && (
-        <p className="fivo-message">Rien trouvé pour « {texte.trim()} ». Essayez un autre titre ?</p>
+        <p className="fivo-message">
+          Rien trouvé pour « {texte.trim()} »
+          {choisis.length > 0 ? ' avec ces filtres' : ''}. Essayez autrement ?
+        </p>
+      )}
+
+      {cartes.length > 0 && (
+        <p className="fivo-compte">
+          {cartes.length} sur {approche ? `plus de ${total}` : total}
+        </p>
       )}
 
       <div className="fivo-liste" aria-busy={etat === 'en-cours'}>
@@ -129,6 +213,17 @@ export function Recherche({
           />
         ))}
       </div>
+
+      {encore && (
+        <button
+          type="button"
+          className="fivo-suite"
+          disabled={etat === 'en-cours'}
+          onClick={() => setSuite(true)}
+        >
+          {etat === 'en-cours' ? 'Chargement…' : 'Charger plus'}
+        </button>
+      )}
     </div>
   )
 }

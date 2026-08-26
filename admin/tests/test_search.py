@@ -75,6 +75,7 @@ class TestConstruireDoc:
             "univers": "movies",
             "id_tmdb": 42,
             "titres": ["Camp Lazlo"],
+            "titre_principal": ["Camp Lazlo"],
             "original_name": "Camp Lazlo",
             "nom_tri": "camp lazlo",
             "adult": False,
@@ -195,9 +196,36 @@ class TestCorpsRecherche:
         corps = corps_recherche("trone", taille=24, depuis=0)
         clauses = corps["query"]["function_score"]["query"]["bool"]
         assert clauses["filter"] == []
-        assert clauses["should"][0] == {"match": {"titres": {"query": "trone", "operator": "and"}}}
+        # Toutes les langues restent cherchées : c'est ce qui trouve
+        # « Le Trône de fer » en tapant son titre français.
+        assert {"match": {"titres": {"query": "trone", "operator": "and"}}} in clauses["should"]
         # Les documents ne voyagent pas : ES rend des ids, Postgres hydrate.
         assert corps["_source"] is False
+
+    def test_le_titre_principal_domine_les_traductions(self) -> None:
+        """Le classement d'une frappe courte, et la raison d'être du champ.
+
+        Mesuré avant ce boost : « com » rendait « Morangos com Açúcar » et
+        « Conversas com um Assassino » — *com* est une préposition portugaise,
+        et les ~45 langues vivent dans le même champ. Chercher partout reste
+        juste ; c'est le classement qui doit préférer le titre principal.
+        """
+        clauses = corps_recherche("com", taille=12, depuis=0)["query"]["function_score"]["query"][
+            "bool"
+        ]["should"]
+
+        def boost(champ: str) -> float:
+            for clause in clauses:
+                for forme in ("match", "match_phrase"):
+                    if forme in clause and champ in clause[forme]:
+                        return float(clause[forme][champ].get("boost", 1.0))
+            raise AssertionError(f"clause absente : {champ}")
+
+        # La phrase du titre principal au-dessus de tout, ses préfixes
+        # ensuite, et les traductions derrière.
+        assert boost("titre_principal.exact") > boost("titre_principal")
+        assert boost("titre_principal") > boost("titres.exact")
+        assert boost("titres.exact") > boost("titres")
 
     def test_texte_numerique_cherche_aussi_l_id(self) -> None:
         corps = corps_recherche("1399", taille=24, depuis=0)

@@ -27,13 +27,33 @@ async function requete<T>(chemin: string, options: RequestInit = {}): Promise<T>
   return reponse.json() as Promise<T>
 }
 
+export interface PageRecherche {
+  items: Carte[]
+  moteur: string
+  total: number
+  totalApproche: boolean
+  encore: boolean
+  page: number
+}
+
 export function rechercher(
   univers: UniversSlug,
   q: string,
-  signal?: AbortSignal,
-): Promise<{ items: Carte[]; moteur: string }> {
+  options: { page?: number; filtres?: string[]; signal?: AbortSignal } = {},
+): Promise<PageRecherche> {
   const params = new URLSearchParams({ univers, q })
-  return requete(`/recherche?${params}`, { signal })
+  if (options.page && options.page > 1) params.set('page', String(options.page))
+  // Répété plutôt que joint : un genre peut contenir une virgule (« Action &
+  // Adventure » n'en a pas, mais rien ne le garantit), et FastAPI lit
+  // nativement la forme répétée.
+  for (const valeur of options.filtres ?? []) params.append('filtres', valeur)
+  return requete(`/recherche?${params}`, { signal: options.signal })
+}
+
+/** Les filtres disponibles pour cet univers — dimension, libellé, valeurs. */
+export function chargerFiltres(univers: UniversSlug): Promise<Filtres> {
+  const params = new URLSearchParams({ univers })
+  return requete(`/filtres?${params}`)
 }
 
 /** La fiche détaillée. `identifiant` est la clé de la vignette — celle que

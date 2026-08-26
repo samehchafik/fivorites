@@ -31,6 +31,19 @@ class Univers:
     # par un identifiant TMDB. Vrai pour les livres — il n'y a pas de TMDB du
     # livre : la jointure d'identité suit ce drapeau.
     pivot_card: bool = False
+    # Sur quoi cet univers se filtre, et sous quel nom l'annoncer.
+    #
+    # Ce n'est pas la même dimension partout, et ça ne peut pas l'être : les
+    # séries et les films portent les genres de TMDB, les livres n'en ont
+    # AUCUN — l'enrichissement Wikidata ne rend que des auteurs, des langues,
+    # des pays et une année (vérifié en base). Leur proposer une liste de
+    # genres vide serait un filtre en trompe-l'œil ; on leur propose la
+    # langue, qui est la donnée que cet univers existe pour porter.
+    #
+    # Le jour où le crawler collectera P136 (le genre littéraire de Wikidata),
+    # les livres basculeront sur `genres` en changeant ces deux lignes.
+    champ_filtre: str = "genres"
+    label_filtre: str = "Genres"
 
     @property
     def alias_recherche(self) -> str:
@@ -42,7 +55,13 @@ UNIVERS: dict[str, Univers] = {
     "series": Univers(slug="series", label="Séries", interne="series", card_view="tv_card"),
     "films": Univers(slug="films", label="Films", interne="movies", card_view="movie_card"),
     "livres": Univers(
-        slug="livres", label="Livres", interne="livres", card_view="livre_card", pivot_card=True
+        slug="livres",
+        label="Livres",
+        interne="livres",
+        card_view="livre_card",
+        pivot_card=True,
+        champ_filtre="langues",
+        label_filtre="Langues",
     ),
 }
 

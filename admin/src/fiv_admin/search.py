@@ -194,6 +194,28 @@ def definition_index(univers: str) -> dict[str, Any]:
                         }
                     },
                 },
+                # Le titre principal — nom courant et titre original, rien
+                # d'autre. Il existe parce que `titres` a un effet de bord
+                # mesuré : il aplatit ~45 langues, si bien qu'une frappe
+                # courte tombe sur un mot COURANT d'une autre langue. « com »
+                # rendait « Morangos com Açúcar » et « Conversas com um
+                # Assassino » — *com* est une préposition portugaise. Chercher
+                # dans toutes les langues reste juste (c'est ce qui trouve
+                # « Le Trône de fer ») ; c'est le CLASSEMENT qui doit préférer
+                # le titre principal, et ce champ est ce qui le permet.
+                "titre_principal": {
+                    "type": "text",
+                    "analyzer": "titres_index",
+                    "search_analyzer": "titres_recherche",
+                    "norms": False,
+                    "fields": {
+                        "exact": {
+                            "type": "text",
+                            "analyzer": "titres_recherche",
+                            "norms": False,
+                        }
+                    },
+                },
                 "name": {"type": "keyword", "index": False, "doc_values": False},
                 "original_name": {"type": "keyword", "index": False, "doc_values": False},
                 # Le tri alphabétique du parcours : `coalesce(name, original)`
@@ -393,8 +415,17 @@ def corps_recherche(
     )
 
     devrait: list[dict[str, Any]] = [
+        # Le titre principal d'abord, et de loin : c'est lui qu'on cherche
+        # quand on tape trois lettres. Les boosts se lisent comme un ordre —
+        # phrase exacte du titre principal (12), préfixes du titre principal
+        # (8), phrase exacte toutes langues (2), un nom (1,5), préfixes
+        # toutes langues et genres (1). L'écart de 4 entre le titre principal
+        # et les traductions n'est pas décoratif : la note multiplie le
+        # score, un écart plus mince se fait renverser.
+        {"match_phrase": {"titre_principal.exact": {"query": texte, "boost": 12.0}}},
+        {"match": {"titre_principal": {"query": texte, "operator": "and", "boost": 8.0}}},
         {"match": {"titres": {"query": texte, "operator": "and"}}},
-        {"match_phrase": {"titres.exact": {"query": texte, "boost": 3.0}}},
+        {"match_phrase": {"titres.exact": {"query": texte, "boost": 2.0}}},
         # Ceux qui font l'œuvre : un nom d'acteur, de réalisateur ou d'auteur
         # tapé en entier doit rendre sa filmographie — devant les titres qui
         # ne font que commencer pareil, derrière un titre exact.
@@ -947,6 +978,13 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
             titres.append(titre)
     nom_tri = row.get("name") or row.get("original_name") or row.get("nom_inventaire")
 
+    # Le titre principal : le nom courant et l'original, dédupliqués. Pas les
+    # traductions — c'est précisément ce qui l'en distingue.
+    principaux: list[str] = []
+    for titre in (row.get("name"), row.get("original_name"), row.get("nom_inventaire")):
+        if titre and titre not in principaux:
+            principaux.append(titre)
+
     # Les gens : crédits TMDB pour séries et films, auteurs Wikidata pour les
     # livres — les deux colonnes sont exclusives par construction, mais un
     # doublon n'aurait de toute façon aucun effet sur un champ de recherche.
@@ -963,6 +1001,7 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
         "id_tmdb": row["id"],
         "oeuvre_id": row.get("oeuvre_id"),
         "titres": titres or None,
+        "titre_principal": principaux or None,
         "personnes": personnes or None,
         "name": row.get("name"),
         "original_name": row.get("original_name") or row.get("nom_inventaire"),
