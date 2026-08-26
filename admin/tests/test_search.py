@@ -60,6 +60,10 @@ def _ligne(**champs: Any) -> dict[str, Any]:
             "genres",
             "origin_country",
             "titres",
+            "titres_langues",
+            "titres_wiki_langues",
+            "personnes",
+            "auteurs",
         )
     )
     base.update(champs)
@@ -128,6 +132,52 @@ class TestConstruireDoc:
             "series",
         )
         assert doc["personnes"] == ["Emilia Clarke", "Kit Harington", "George R. R. Martin"]
+
+    def test_titres_par_langue(self) -> None:
+        """Chaque langue servie a son champ, et le nom courant — collecté en
+        `fr-FR` — entre dans le français.
+
+        C'est ce qui rend la recherche compréhensible : un francophone tapant
+        « com » ne doit pas recevoir des feuilletons portugais affichés avec
+        leur titre français (mesuré avant ce découpage).
+        """
+        doc = construire_doc(
+            _ligne(
+                id=1399,
+                fiche=True,
+                name="Le Trône de fer",
+                original_name="Game of Thrones",
+                titres_langues={
+                    "en": ["Game of Thrones"],
+                    "es": ["Juego de tronos"],
+                    # Le portugais n'est pas servi : il reste dans le
+                    # fourre-tout `titres`, il n'a pas de champ à lui.
+                    "pt": ["A Guerra dos Tronos"],
+                },
+            ),
+            "series",
+        )
+        assert doc["titres_fr"] == ["Le Trône de fer"]
+        assert doc["titres_en"] == ["Game of Thrones"]
+        assert doc["titres_es"] == ["Juego de tronos"]
+        assert "titres_pt" not in doc
+
+    def test_la_langue_demandee_passe_devant_le_fourre_tout(self) -> None:
+        """Avec une langue, ses titres se cherchent en propre — au-dessus du
+        champ toutes langues, sous le titre principal."""
+        clauses = corps_recherche("com", langue="es-ES", taille=12, depuis=0)["query"][
+            "function_score"
+        ]["query"]["bool"]["should"]
+        champs = [
+            champ
+            for clause in clauses
+            for forme in ("match", "match_phrase")
+            if forme in clause
+            for champ in clause[forme]
+        ]
+        assert "titres_es" in champs
+        assert champs.index("titre_principal") < champs.index("titres_es")
+        assert champs.index("titres_es") < champs.index("titres")
 
     def test_conforme_au_mapping_strict(self) -> None:
         """`dynamic: strict` refuse tout champ inconnu : chaque clé produite

@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -38,6 +38,27 @@ log = logging.getLogger(__name__)
 # Après un échec (connexion refusée, index absent…), ES est écarté pendant ce
 # délai : la recherche retombe sur le SQL sans retenter à chaque frappe.
 DISJONCTEUR_SECONDES = 30.0
+
+# Les langues servies — les mêmes que celles indexées côté admin
+# (`fiv_admin.search.LANGUES`). Chercher dans la langue de qui cherche est ce
+# qui rend le résultat compréhensible : un francophone tapant « com »
+# recevait des feuilletons portugais (*com* y est une préposition) affichés
+# avec leur titre français, et concluait à un bug — à juste titre.
+LANGUES = ("fr", "en", "es", "ar")
+LANGUE_DEFAUT = "fr"
+
+
+def langue_servie(demandee: str | None) -> str:
+    """La langue retenue parmi celles qu'on sert. « fr-CA » donne « fr » ;
+    l'inconnu retombe sur le français, langue du site."""
+    racine = (demandee or "").split("-")[0].lower()
+    return racine if racine in LANGUES else LANGUE_DEFAUT
+
+
+def champ_titres(langue: str) -> str:
+    """Le champ ES des titres d'une langue — même nom que côté admin."""
+    return f"titres_{langue}"
+
 
 # Le total est compté jusque-là, puis annoncé comme « au moins ». Ce qu'on en
 # fait : savoir s'il reste une page à charger. Compter juste au-delà coûterait
@@ -58,6 +79,9 @@ class PageIds:
     total: int
     # Le total est-il un plancher (« au moins N ») plutôt qu'un décompte ?
     tronque: bool = False
+    # Le titre dans la langue demandée, par clé de vignette — vide quand
+    # l'œuvre n'a pas de titre traduit dans cette langue.
+    titres: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +100,7 @@ def corps_recherche(
     *,
     taille: int,
     depuis: int = 0,
+    langue: str = LANGUE_DEFAUT,
     champ_filtre: str = "genres",
     filtres: Sequence[str] = (),
 ) -> dict[str, Any]:
@@ -91,8 +116,14 @@ def corps_recherche(
       est une préposition portugaise. Chercher dans toutes les langues reste
       juste (c'est ce qui trouve « Le Trône de fer ») ; le classement, lui,
       doit préférer le titre sous lequel l'œuvre se connaît ;
+    * **les titres de la langue demandée**, phrase exacte (×6) puis préfixes
+      (×4) — c'est ce qui rend la réponse lisible : on cherche dans la langue
+      de qui cherche, et non dans les quarante-cinq à la fois ;
     * **tous les titres**, phrase exacte (×2) puis préfixes (×1) — la portée
-      multilingue, en second rang. L'écart avec le titre principal est d'un
+      multilingue, en dernier rang : elle sert à retrouver une œuvre dont on
+      ne connaît que le titre dans une langue non servie, jamais à peupler la
+      liste de titres qu'on ne saurait pas lire. L'écart avec le titre
+      principal est d'un
       facteur 4, et pas d'un cheveu : la note bayésienne MULTIPLIE le score,
       elle varie d'environ un facteur 2 d'une œuvre à l'autre, et un écart
       plus mince se faisait renverser par une série étrangère mieux notée —
@@ -129,6 +160,23 @@ def corps_recherche(
                                     }
                                 }
                             },
+                            {
+                                "match_phrase": {
+                                    f"{champ_titres(langue)}.exact": {
+                                        "query": texte,
+                                        "boost": 6.0,
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
+                                    champ_titres(langue): {
+                                        "query": texte,
+                                        "operator": "and",
+                                        "boost": 4.0,
+                                    }
+                                }
+                            },
                             {"match_phrase": {"titres.exact": {"query": texte, "boost": 2.0}}},
                             {"match": {"titres": {"query": texte, "operator": "and"}}},
                             {
@@ -158,9 +206,11 @@ def corps_recherche(
         },
         "from": depuis,
         "size": taille,
-        # Les documents restent chez ES : seuls les `_id` remontent, Postgres
-        # hydrate les cartes — une seule source de vérité pour l'affichage.
-        "_source": False,
+        # Presque rien ne voyage : les `_id`, et le titre dans la langue
+        # demandée. Ce dernier n'existe QUE dans l'index — la projection
+        # d'affichage ne porte qu'une langue, celle de la collecte — et le
+        # demander ici évite d'aller détoaster un payload par carte.
+        "_source": [champ_titres(langue)],
         # Compté, mais pas au-delà : le composant a besoin de savoir s'il
         # reste une page, pas de dénombrer 40 000 réponses. Le total exact
         # d'une frappe vague n'intéresse personne et se paie en balayage.
@@ -293,6 +343,7 @@ class Recherche:
         *,
         taille: int,
         depuis: int = 0,
+        langue: str = LANGUE_DEFAUT,
         filtres: Sequence[str] = (),
     ) -> PageIds | None:
         """Une page de résultats classés, ou `None` si ES ne peut pas répondre
@@ -314,6 +365,7 @@ class Recherche:
                     texte,
                     taille=taille,
                     depuis=depuis,
+                    langue=langue,
                     champ_filtre=univers.champ_filtre,
                     filtres=filtres,
                 ),
@@ -333,8 +385,18 @@ class Recherche:
             return None
         donnees = reponse.json()
         total = int(donnees["hits"]["total"]["value"])
+        champ = champ_titres(langue)
         return PageIds(
             ids=[int(hit["_id"]) for hit in donnees["hits"]["hits"]],
+            # Le titre dans la langue demandée, quand l'œuvre en a un. La
+            # route s'en sert pour remplacer celui de la projection : afficher
+            # un titre français à qui cherche en arabe est ce qui rendait la
+            # liste incompréhensible.
+            titres={
+                int(hit["_id"]): (hit.get("_source") or {}).get(champ, [None])[0]
+                for hit in donnees["hits"]["hits"]
+                if (hit.get("_source") or {}).get(champ)
+            },
             total=total,
             # `gte` : ES a arrêté de compter à TOTAL_MAX. Le composant en
             # déduit « au moins », il ne l'affiche pas comme un décompte.

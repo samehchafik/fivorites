@@ -18,6 +18,7 @@ import { listerSignaux, poserSignal, retirerSignal } from './api'
 import { FicheModale } from './FicheModale'
 import { Recherche } from './Recherche'
 import { Suggestions } from './Suggestions'
+import { LANGUES, LANGUE_LABELS, langueInitiale, retenirLangue, type Langue } from './langue'
 import { UNIVERS_LABELS, type Statut, type UniversSlug } from './types'
 import { theme_fivo } from './theme'
 import '@mantine/core/styles.css'
@@ -40,6 +41,12 @@ export default function FivoSuggest({
   universInitial?: UniversSlug
 }) {
   const [univers, setUnivers] = useState<UniversSlug>(universInitial)
+  // La langue de recherche : celle du navigateur au premier passage, puis
+  // celle qu'on a choisie. Elle décide des titres cherchés ET affichés —
+  // sans elle, une frappe courte ramenait des titres de langues qu'on ne lit
+  // pas, présentés dans une autre encore.
+  const [langue, setLangue] = useState<Langue>('fr')
+
   const [onglet, setOnglet] = useState<Onglet>('recherche')
   const [statuts, setStatuts] = useState<Record<number, Statut>>({})
   // Incrémentée à chaque geste : le signal de rechargement des suggestions.
@@ -47,6 +54,14 @@ export default function FivoSuggest({
   // La fiche ouverte : sa clé de vignette (ce que l'API demande) et son
   // pivot (ce que les boutons manipulent). `null` = rien d'ouvert.
   const [ouverte, setOuverte] = useState<{ id: number; oeuvreId: number | null } | null>(null)
+
+  // La langue est lue après le montage, jamais pendant : la page est rendue à
+  // l'avance (HTML statique) et le navigateur de qui la reçoit n'est pas
+  // connu à ce moment-là. La poser dans l'état initial ferait diverger le
+  // premier rendu du navigateur de celui construit au build.
+  useEffect(() => {
+    setLangue(langueInitiale())
+  }, [])
 
   useEffect(() => {
     listerSignaux()
@@ -129,6 +144,27 @@ export default function FivoSuggest({
               Fivo, notre moteur d'inspiration culturelle, apprend de chaque geste : cherchez,
               classez — et regardez vos suggestions se préciser.
             </p>
+            {/* La langue de recherche. Un `select` natif : quatre valeurs,
+                aucun comportement à inventer, et il se manipule au clavier
+                comme les gens s'y attendent. */}
+            <label className="fivo-langue">
+              <span className="accessibilite">Langue de recherche</span>
+              <select
+                value={langue}
+                onChange={(evenement) => {
+                  const choisie = evenement.currentTarget.value as Langue
+                  setLangue(choisie)
+                  retenirLangue(choisie)
+                }}
+              >
+                {LANGUES.map((code) => (
+                  <option key={code} value={code}>
+                    {LANGUE_LABELS[code]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <div className="fivo-pilules" role="tablist" aria-label="Recherche ou suggestions">
               <UnstyledButton
                 role="tab"
@@ -165,6 +201,7 @@ export default function FivoSuggest({
             >
               <Recherche
                 univers={univers}
+                langue={langue}
                 statuts={statuts}
                 actif={onglet === 'recherche'}
                 onOuvrir={ouvrir}

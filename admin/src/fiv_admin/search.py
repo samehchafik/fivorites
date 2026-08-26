@@ -56,11 +56,33 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from fiv_admin.media import Media
+from fiv_admin.media import MEDIA, Media
 
 log = logging.getLogger(__name__)
 
 SOURCE = "tmdb"
+
+# Les langues que le site public sert, et donc celles dont les titres sont
+# indexés SÉPARÉMENT.
+#
+# Pourquoi séparément : `titres` aplatit ~45 langues dans un champ unique, ce
+# qui rend une frappe courte incompréhensible — un francophone tapant « com »
+# recevait des feuilletons portugais (*com* y est une préposition) affichés
+# avec leur titre français. Chercher dans la langue de qui cherche demande un
+# champ par langue ; le champ fourre-tout reste, en dernier rang, pour qu'un
+# titre collé dans une langue non servie trouve quand même son œuvre.
+LANGUES = ("fr", "en", "es", "ar")
+
+# L'univers interne → son registre. `construire_doc` ne reçoit que le nom de
+# l'univers, et a besoin de savoir si ses vignettes sont keyées par pivot.
+MEDIA_PAR_UNIVERS = {media.univers: media for media in MEDIA.values()}
+
+
+def champ_titres(langue: str) -> str:
+    """Le champ ES des titres d'une langue. Une fonction plutôt qu'un f-string
+    dispersé : c'est le seul endroit où ce nom se fabrique."""
+    return f"titres_{langue}"
+
 
 # Après un échec (connexion refusée, index absent…), ES est écarté pendant ce
 # délai : la grille retombe sur le SQL sans retenter à chaque frappe.
@@ -151,6 +173,34 @@ def definition_index(univers: str) -> dict[str, Any]:
                         "tokenizer": "standard",
                         "filter": ["lowercase", "asciifolding"],
                     },
+                    # L'arabe a besoin de sa propre chaîne, et ce n'est pas
+                    # du zèle : l'article défini ال se colle au mot, si bien
+                    # que « سيد الخواتم » s'indexait en `الخواتم` et que taper
+                    # `خواتم` — le mot lui-même — ne trouvait rien, les
+                    # préfixes étant calculés depuis l'article. `arabic_stem`
+                    # le détache, `arabic_normalization` unifie les variantes
+                    # d'alef et de yeh que les claviers écrivent au hasard.
+                    "titres_ar_index": {
+                        "type": "custom",
+                        "tokenizer": "standard",
+                        "filter": [
+                            "lowercase",
+                            "decimal_digit",
+                            "arabic_normalization",
+                            "arabic_stem",
+                            "prefixes",
+                        ],
+                    },
+                    "titres_ar_recherche": {
+                        "type": "custom",
+                        "tokenizer": "standard",
+                        "filter": [
+                            "lowercase",
+                            "decimal_digit",
+                            "arabic_normalization",
+                            "arabic_stem",
+                        ],
+                    },
                     # La recherche dans les genres : la même chaîne, plus les
                     # synonymes. À la requête seulement — l'index porte les
                     # libellés TMDB tels quels, et enrichir le vocabulaire ne
@@ -215,6 +265,28 @@ def definition_index(univers: str) -> dict[str, Any]:
                             "norms": False,
                         }
                     },
+                },
+                # Les titres, par langue servie. Même analyse que le reste :
+                # préfixes à l'indexation, mots entiers à la requête.
+                **{
+                    champ_titres(langue): {
+                        "type": "text",
+                        "analyzer": "titres_ar_index" if langue == "ar" else "titres_index",
+                        "search_analyzer": (
+                            "titres_ar_recherche" if langue == "ar" else "titres_recherche"
+                        ),
+                        "norms": False,
+                        "fields": {
+                            "exact": {
+                                "type": "text",
+                                "analyzer": (
+                                    "titres_ar_recherche" if langue == "ar" else "titres_recherche"
+                                ),
+                                "norms": False,
+                            }
+                        },
+                    }
+                    for langue in LANGUES
                 },
                 "name": {"type": "keyword", "index": False, "doc_values": False},
                 "original_name": {"type": "keyword", "index": False, "doc_values": False},
@@ -435,6 +507,13 @@ def corps_recherche(
         # boost, un genre ne doit jamais passer devant un titre qui matche.
         {"match": {"genres.texte": {"query": texte, "operator": "and"}}},
     ]
+    # La langue d'affichage, quand l'appelant en a une : ses titres passent
+    # devant le champ fourre-tout, derrière le titre principal.
+    if langue and (racine := langue.split("-")[0]) in LANGUES:
+        champ = champ_titres(racine)
+        devrait.insert(2, {"match_phrase": {f"{champ}.exact": {"query": texte, "boost": 6.0}}})
+        devrait.insert(3, {"match": {champ: {"query": texte, "operator": "and", "boost": 4.0}}})
+
     if texte.isdigit():
         devrait.append({"term": {"id_tmdb": {"value": int(texte), "boost": 10.0}}})
 
@@ -815,6 +894,24 @@ _EXTRACTION = sql.SQL(
            v.origin_country,
            {langues} as langues,
            {titres_wiki} as titres_wiki,
+           -- Les titres regroupés par langue servie : {{"fr": [...], "en": [...]}}.
+           -- C'est ce qui permet de chercher dans la langue de qui cherche.
+           case when rp.payload is null then null else (
+               select jsonb_object_agg(t.lang, t.titres)
+               from (
+                   select tr ->> 'iso_639_1' as lang,
+                          jsonb_agg(distinct btrim(coalesce(tr -> 'data' ->> 'name',
+                                                            tr -> 'data' ->> 'title'))) as titres
+                   from jsonb_array_elements(
+                       coalesce(rp.payload -> 'translations' -> 'translations',
+                                '[]'::jsonb)) tr
+                   where tr ->> 'iso_639_1' = any (%(langues)s)
+                     and nullif(btrim(coalesce(tr -> 'data' ->> 'name',
+                                               tr -> 'data' ->> 'title')), '') is not null
+                   group by 1
+               ) t
+           ) end as titres_langues,
+           {titres_wiki_langues} as titres_wiki_langues,
            case when rp.payload is null then null else array(
                select distinct btrim(t.titre)
                from (
@@ -906,6 +1003,17 @@ def requete_extraction(media: Media) -> sql.Composed:
         # dorment « Cent ans de solitude » et « مائة عام من العزلة » : le
         # libellé projeté est à préférence anglaise, et sans eux la recherche
         # dans les autres langues ne trouverait rien.
+        titres_wiki_langues=(
+            sql.SQL(
+                "(select jsonb_object_agg(t.lang, t.titres) from ("
+                " select rs.lang, jsonb_agg(distinct rs.source_id) as titres"
+                " from riche_source rs"
+                " where rs.oeuvre_id = o.id and rs.source = 'wikipedia'"
+                " and rs.lang = any (%(langues)s) group by rs.lang) t)"
+            )
+            if media.pivot_card
+            else sql.SQL("null::jsonb")
+        ),
         titres_wiki=(
             sql.SQL(
                 "(select array_agg(distinct rs.source_id) from riche_source rs"
@@ -952,6 +1060,7 @@ def parametres_extraction(media: Media, ids: Sequence[int] | None = None) -> dic
         "kind": media.kind,
         "univers": media.univers,
         "ids": list(ids) if ids is not None else None,
+        "langues": list(LANGUES),
         "p_cast": p_cast,
         "p_cast_repli": p_cast_repli,
         "p_crew": p_crew,
@@ -985,6 +1094,28 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
         if titre and titre not in principaux:
             principaux.append(titre)
 
+    # Les titres par langue. Deux sources selon l'univers : les traductions
+    # TMDB, ou les titres d'articles Wikipédia pour les livres — dans les deux
+    # cas déjà regroupés par langue en SQL.
+    par_langue: dict[str, list[str]] = {}
+    for source in (row.get("titres_langues"), row.get("titres_wiki_langues")):
+        for langue, valeurs in (source or {}).items():
+            retenus = par_langue.setdefault(langue, [])
+            for valeur in valeurs or []:
+                propre = (valeur or "").strip()
+                if propre and propre not in retenus:
+                    retenus.append(propre)
+    # Le nom projeté entre dans le français — mais SEULEMENT pour les univers
+    # collectés chez TMDB, où il est le nom rendu par une collecte en `fr-FR`.
+    # Pour les livres, ce nom est le libellé Wikidata, à préférence anglaise :
+    # l'y verser faisait afficher « The Lord of the Rings » à qui cherchait
+    # « seigneur » — mesuré. Leur titre français, lui, est celui de l'article
+    # Wikipédia francophone, déjà rangé par langue.
+    if row.get("name") and not MEDIA_PAR_UNIVERS[univers].pivot_card:
+        retenus = par_langue.setdefault("fr", [])
+        if row["name"] not in retenus:
+            retenus.insert(0, row["name"])
+
     # Les gens : crédits TMDB pour séries et films, auteurs Wikidata pour les
     # livres — les deux colonnes sont exclusives par construction, mais un
     # doublon n'aurait de toute façon aucun effet sur un champ de recherche.
@@ -1002,6 +1133,7 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
         "oeuvre_id": row.get("oeuvre_id"),
         "titres": titres or None,
         "titre_principal": principaux or None,
+        **{champ_titres(langue): par_langue.get(langue) or None for langue in LANGUES},
         "personnes": personnes or None,
         "name": row.get("name"),
         "original_name": row.get("original_name") or row.get("nom_inventaire"),

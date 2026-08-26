@@ -9,6 +9,7 @@ import type { Statut } from './types'
 export function CarteOeuvre({
   titre,
   annee,
+  type,
   affiche,
   genres,
   synopsis,
@@ -22,6 +23,9 @@ export function CarteOeuvre({
 }: {
   titre: string | null
   annee: number | null
+  /** « Série », « Film », « Livre » — le type de l'œuvre, affiché en gras
+   *  à côté de l'année. */
+  type?: string
   affiche: string | null
   genres?: string[]
   synopsis?: string | null
@@ -70,8 +74,16 @@ export function CarteOeuvre({
             </span>
           )}
         </header>
+        {/* L'année et le type en gras : ce sont les deux repères qu'on
+            cherche d'abord dans une liste, avant les genres. */}
         <p className="fivo-meta">
-          {annee ?? 'année inconnue'}
+          <strong>{annee ?? 'année inconnue'}</strong>
+          {type && (
+            <>
+              {' · '}
+              <strong>{type}</strong>
+            </>
+          )}
           {genres && genres.length > 0 && <> · {genres.slice(0, 3).join(', ')}</>}
         </p>
         {explication && <p className="fivo-explication">{explication}</p>}

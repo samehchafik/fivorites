@@ -119,6 +119,15 @@ export interface Suggestion {
   communs: string[]
 }
 
+/** Le type d'une œuvre, au singulier — affiché en gras sur la carte à côté
+ *  de l'année. `UNIVERS_LABELS` est le pluriel des onglets ; ce n'est pas la
+ *  même chose et les confondre donnerait « 1954 · Livres ». */
+export const TYPE_LABELS: Record<UniversSlug, string> = {
+  series: 'Série',
+  films: 'Film',
+  livres: 'Livre',
+}
+
 export const UNIVERS_LABELS: Record<UniversSlug, string> = {
   series: 'Séries',
   films: 'Films',

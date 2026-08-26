@@ -2,7 +2,16 @@
 // relaie /api vers le service webapp (astro.config.mjs), en production c'est
 // le service qui sert le site — le cookie de session reste propriétaire.
 
-import type { Carte, Episode, Fiche, Signal, Statut, Suggestion, UniversSlug } from './types'
+import type {
+  Carte,
+  Episode,
+  Fiche,
+  Filtres,
+  Signal,
+  Statut,
+  Suggestion,
+  UniversSlug,
+} from './types'
 
 const BASE = '/api/public'
 
@@ -39,10 +48,17 @@ export interface PageRecherche {
 export function rechercher(
   univers: UniversSlug,
   q: string,
-  options: { page?: number; filtres?: string[]; signal?: AbortSignal } = {},
+  options: {
+    page?: number
+    filtres?: string[]
+    /** La langue de qui cherche — sans elle, la liste mélange les langues. */
+    langue?: string
+    signal?: AbortSignal
+  } = {},
 ): Promise<PageRecherche> {
   const params = new URLSearchParams({ univers, q })
   if (options.page && options.page > 1) params.set('page', String(options.page))
+  if (options.langue) params.set('langue', options.langue)
   // Répété plutôt que joint : un genre peut contenir une virgule (« Action &
   // Adventure » n'en a pas, mais rien ne le garantit), et FastAPI lit
   // nativement la forme répétée.

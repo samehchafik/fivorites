@@ -21,13 +21,14 @@ import { useEffect, useRef, useState } from 'react'
 import { chargerFiltres, rechercher } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
 import { FiltresGenres } from './FiltresGenres'
-import type { Carte, Facette, Statut, UniversSlug } from './types'
+import { TYPE_LABELS, type Carte, type Facette, type Statut, type UniversSlug } from './types'
 
 const DEBOUNCE_MS = 150
 const FRAPPE_MIN = 2
 
 export function Recherche({
   univers,
+  langue,
   statuts,
   actif,
   onOuvrir,
@@ -35,6 +36,9 @@ export function Recherche({
   onDeclasser,
 }: {
   univers: UniversSlug
+  /** La langue de qui cherche : elle restreint les titres cherchés ET ceux
+   *  affichés. Sans elle, la liste mêlait quarante-cinq langues. */
+  langue: string
   /** Les classements de la session, par pivot — pour rallumer les boutons. */
   statuts: Record<number, Statut>
   /** L'onglet est-il celui qu'on regarde ? Caché, le panneau garde tout et
@@ -65,7 +69,12 @@ export function Recherche({
   // `Suggestions` : revenir sur l'onglet ne doit pas rejouer la requête qui
   // rendrait exactement la liste qui est là. Les filtres en font partie : les
   // cocher est une nouvelle recherche, pas un nouvel affichage.
-  const charge = useRef<{ texte: string; univers: UniversSlug; filtres: string } | null>(null)
+  const charge = useRef<{
+    texte: string
+    univers: UniversSlug
+    filtres: string
+    langue: string
+  } | null>(null)
 
   // Les valeurs de filtre de l'univers, chargées une fois par univers. En
   // échec (ES absent), la barre disparaît : la recherche marche toujours.
@@ -102,7 +111,8 @@ export function Recherche({
     const dejaVu =
       charge.current?.texte === propre &&
       charge.current.univers === univers &&
-      charge.current.filtres === signature
+      charge.current.filtres === signature &&
+      charge.current.langue === langue
     if (dejaVu && !suite) return
 
     const demandee = suite ? page + 1 : 1
@@ -113,6 +123,7 @@ export function Recherche({
         const reponse = await rechercher(univers, propre, {
           page: demandee,
           filtres: choisis,
+          langue,
           signal: controleur.signal,
         })
         // On AJOUTE à la suite pour une page suivante, on remplace sinon :
@@ -125,7 +136,7 @@ export function Recherche({
         setEncore(reponse.encore)
         setPage(demandee)
         setEtat('servi')
-        charge.current = { texte: propre, univers, filtres: signature }
+        charge.current = { texte: propre, univers, filtres: signature, langue }
       } catch {
         if (!controleur.signal.aborted) setEtat('erreur')
       } finally {
@@ -136,7 +147,7 @@ export function Recherche({
       clearTimeout(minuterie)
       controleur.abort()
     }
-  }, [texte, univers, actif, choisis, suite, page])
+  }, [texte, univers, actif, choisis, suite, page, langue])
 
   const basculer = (valeur: string) =>
     setChoisis((actuels) =>
@@ -197,6 +208,7 @@ export function Recherche({
             key={carte.id}
             titre={carte.titre ?? carte.titreOriginal}
             annee={carte.annee}
+            type={TYPE_LABELS[univers]}
             affiche={carte.affiche}
             genres={carte.genres}
             synopsis={carte.synopsis}
