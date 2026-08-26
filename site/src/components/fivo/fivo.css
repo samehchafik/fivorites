@@ -10,6 +10,11 @@
 .fivo {
   width: 100%;
   box-shadow: 0 0 30px rgba(0, 0, 0, 0.6);
+  /* Le composant est posé DANS le héros, dont le texte porte une ombre pour
+     tenir sur le ciel étoilé. Elle n'a rien à faire sur les cartes blanches :
+     on la coupe à l'entrée de l'îlot plutôt que d'espérer qu'aucune règle
+     d'ambiance ne redescende jamais jusqu'ici. */
+  text-shadow: none;
 }
 
 /* --- La barre d'univers (V1 : .navigation.tinder-selector) --------------- */
@@ -155,11 +160,11 @@
 /* --- Les messages d'état ------------------------------------------------- */
 
 .fivo-message {
-  color: rgba(255, 255, 255, 0.9);
+  color: white;
   text-align: center;
   padding: 1.25rem 1rem;
   margin: 0;
-  text-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 .fivo-message strong {
@@ -247,14 +252,14 @@
 }
 
 .fivo-note {
-  color: var(--gray-medium, #787878);
+  color: var(--texte-doux-sur-clair, #545454);
   font-size: 0.85rem;
   white-space: nowrap;
 }
 
 .fivo-meta {
   margin: 0;
-  color: var(--gray-medium, #787878);
+  color: var(--texte-doux-sur-clair, #545454);
   font-size: 0.85rem;
 }
 
@@ -262,12 +267,12 @@
   margin: 0;
   font-size: 0.85rem;
   color: var(--purple-dark, #700031);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .fivo-synopsis {
   margin: 0;
-  color: var(--gray-medium, #787878);
+  color: var(--texte-sur-clair, #262626);
   font-size: 0.86rem;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -347,7 +352,7 @@
 
 .fiche-modale {
   background: var(--gray-darkest, #1a1a1a);
-  color: var(--gray-light, #b8b7b7);
+  color: var(--texte-sur-sombre, #e8e8e8);
   overflow: hidden;
 }
 
@@ -430,7 +435,7 @@
 .fiche-original {
   margin: 0 0 0.4rem;
   font-size: 0.9rem;
-  color: var(--gray-medium, #787878);
+  color: var(--texte-doux-sur-sombre, #c7c7c7);
 }
 
 .fiche-accroche {
@@ -442,7 +447,7 @@
 .fiche-faits {
   margin: 0 0 0.5rem;
   font-size: 0.9rem;
-  color: var(--gray-lighter, #d6d6d6);
+  color: var(--texte-sur-sombre, #e8e8e8);
 }
 
 .fiche-genres {
@@ -488,7 +493,7 @@
 
 .fiche-noms {
   margin: 0;
-  color: var(--gray-lighter, #d6d6d6);
+  color: var(--texte-sur-sombre, #e8e8e8);
 }
 
 /* Les visages : une bande qui défile horizontalement plutôt qu'une grille
@@ -528,7 +533,7 @@
 }
 
 .fiche-gens span {
-  color: var(--gray-medium, #787878);
+  color: var(--texte-doux-sur-sombre, #c7c7c7);
   font-size: 0.72rem;
 }
 
@@ -559,7 +564,7 @@
 
 .saison-tete {
   padding: 0.5rem 0.7rem;
-  color: var(--gray-lighter, #d6d6d6);
+  color: var(--texte-sur-sombre, #e8e8e8);
 }
 
 .saison-label {
@@ -579,7 +584,7 @@
 }
 
 .saison-faits {
-  color: var(--gray-medium, #787878);
+  color: var(--texte-doux-sur-sombre, #c7c7c7);
   font-size: 0.85rem;
   white-space: nowrap;
 }
@@ -595,13 +600,13 @@
 .saison-synopsis {
   margin: 0 0 0.7rem;
   font-size: 0.9rem;
-  color: var(--gray-light, #b8b7b7);
+  color: var(--texte-sur-sombre, #e8e8e8);
 }
 
 .saison-note {
   margin: 0.3rem 0;
   font-size: 0.88rem;
-  color: var(--gray-medium, #787878);
+  color: var(--texte-doux-sur-sombre, #c7c7c7);
 }
 
 /* --- Les épisodes, dépliés ---------------------------------------------- */
@@ -643,7 +648,7 @@
 
 .episode-faits {
   display: block;
-  color: var(--gray-medium, #787878);
+  color: var(--texte-doux-sur-sombre, #c7c7c7);
   font-size: 0.78rem;
   margin-bottom: 0.15rem;
 }
@@ -652,7 +657,7 @@
   margin: 0;
   font-size: 0.85rem;
   line-height: 1.45;
-  color: var(--gray-light, #b8b7b7);
+  color: var(--texte-sur-sombre, #e8e8e8);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;

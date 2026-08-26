@@ -116,6 +116,103 @@ class Recherche:
         if self._client is not None:
             await self._client.aclose()
 
+    async def documents(self, univers: Univers, cles: list[int]) -> list[dict[str, Any]] | None:
+        """Les documents de plusieurs œuvres, par leur clé de vignette.
+
+        Sert au troisième étage des suggestions : pour savoir à quoi
+        ressemblent les œuvres aimées, on relit leur document — genres et
+        personnes y sont déjà, il n'y a rien à recalculer.
+        """
+        if self._client is None or not self.active or not cles:
+            return None
+        try:
+            reponse = await self._client.post(
+                f"/{univers.alias_recherche}/_mget",
+                json={"ids": [str(cle) for cle in cles], "_source": ["genres", "personnes"]},
+            )
+            reponse.raise_for_status()
+        except httpx.HTTPError as exc:
+            self._coupe_jusqua = time.monotonic() + DISJONCTEUR_SECONDES
+            log.warning("Elasticsearch indisponible (%s) — affinités sautées.", exc)
+            return None
+        return [
+            document["_source"]
+            for document in reponse.json().get("docs") or []
+            if document.get("found")
+        ]
+
+    async def affinites(
+        self,
+        univers: Univers,
+        *,
+        genres: list[str],
+        personnes: list[str],
+        exclus: list[int],
+        taille: int,
+    ) -> list[int] | None:
+        """Les œuvres qui partagent les genres ou les gens de ce qu'on a aimé.
+
+        C'est le filet du moteur de suggestions, et le seul étage qui ait
+        toujours de la matière : un genre et une distribution, toute œuvre
+        collectée en a — là où être citée par un membre ou porter une
+        empreinte notée reste l'exception.
+
+        Le classement est celui de la recherche : la pertinence (combien de
+        genres et de noms en commun) multipliée par la note bayésienne.
+        `has_poster` est exigé — on ne propose pas une œuvre qu'on ne peut
+        pas montrer.
+        """
+        if self._client is None or not self.active:
+            return None
+        devrait: list[dict[str, Any]] = []
+        if genres:
+            # Un `terms` compte un point par genre partagé : deux genres en
+            # commun passent devant un seul.
+            devrait += [{"term": {"genres": genre}} for genre in genres]
+        if personnes:
+            # La phrase entière : « Emilia Clarke » ne doit pas matcher toutes
+            # les Clarke du catalogue.
+            devrait += [
+                {"match_phrase": {"personnes": {"query": nom, "boost": 2.0}}} for nom in personnes
+            ]
+        if not devrait:
+            return []
+
+        corps: dict[str, Any] = {
+            "query": {
+                "function_score": {
+                    "query": {
+                        "bool": {
+                            "should": devrait,
+                            "minimum_should_match": 1,
+                            "filter": [
+                                {"term": {"fiche": True}},
+                                {"term": {"has_poster": True}},
+                            ],
+                            "must_not": [{"ids": {"values": [str(cle) for cle in exclus]}}],
+                        }
+                    },
+                    "field_value_factor": {
+                        "field": "note_bayes",
+                        "missing": 5.0,
+                        "modifier": "none",
+                    },
+                    "boost_mode": "multiply",
+                }
+            },
+            "size": taille,
+            "_source": False,
+            "track_total_hits": False,
+        }
+        try:
+            reponse = await self._client.post(f"/{univers.alias_recherche}/_search", json=corps)
+            reponse.raise_for_status()
+        except httpx.HTTPError as exc:
+            self._coupe_jusqua = time.monotonic() + DISJONCTEUR_SECONDES
+            log.warning("Elasticsearch indisponible (%s) — affinités sautées.", exc)
+            return None
+        return [int(hit["_id"]) for hit in reponse.json()["hits"]["hits"]]
+
     async def ids(self, univers: Univers, texte: str, *, taille: int) -> list[int] | None:
         """Les ids classés d'une frappe, ou `None` si ES ne peut pas répondre
         — jamais une exception : l'appelant a toujours son chemin SQL.

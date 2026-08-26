@@ -1,7 +1,23 @@
-"""Le moteur de suggestions : les voisins d'abord, la distance pour compléter.
+"""Le moteur de suggestions : trois étages, du signal le plus fort au plus large.
 
-La règle est celle demandée au cahier des charges du composant, et elle a deux
-étages parce que le graphe a deux savoirs :
+La règle demandée au cahier des charges — les voisins d'abord, la distance
+d'empreinte pour compléter — est celle des deux premiers étages. Le
+troisième a été ajouté après coup, et il faut dire pourquoi : **les deux
+premiers ne répondaient presque jamais.**
+
+Ce qu'ils exigent, mesuré sur le catalogue : qu'un membre de la V1 ait cité
+l'œuvre aimée (66 878 citations pour 228 000 séries — l'immense majorité du
+catalogue n'est citée par personne), ou qu'elle porte une empreinte, donc
+qu'elle ait été notée (une campagne à la fois, quelques milliers d'œuvres).
+Aimer une série ordinaire ne déclenchait donc rien, et l'onglet restait vide
+sans qu'on sache si c'était une panne ou un état.
+
+Le troisième étage n'a pas cette faiblesse : **un genre et une distribution,
+toute œuvre collectée en a.** Il est servi par l'index Elasticsearch, qui
+porte les deux depuis le lot précédent, et il ne demande pas Neo4j — les
+suggestions existent donc même sans graphe projeté.
+
+Les trois, dans l'ordre :
 
 1. **Les voisins, par ordre de priorité.** Un voisin est un membre qui a cité
    les mêmes œuvres que celles que le visiteur a aimées — le savoir
@@ -21,6 +37,14 @@ La règle est celle demandée au cahier des charges du composant, et elle a deux
    « ce que vous cherchez », c'est du remplissage, et on préfère une liste
    courte à une liste qui ment.
 
+3. **Les affinités, pour qu'il y ait toujours une réponse.** Les genres et
+   les gens des œuvres aimées, cherchés dans l'index : classement par nombre
+   de points communs multiplié par la note bayésienne, affiche exigée. C'est
+   le plus faible des trois signaux — partager un genre n'est pas partager un
+   goût — d'où sa place, en dernier, et l'explication qui l'accompagne à
+   l'écran : le visiteur doit pouvoir faire la différence entre « des gens
+   comme vous ont aimé » et « ça ressemble ».
+
 Tout ce qui a déjà été classé est exclu, quel que soit le statut : ce qui est
 aimé est connu, ce qui est rejeté a été écarté, ce qui est à voir est une
 suggestion déjà acceptée.
@@ -29,10 +53,15 @@ suggestion déjà acceptée.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+import psycopg
+
+from fiv_webapp.cartes import Cartes
 from fiv_webapp.graphe import Graphe
+from fiv_webapp.recherche import Recherche
+from fiv_webapp.univers import Univers
 
 # Les voisins retenus. Un voisin à une œuvre commune, il y en a des milliers
 # et ils ne disent rien ; on garde ceux qui partagent le plus, et ce plafond
@@ -50,6 +79,17 @@ CANDIDATS_VECTEUR = 50
 # ~2,4 fois le MAE du système (0,84) — la limite entre « proche » et
 # « vaguement dans le même quadrant ». La liste préfère rester courte.
 DISTANCE_MAX = 2.0
+
+# Les œuvres aimées dont on lit les genres et les gens pour bâtir l'étage des
+# affinités. Les plus récemment classées d'abord : un profil se déplace, et
+# soixante coups de cœur feraient une requête aussi large que le catalogue.
+GRAINES_AFFINITE = 8
+
+# Ce qu'on retient d'une graine. Trois genres, c'est déjà tout ce qu'une fiche
+# TMDB porte ; six personnes, c'est la tête d'affiche — au-delà, on relie des
+# œuvres par un second rôle, ce qui ne veut rien dire.
+GENRES_PAR_GRAINE = 3
+PERSONNES_PAR_GRAINE = 6
 
 # Le voisinage : qui partage le plus d'œuvres aimées avec le visiteur. La
 # première étape est bornée par $voisinsMax, et c'est elle qui protège des
@@ -121,7 +161,10 @@ class Suggestion:
     annee: int | None
     affiche: str | None
     univers_interne: str
-    # `voisins` quand la communauté la porte, `proche` quand c'est l'empreinte.
+    # D'où elle vient : `voisins` quand la communauté la porte, `proche`
+    # quand c'est l'empreinte, `affinite` quand ce sont les genres et les
+    # gens. Le front l'affiche — une suggestion inexpliquée ressemble à de la
+    # publicité, et les trois n'ont pas la même force.
     source: str
     # L'identifiant TMDB, porté par le nœud — nul pour un livre, qui n'en a
     # pas. C'est lui qui donne la clé de vignette (voir `cle_vignette`), celle
@@ -130,6 +173,9 @@ class Suggestion:
     voisins: int | None = None
     force: float | None = None
     distance: float | None = None
+    # Ce que l'œuvre partage avec les coups de cœur — les genres communs,
+    # nommés. Sert l'explication de l'étage des affinités.
+    communs: list[str] = field(default_factory=list)
 
     @property
     def cle_vignette(self) -> int:
@@ -152,15 +198,129 @@ class Suggestion:
             "voisins": self.voisins,
             "force": self.force,
             "distance": self.distance,
+            "communs": self.communs,
         }
 
 
-class Suggestions:
-    """Le moteur : deux lectures du graphe, une liste ordonnée.
+class Cles:
+    """La correspondance entre les deux identités du système.
 
-    L'ordre de la liste EST la promesse de l'onglet : d'abord ce que les
-    voisins portent (par nombre de voisins puis force), ensuite ce qui
-    ressemble (par distance croissante) — jamais l'inverse, et jamais mélangé.
+    Les signaux stockent le **pivot** (`sourcing.oeuvre.id`), la seule clé
+    commune aux trois univers ; l'index et les vignettes travaillent sur la
+    **clé de vignette** (l'identifiant TMDB, ou le pivot pour les livres).
+    Traduire entre les deux est le genre de détail qu'on écrit une fois, ici,
+    plutôt que dans chaque étage.
+    """
+
+    async def vignettes(
+        self, conn: psycopg.AsyncConnection, univers: Univers, pivots: list[int]
+    ) -> dict[int, int]:
+        """pivot → clé de vignette, pour les pivots qui existent."""
+        if not pivots:
+            return {}
+        if univers.pivot_card:
+            # Un livre EST désigné par son pivot : rien à traduire.
+            return {pivot: pivot for pivot in pivots}
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select id, id_tmdb from oeuvre"
+                " where univers = %(univers)s and id = any(%(pivots)s) and id_tmdb is not null",
+                {"univers": univers.interne, "pivots": pivots},
+            )
+            return {pivot: id_tmdb for pivot, id_tmdb in await cur.fetchall()}
+
+
+class Affinites:
+    """Le troisième étage : ce qui partage les genres et les gens des œuvres
+    aimées, servi par l'index de recherche.
+
+    Il ne demande ni graphe projeté ni œuvre notée — c'est sa raison d'être :
+    tant que les deux étages du dessus restent creux, c'est lui qui fait que
+    l'onglet répond quelque chose.
+    """
+
+    def __init__(self, recherche: Recherche, cartes: Cartes) -> None:
+        self._recherche = recherche
+        self._cartes = cartes
+        self._cles = Cles()
+
+    async def pour(
+        self,
+        conn: psycopg.AsyncConnection,
+        univers: Univers,
+        *,
+        aimes: list[int],
+        exclues: list[int],
+        limite: int,
+    ) -> list[Suggestion]:
+        cles = await self._cles.vignettes(conn, univers, aimes + exclues)
+        graines = [cles[pivot] for pivot in aimes[:GRAINES_AFFINITE] if pivot in cles]
+        if not graines:
+            return []
+
+        documents = await self._recherche.documents(univers, graines)
+        if not documents:
+            return []
+
+        genres = self._retenir(documents, "genres", GENRES_PAR_GRAINE)
+        personnes = self._retenir(documents, "personnes", PERSONNES_PAR_GRAINE)
+        trouvees = await self._recherche.affinites(
+            univers,
+            genres=genres,
+            personnes=personnes,
+            exclus=[cles[pivot] for pivot in exclues if pivot in cles],
+            taille=limite,
+        )
+        if not trouvees:
+            return []
+
+        # L'hydratation passe par les vignettes, comme la recherche : une
+        # seule source de vérité pour ce qui s'affiche.
+        cartes = await self._cartes.hydrater(conn, univers, trouvees)
+        aimes_genres = set(genres)
+        return [
+            Suggestion(
+                oeuvre_id=carte.oeuvre_id,
+                id_tmdb=None if univers.pivot_card else carte.id,
+                titre=carte.titre or carte.titre_original,
+                annee=carte.annee,
+                affiche=carte.affiche,
+                univers_interne=univers.interne,
+                source="affinite",
+                # Les genres partagés, nommés : c'est ce qui rend la
+                # suggestion explicable. Vide quand la correspondance s'est
+                # faite sur un nom — on ne l'affirme pas faute de le savoir.
+                communs=[genre for genre in carte.genres if genre in aimes_genres],
+            )
+            for carte in cartes
+            if carte.oeuvre_id is not None
+        ]
+
+    def _retenir(self, documents: list[dict[str, Any]], champ: str, par_document: int) -> list[str]:
+        """Les valeurs les plus fréquentes du champ, dédupliquées.
+
+        Fréquentes d'abord : un genre que trois coups de cœur partagent dit
+        mieux le goût qu'un genre vu une fois, et c'est lui qu'on veut au
+        cœur de la requête.
+        """
+        comptes: dict[str, int] = {}
+        for document in documents:
+            valeurs = document.get(champ) or []
+            if isinstance(valeurs, str):
+                valeurs = [valeurs]
+            for valeur in valeurs[:par_document]:
+                nettoyee = (valeur or "").strip()
+                if nettoyee:
+                    comptes[nettoyee] = comptes.get(nettoyee, 0) + 1
+        return sorted(comptes, key=lambda valeur: (-comptes[valeur], valeur))
+
+
+class Suggestions:
+    """Les deux étages du graphe : la communauté, puis l'empreinte.
+
+    L'ordre EST la promesse de l'onglet : d'abord ce que les voisins portent
+    (par nombre de voisins puis force), ensuite ce qui ressemble (par distance
+    croissante) — jamais l'inverse, et jamais mélangé.
     """
 
     def __init__(self, graphe: Graphe) -> None:
@@ -258,3 +418,72 @@ class Suggestions:
                 )
             )
         return retenues
+
+
+class Moteur:
+    """Les trois étages, dans l'ordre, et l'arrêt dès que la liste est pleine.
+
+    C'est le seul objet que la route connaît. Il tient deux promesses :
+
+    * **l'ordre** — la communauté, puis l'empreinte, puis les affinités ; un
+      signal faible ne passe jamais devant un signal fort ;
+    * **une réponse** — le dernier étage ne demande ni graphe ni notation, si
+      bien qu'un visiteur qui a aimé une œuvre collectée obtient toujours
+      quelque chose. Quand il n'obtient rien, `raison` dit laquelle des
+      conditions manque, et le front l'affiche : une liste vide sans
+      explication se confond avec une panne.
+    """
+
+    def __init__(self, recherche: Recherche, cartes: Cartes, graphe: Graphe | None = None) -> None:
+        self._graphe = graphe
+        self._affinites = Affinites(recherche, cartes)
+
+    async def pour(
+        self,
+        conn: psycopg.AsyncConnection,
+        univers: Univers,
+        *,
+        aimes: list[int],
+        exclues: list[int],
+        limite: int = SUGGESTIONS_MAX,
+    ) -> tuple[list[Suggestion], str | None]:
+        """La liste et, si elle est vide, la raison de l'être."""
+        if not aimes:
+            return [], "aucun_aime"
+
+        retenues: list[Suggestion] = []
+        vues: set[int] = set(exclues)
+
+        if self._graphe is not None:
+            graphe = Suggestions(self._graphe)
+            for suggestion in await graphe.pour(
+                aimes=aimes,
+                exclues=exclues,
+                univers_interne=univers.interne,
+                limite=limite,
+            ):
+                if suggestion.oeuvre_id not in vues:
+                    vues.add(suggestion.oeuvre_id)
+                    retenues.append(suggestion)
+
+        # Les affinités ne travaillent que s'il reste de la place : elles
+        # complètent la communauté et l'empreinte, elles ne les remplacent pas.
+        if len(retenues) < limite:
+            for suggestion in await self._affinites.pour(
+                conn,
+                univers,
+                aimes=aimes,
+                exclues=sorted(vues),
+                limite=limite - len(retenues),
+            ):
+                if suggestion.oeuvre_id not in vues:
+                    vues.add(suggestion.oeuvre_id)
+                    retenues.append(suggestion)
+
+        if retenues:
+            return retenues[:limite], None
+        # Rien du tout : la cause est presque toujours la même — l'œuvre
+        # aimée n'est pas dans l'index de cet univers (jamais collectée, ou
+        # `search reindex` pas encore passé). Le dire vaut mieux que laisser
+        # croire à une panne.
+        return [], "aucun_resultat"

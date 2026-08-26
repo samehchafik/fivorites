@@ -17,6 +17,9 @@ import { chargerSuggestions } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
 import type { Statut, Suggestion, UniversSlug } from './types'
 
+// Les trois étages du moteur ne disent pas la même chose, et le visiteur
+// doit pouvoir les distinguer : « des gens comme vous ont aimé » n'est pas
+// « ça ressemble ». Une suggestion inexpliquée ressemble à de la publicité.
 function expliquer(suggestion: Suggestion): string {
   if (suggestion.source === 'voisins') {
     const nombre = suggestion.voisins ?? 0
@@ -24,9 +27,18 @@ function expliquer(suggestion: Suggestion): string {
       ? `Dans le top de ${nombre} membres qui partagent vos goûts`
       : 'Dans le top d’un membre qui partage vos goûts'
   }
-  return suggestion.distance != null
-    ? `Empreinte très proche de vos coups de cœur (à ${suggestion.distance.toFixed(2)} points)`
-    : 'Empreinte très proche de vos coups de cœur'
+  if (suggestion.source === 'proche') {
+    return suggestion.distance != null
+      ? `Empreinte très proche de vos coups de cœur (à ${suggestion.distance.toFixed(2)} points)`
+      : 'Empreinte très proche de vos coups de cœur'
+  }
+  // Les affinités : on nomme les genres partagés quand il y en a. Sinon la
+  // correspondance s'est faite sur un nom (acteur, réalisateur, auteur) et on
+  // reste neutre plutôt que d'affirmer lequel — l'index ne le dit pas.
+  if (suggestion.communs.length > 0) {
+    return `Comme vos coups de cœur : ${suggestion.communs.slice(0, 3).join(', ')}`
+  }
+  return 'Proche de ce que vous avez aimé'
 }
 
 export function Suggestions({
@@ -101,8 +113,9 @@ export function Suggestions({
       )}
       {etat === 'servi' && raison === 'aucun_resultat' && (
         <p className="fivo-message">
-          Pas encore de suggestion dans cet univers — aimez quelques œuvres de plus, le moteur
-          s'affine à chaque geste.
+          Rien à proposer dans cet univers pour l'instant — vos coups de cœur y sont d'un autre
+          univers, ou leur fiche n'est pas encore indexée. Classez une œuvre d'ici, et la liste
+          se remplit.
         </p>
       )}
 

@@ -91,11 +91,16 @@ export interface Suggestion {
   annee: number | null
   affiche: string | null
   univers: UniversSlug
-  /** `voisins` : portée par la communauté ; `proche` : par l'empreinte. */
-  source: 'voisins' | 'proche'
+  /** D'où elle vient : `voisins` la communauté, `proche` l'empreinte,
+   *  `affinite` les genres et les gens. Les trois n'ont pas la même force,
+   *  et l'explication affichée les distingue. */
+  source: 'voisins' | 'proche' | 'affinite'
   voisins: number | null
   force: number | null
   distance: number | null
+  /** Les genres partagés avec les coups de cœur — l'explication de l'étage
+   *  des affinités. Vide quand la correspondance s'est faite sur un nom. */
+  communs: string[]
 }
 
 export const UNIVERS_LABELS: Record<UniversSlug, string> = {

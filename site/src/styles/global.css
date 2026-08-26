@@ -66,6 +66,20 @@
   --fivorites1: var(--red);
   --fivorites2: var(--purple-dark);
 
+  /* Le texte, nommé par la surface qui le porte — pas par sa nuance.
+   *
+   * La V1 n'avait qu'un `--text` et un `--text-dimmed`, pensés pour un fond
+   * clair ; le site public a les deux fonds (le ciel étoilé sombre, les
+   * cartes blanches), et réutiliser les mêmes gris des deux côtés donnait un
+   * texte gris pâle sur blanc (#787878, à peine 4,6 de contraste) et un gris
+   * terne sous une ombre floue sur le sombre. D'où quatre jetons, et la
+   * règle qui va avec : on choisit selon le fond, jamais « le gris du
+   * milieu ». Contrastes mesurés, tous au-delà de 7:1 (AAA en petit corps). */
+  --texte-sur-sombre: hsl(0, 0%, 91%);
+  --texte-doux-sur-sombre: hsl(0, 0%, 78%);
+  --texte-sur-clair: hsl(0, 0%, 15%);
+  --texte-doux-sur-clair: hsl(0, 0%, 33%);
+
   --header-bg: black;
   --header-txt: hsl(0, 0%, 90%);
   --header-height: 50px;
@@ -94,7 +108,7 @@ body {
   margin: 0;
   font-family: 'Fira Sans', Verdana, sans-serif;
   line-height: 150%;
-  color: var(--gray-light);
+  color: var(--texte-sur-sombre);
   background: linear-gradient(180deg, var(--gray-darkest) 10%, black 100%);
   background-color: var(--gray-darkest);
 }
@@ -207,8 +221,20 @@ a {
   background-image: url('/images/homeback.png');
   background-size: cover;
   background-repeat: no-repeat;
-  text-shadow: 0 0 10px rgba(0, 0, 0, 0.4);
   padding: 3rem 0 3.5rem;
+}
+
+/* L'ombre et la couleur claire appartiennent à la COLONNE DE TEXTE du héros,
+   pas au héros entier.
+ *
+ * Posées sur `.heros`, elles descendaient par héritage dans l'îlot React qui
+ * vit à l'intérieur — le texte des cartes blanches héritait donc d'un gris
+ * clair et d'une ombre floue : des caractères gris ombrés de gris sur du
+ * blanc, illisibles. C'est le défaut qui a été signalé, et il ne venait pas
+ * des nuances mais de la portée du sélecteur. */
+.heros-texte,
+.heros .sur-titre {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
 }
 
 /* « LE TOP DE LA CULTURE POP, SUR MESURE ! » — rouge clair, capitales,
@@ -238,12 +264,12 @@ a {
   max-width: 34rem;
 }
 
-.heros p {
+.heros-texte p {
   max-width: 34rem;
   margin: 0 0 0.9rem;
   font-size: 1.1rem;
   line-height: 1.5em;
-  color: var(--gray-light);
+  color: var(--texte-sur-sombre);
 }
 
 /* Le héros en deux colonnes de la home V1 : le texte à gauche, l'outil à
@@ -310,7 +336,7 @@ a {
 }
 
 .prose p {
-  color: var(--gray-light);
+  color: var(--texte-sur-sombre);
 }
 
 .prose strong {
@@ -381,7 +407,7 @@ html.voile-pose {
 
 .voile-panneau p {
   margin: 0 0 1.2rem;
-  color: rgba(255, 255, 255, 0.9);
+  color: white;
   font-size: 0.98rem;
 }
 
@@ -403,7 +429,7 @@ html.voile-pose {
   background-color: var(--gray-darkest);
   border-top: 1px solid var(--gray-darker);
   padding: 1.5rem 0 2rem;
-  color: var(--gray-light);
+  color: var(--texte-doux-sur-sombre);
   font-size: 0.9rem;
 }
 
@@ -431,7 +457,7 @@ html.voile-pose {
 }
 
 .pied a:hover {
-  color: var(--gray-lighter);
+  color: white;
 }
 
 @media (max-width: 40rem) {

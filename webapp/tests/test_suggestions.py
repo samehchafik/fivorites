@@ -12,7 +12,15 @@ from typing import Any
 
 import pytest
 
-from fiv_webapp.suggestions import DISTANCE_MAX, Suggestions, distance_depuis_score
+from fiv_webapp.cartes import Carte
+from fiv_webapp.suggestions import (
+    DISTANCE_MAX,
+    Affinites,
+    Moteur,
+    Suggestions,
+    distance_depuis_score,
+)
+from fiv_webapp.univers import UNIVERS
 
 
 def score_de_distance(distance: float) -> float:
@@ -124,3 +132,206 @@ async def test_sans_aime_rien() -> None:
     assert await moteur.pour(aimes=[], exclues=[], univers_interne="series") == []
     # Et surtout : aucun appel au graphe — pas de requête pour rien.
     assert graphe.parametres_vus == []
+
+
+# ---------------------------------------------------------------------------
+# Le troisième étage, et l'orchestration des trois
+# ---------------------------------------------------------------------------
+
+
+class FauxRecherche:
+    """Un Elasticsearch simulé : les documents des graines, puis les
+    affinités. `None` simule une panne ou un index absent."""
+
+    def __init__(
+        self,
+        documents: list[dict[str, Any]] | None = None,
+        affinites: list[int] | None = None,
+    ) -> None:
+        self._documents = documents
+        self._affinites = affinites
+        self.demandes: list[dict[str, Any]] = []
+
+    async def documents(self, univers: Any, cles: list[int]) -> list[dict[str, Any]] | None:
+        self.demandes.append({"quoi": "documents", "cles": cles})
+        return self._documents
+
+    async def affinites(
+        self,
+        univers: Any,
+        *,
+        genres: list[str],
+        personnes: list[str],
+        exclus: list[int],
+        taille: int,
+    ) -> list[int] | None:
+        self.demandes.append(
+            {
+                "quoi": "affinites",
+                "genres": genres,
+                "personnes": personnes,
+                "exclus": exclus,
+                "taille": taille,
+            }
+        )
+        return self._affinites
+
+
+class FauxCartes:
+    """Hydrate en gardant l'ordre reçu — le contrat de `Cartes.hydrater`."""
+
+    def __init__(self, genres_par_id: dict[int, list[str]] | None = None) -> None:
+        self._genres = genres_par_id or {}
+
+    async def hydrater(self, conn: Any, univers: Any, ids: list[int]) -> list[Carte]:
+        return [
+            Carte(
+                id=identifiant,
+                # Le pivot est décalé de mille : de quoi vérifier que c'est
+                # bien lui qui sort dans `oeuvreId`, et la clé dans `id`.
+                oeuvre_id=identifiant + 1000,
+                univers=univers.slug,
+                titre=f"Œuvre {identifiant}",
+                titre_original=None,
+                annee=2020,
+                affiche=None,
+                synopsis=None,
+                genres=self._genres.get(identifiant, []),
+                note=None,
+            )
+            for identifiant in ids
+        ]
+
+
+class FauxConn:
+    """Le pivot d'une œuvre TMDB, lu en base par `Cles` : ici l'identité."""
+
+    def cursor(self) -> Any:
+        return self
+
+    async def __aenter__(self) -> FauxConn:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+    async def execute(self, requete: str, parametres: Any = None) -> None:
+        self._pivots = list(parametres["pivots"]) if parametres else []
+
+    async def fetchall(self) -> list[tuple[int, int]]:
+        # pivot → clé de vignette : le décalage de mille de FauxCartes,
+        # à l'envers.
+        return [(pivot, pivot - 1000) for pivot in self._pivots]
+
+
+async def test_affinites_batissent_la_requete_et_expliquent() -> None:
+    """Les genres les plus fréquents d'abord, les exclusions traduites en
+    clés de vignette, et les genres partagés nommés pour l'explication."""
+    recherche = FauxRecherche(
+        documents=[
+            {"genres": ["Drame", "Fantastique"], "personnes": ["Emilia Clarke"]},
+            {"genres": ["Drame"], "personnes": ["Kit Harington"]},
+        ],
+        affinites=[42],
+    )
+    cartes = FauxCartes({42: ["Drame", "Comédie"]})
+    moteur = Affinites(recherche, cartes)  # type: ignore[arg-type]
+
+    retenues = await moteur.pour(
+        FauxConn(),  # type: ignore[arg-type]
+        UNIVERS["series"],
+        aimes=[1001],
+        exclues=[1001, 1002],
+        limite=10,
+    )
+
+    demande = recherche.demandes[-1]
+    # « Drame » est dans deux graines sur deux : il passe devant.
+    assert demande["genres"][0] == "Drame"
+    assert "Emilia Clarke" in demande["personnes"]
+    # Les exclusions partent en clés de vignette, pas en pivots.
+    assert demande["exclus"] == [1, 2]
+
+    assert len(retenues) == 1
+    assert retenues[0].source == "affinite"
+    assert retenues[0].oeuvre_id == 1042
+    assert retenues[0].cle_vignette == 42
+    # Seuls les genres réellement partagés sont nommés — « Comédie » n'est
+    # pas dans les coups de cœur, elle n'a rien à expliquer.
+    assert retenues[0].communs == ["Drame"]
+
+
+async def test_affinites_sans_index_ne_cassent_rien() -> None:
+    """ES absent ou index vide : l'étage rend une liste vide, pas une
+    exception — la route doit répondre quand même."""
+    moteur = Affinites(FauxRecherche(documents=None), FauxCartes())  # type: ignore[arg-type]
+    assert (
+        await moteur.pour(
+            FauxConn(),  # type: ignore[arg-type]
+            UNIVERS["series"],
+            aimes=[1001],
+            exclues=[1001],
+            limite=10,
+        )
+        == []
+    )
+
+
+async def test_moteur_sans_graphe_repond_par_les_affinites() -> None:
+    """LE cas qui a motivé le troisième étage : pas de graphe (ou un graphe
+    qui ne connaît pas l'œuvre aimée), et l'onglet répond quand même."""
+    recherche = FauxRecherche(documents=[{"genres": ["Drame"], "personnes": []}], affinites=[7])
+    moteur = Moteur(recherche, FauxCartes({7: ["Drame"]}), None)  # type: ignore[arg-type]
+
+    retenues, raison = await moteur.pour(
+        FauxConn(),  # type: ignore[arg-type]
+        UNIVERS["series"],
+        aimes=[1001],
+        exclues=[1001],
+    )
+    assert raison is None
+    assert [suggestion.source for suggestion in retenues] == ["affinite"]
+
+
+async def test_moteur_garde_l_ordre_des_etages() -> None:
+    """La communauté d'abord, les affinités pour compléter : un signal faible
+    ne passe jamais devant un signal fort."""
+    graphe = FauxGraphe(
+        voisins=[{"membreId": 7, "communes": 2}],
+        citations=[citation(101, voisins=4, force=4.0)],
+        proches=[],
+    )
+    recherche = FauxRecherche(documents=[{"genres": ["Drame"], "personnes": []}], affinites=[7])
+    moteur = Moteur(recherche, FauxCartes({7: ["Drame"]}), graphe)  # type: ignore[arg-type]
+
+    retenues, raison = await moteur.pour(
+        FauxConn(),  # type: ignore[arg-type]
+        UNIVERS["series"],
+        aimes=[1001],
+        exclues=[1001],
+    )
+    assert raison is None
+    assert [suggestion.source for suggestion in retenues] == ["voisins", "affinite"]
+
+
+async def test_moteur_dit_pourquoi_il_est_vide() -> None:
+    """Deux vides, deux raisons : rien d'aimé, ou rien de trouvé. Le front
+    n'affiche pas le même message, et surtout pas « panne »."""
+    recherche = FauxRecherche(documents=[], affinites=[])
+    moteur = Moteur(recherche, FauxCartes(), None)  # type: ignore[arg-type]
+
+    _, sans_graine = await moteur.pour(
+        FauxConn(),  # type: ignore[arg-type]
+        UNIVERS["series"],
+        aimes=[],
+        exclues=[],
+    )
+    assert sans_graine == "aucun_aime"
+
+    _, sans_resultat = await moteur.pour(
+        FauxConn(),  # type: ignore[arg-type]
+        UNIVERS["series"],
+        aimes=[1001],
+        exclues=[1001],
+    )
+    assert sans_resultat == "aucun_resultat"
