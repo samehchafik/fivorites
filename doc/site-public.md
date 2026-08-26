@@ -255,5 +255,10 @@ ils tiennent.
   (import V1), et l'app React « connectée » complète.
 * **BD et musiques** : entreront par `webapp/src/fiv_webapp/univers.py` et
   une entrée de contenu — nulle part ailleurs.
+* **Les genres restent en français dans les quatre langues** : ce sont des
+  données, collectées en `fr-FR` chez TMDB et en français chez Wikidata, donc
+  une page anglaise affiche « fiction dystopique ». Les traduire demande de
+  les collecter par langue à l'indexation, pas de les poser dans
+  `src/i18n/textes` — un fichier d'interface n'est pas un catalogue.
 * **Le sitemap et les pages de taxonomie SEO** (par origine notamment — voir
   `doc/etude-couverture-marche-arabe.md` §4) : la structure Astro les attend.

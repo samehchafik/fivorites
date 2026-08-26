@@ -1831,6 +1831,30 @@
   .fivo-aide-a-voir {
     top: 36%;
   }
+
+  /* Les trois gestes d'une CARTE de liste : une grille de trois colonnes
+     égales, les mots passant à la ligne dedans. À côté d'une affiche de
+     88 px, il reste 226 px pour 313 px de boutons — ils débordaient donc en
+     deux rangées bancales, dont une avec un seul bouton orphelin. Trois
+     colonnes qui se partagent la place ont l'air voulues, parce qu'elles le
+     sont. */
+  .fivo-carte .fivo-gestes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.3rem;
+  }
+
+  .fivo-carte .fivo-geste {
+    padding: 0.3rem 0.15rem;
+    font-size: 0.62rem;
+    line-height: 1.15;
+    text-align: center;
+  }
+
+  .fivo-carte .fivo-geste-fleche {
+    display: block;
+    font-size: 0.8rem;
+  }
 }
 
 /* La langue du résumé, quand ce n'est pas celle demandée — discret mais
