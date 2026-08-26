@@ -33,15 +33,18 @@ class Univers:
     pivot_card: bool = False
     # Sur quoi cet univers se filtre, et sous quel nom l'annoncer.
     #
-    # Ce n'est pas la même dimension partout, et ça ne peut pas l'être : les
-    # séries et les films portent les genres de TMDB, les livres n'en ont
-    # AUCUN — l'enrichissement Wikidata ne rend que des auteurs, des langues,
-    # des pays et une année (vérifié en base). Leur proposer une liste de
-    # genres vide serait un filtre en trompe-l'œil ; on leur propose la
-    # langue, qui est la donnée que cet univers existe pour porter.
+    # Les trois univers portent désormais la même dimension — les genres —
+    # mais ce n'était pas le cas hier, et le réglage reste par univers pour
+    # cette raison : les livres n'avaient AUCUN genre en base, et se
+    # filtraient donc par langue, faute de mieux. La collecte de P136 (le
+    # genre littéraire de Wikidata, migration 018) a levé la condition, et la
+    # projection rend ces genres à la forme TMDB (`[{id, name}]`) exprès —
+    # « pour que la grille, le filtre et l'index n'aient rien à savoir de la
+    # provenance ».
     #
-    # Le jour où le crawler collectera P136 (le genre littéraire de Wikidata),
-    # les livres basculeront sur `genres` en changeant ces deux lignes.
+    # Le champ reste néanmoins déclaré ici plutôt que supposé : `bd` et
+    # `musiques` arriveront avec leurs propres taxonomies, et un univers dont
+    # la dimension diverge doit pouvoir le dire sans toucher aux routes.
     champ_filtre: str = "genres"
     label_filtre: str = "Genres"
 
@@ -60,8 +63,6 @@ UNIVERS: dict[str, Univers] = {
         interne="livres",
         card_view="livre_card",
         pivot_card=True,
-        champ_filtre="langues",
-        label_filtre="Langues",
     ),
 }
 
