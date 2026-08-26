@@ -228,6 +228,7 @@ export default function FivoSuggest({
 
         <FicheModale
           univers={univers}
+          langue={langue}
           identifiant={ouverte?.id ?? null}
           statutActuel={ouverte?.oeuvreId != null ? (statuts[ouverte.oeuvreId] ?? null) : null}
           onFermer={() => setOuverte(null)}

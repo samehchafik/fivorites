@@ -73,6 +73,25 @@ SOURCE = "tmdb"
 # titre collé dans une langue non servie trouve quand même son œuvre.
 LANGUES = ("fr", "en", "es", "ar")
 
+# Le pays dont on lit la disponibilité, par langue servie. TMDB indexe les
+# plateformes PAR PAYS, pas par langue — une série est sur Netflix en France
+# et sur Shahid en Arabie saoudite — et un filtre « sur Netflix » qui
+# répondrait la disponibilité brésilienne serait faux. Même correspondance que
+# `media.country_of`, écrite ici parce que l'index la fige.
+PAYS_DE_LANGUE = {"fr": "FR", "en": "US", "es": "ES", "ar": "SA"}
+
+# Ce qui compte comme « disponible » pour le FILTRE : ce qui est inclus.
+# `rent` et `buy` restent lus pour la fiche — savoir qu'un film est louable a
+# de la valeur — mais cocher « Netflix » veut dire « comprise dans mon
+# abonnement », pas « louable pour 4,99 € ».
+OFFRES_INCLUSES = ("flatrate", "free", "ads")
+
+
+def champ_plateformes(langue: str) -> str:
+    """Le champ ES des plateformes d'une langue — un par pays servi."""
+    return f"plateformes_{langue}"
+
+
 # L'univers interne → son registre. `construire_doc` ne reçoit que le nom de
 # l'univers, et a besoin de savoir si ses vignettes sont keyées par pivot.
 MEDIA_PAR_UNIVERS = {media.univers: media for media in MEDIA.values()}
@@ -288,6 +307,11 @@ def definition_index(univers: str) -> dict[str, Any]:
                     }
                     for langue in LANGUES
                 },
+                # Les plateformes qui INCLUENT l'œuvre, par pays servi. Un
+                # `keyword` : on filtre sur un nom exact et on agrège pour
+                # peupler les cases à cocher, jamais on ne le cherche en
+                # texte libre.
+                **{champ_plateformes(langue): {"type": "keyword"} for langue in LANGUES},
                 "name": {"type": "keyword", "index": False, "doc_values": False},
                 "original_name": {"type": "keyword", "index": False, "doc_values": False},
                 # Le tri alphabétique du parcours : `coalesce(name, original)`
@@ -912,6 +936,28 @@ _EXTRACTION = sql.SQL(
                ) t
            ) end as titres_langues,
            {titres_wiki_langues} as titres_wiki_langues,
+           -- Les plateformes qui incluent l'œuvre, par langue servie :
+           -- {{"fr": ["Netflix", …], "ar": ["Shahid", …]}}. TMDB range la
+           -- disponibilité par PAYS ; la correspondance langue → pays arrive
+           -- en paramètre, elle n'a pas à être écrite deux fois.
+           case when rp.payload is null then null else (
+               select jsonb_object_agg(t.langue, t.noms)
+               from (
+                   select l.langue,
+                          jsonb_agg(distinct btrim(p ->> 'provider_name')) as noms
+                   from jsonb_each_text(%(pays)s::jsonb) as l(langue, pays),
+                        lateral jsonb_array_elements(
+                            (select coalesce(jsonb_agg(offre), '[]'::jsonb)
+                             from unnest(%(offres)s::text[]) as k(kind),
+                                  lateral jsonb_array_elements(
+                                      coalesce(rp.payload -> 'watch/providers'
+                                               -> 'results' -> l.pays -> k.kind,
+                                               '[]'::jsonb)) as offre)
+                        ) p
+                   where nullif(btrim(p ->> 'provider_name'), '') is not null
+                   group by l.langue
+               ) t
+           ) end as plateformes_langues,
            case when rp.payload is null then null else array(
                select distinct btrim(t.titre)
                from (
@@ -1061,6 +1107,8 @@ def parametres_extraction(media: Media, ids: Sequence[int] | None = None) -> dic
         "univers": media.univers,
         "ids": list(ids) if ids is not None else None,
         "langues": list(LANGUES),
+        "pays": json.dumps(PAYS_DE_LANGUE),
+        "offres": list(OFFRES_INCLUSES),
         "p_cast": p_cast,
         "p_cast_repli": p_cast_repli,
         "p_crew": p_crew,
@@ -1116,6 +1164,12 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
         if row["name"] not in retenus:
             retenus.insert(0, row["name"])
 
+    # Les plateformes, telles que le SQL les a regroupées par langue.
+    plateformes: dict[str, list[str]] = {
+        langue: [nom for nom in (noms or []) if nom]
+        for langue, noms in (row.get("plateformes_langues") or {}).items()
+    }
+
     # Les gens : crédits TMDB pour séries et films, auteurs Wikidata pour les
     # livres — les deux colonnes sont exclusives par construction, mais un
     # doublon n'aurait de toute façon aucun effet sur un champ de recherche.
@@ -1134,6 +1188,10 @@ def construire_doc(row: dict[str, Any], univers: str) -> dict[str, Any]:
         "titres": titres or None,
         "titre_principal": principaux or None,
         **{champ_titres(langue): par_langue.get(langue) or None for langue in LANGUES},
+        **{
+            champ_plateformes(langue): sorted(plateformes.get(langue) or []) or None
+            for langue in LANGUES
+        },
         "personnes": personnes or None,
         "name": row.get("name"),
         "original_name": row.get("original_name") or row.get("nom_inventaire"),

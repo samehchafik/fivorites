@@ -18,6 +18,30 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class Dimension:
+    """Une dimension de filtre : son nom public, son libellé, sa portée.
+
+    Le nom public est celui de l'API et des cases à cocher (`genres`,
+    `plateformes`) ; le champ de l'index peut en différer — les plateformes
+    sont indexées PAR PAYS (`plateformes_fr`, `plateformes_ar`…), parce qu'une
+    série sur Netflix en France est sur Shahid en Arabie saoudite et qu'un
+    filtre qui répondrait la disponibilité d'ailleurs serait faux.
+    """
+
+    champ: str
+    libelle: str
+    # Le champ de l'index porte-t-il la langue en suffixe ?
+    par_langue: bool = False
+
+    def champ_index(self, langue: str) -> str:
+        return f"{self.champ}_{langue}" if self.par_langue else self.champ
+
+
+GENRES = Dimension(champ="genres", libelle="Genres")
+PLATEFORMES = Dimension(champ="plateformes", libelle="Plateformes", par_langue=True)
+
+
+@dataclass(frozen=True, slots=True)
 class Univers:
     # Le slug public — celui des URL du site et des appels d'API.
     slug: str
@@ -31,32 +55,39 @@ class Univers:
     # par un identifiant TMDB. Vrai pour les livres — il n'y a pas de TMDB du
     # livre : la jointure d'identité suit ce drapeau.
     pivot_card: bool = False
-    # Sur quoi cet univers se filtre, et sous quel nom l'annoncer.
-    #
-    # Les trois univers portent désormais la même dimension — les genres —
-    # mais ce n'était pas le cas hier, et le réglage reste par univers pour
-    # cette raison : les livres n'avaient AUCUN genre en base, et se
-    # filtraient donc par langue, faute de mieux. La collecte de P136 (le
-    # genre littéraire de Wikidata, migration 018) a levé la condition, et la
-    # projection rend ces genres à la forme TMDB (`[{id, name}]`) exprès —
-    # « pour que la grille, le filtre et l'index n'aient rien à savoir de la
-    # provenance ».
-    #
-    # Le champ reste néanmoins déclaré ici plutôt que supposé : `bd` et
-    # `musiques` arriveront avec leurs propres taxonomies, et un univers dont
-    # la dimension diverge doit pouvoir le dire sans toucher aux routes.
-    champ_filtre: str = "genres"
-    label_filtre: str = "Genres"
+    # Sur quoi cet univers se filtre. Les trois portent les genres — les
+    # livres depuis que le crawler collecte P136 (migration 018), rendus à la
+    # forme TMDB exprès. Les plateformes, elles, n'existent que là où TMDB
+    # décrit une diffusion : un livre ne se regarde pas sur Netflix.
+    dimensions: tuple[Dimension, ...] = (GENRES,)
 
     @property
     def alias_recherche(self) -> str:
         """L'alias Elasticsearch — le même que `fiv_admin.search.alias_de`."""
         return f"catalog-{self.interne}"
 
+    def dimension(self, champ: str) -> Dimension | None:
+        """La dimension de ce nom, si cet univers la porte. Un client qui
+        filtre sur une dimension inconnue est ignoré plutôt que refusé : la
+        liste des dimensions est un contrat qu'il découvre, et elle bougera."""
+        return next((d for d in self.dimensions if d.champ == champ), None)
+
 
 UNIVERS: dict[str, Univers] = {
-    "series": Univers(slug="series", label="Séries", interne="series", card_view="tv_card"),
-    "films": Univers(slug="films", label="Films", interne="movies", card_view="movie_card"),
+    "series": Univers(
+        slug="series",
+        label="Séries",
+        interne="series",
+        card_view="tv_card",
+        dimensions=(GENRES, PLATEFORMES),
+    ),
+    "films": Univers(
+        slug="films",
+        label="Films",
+        interne="movies",
+        card_view="movie_card",
+        dimensions=(GENRES, PLATEFORMES),
+    ),
     "livres": Univers(
         slug="livres",
         label="Livres",

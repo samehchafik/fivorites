@@ -101,8 +101,9 @@ def corps_recherche(
     taille: int,
     depuis: int = 0,
     langue: str = LANGUE_DEFAUT,
-    champ_filtre: str = "genres",
-    filtres: Sequence[str] = (),
+    # {champ de l'index → valeurs}. Déjà résolu par l'appelant : c'est lui qui
+    # sait que « plateformes » s'indexe par pays (`plateformes_fr`).
+    filtres: dict[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Le corps `_search` d'une frappe du composant.
 
@@ -131,14 +132,17 @@ def corps_recherche(
     * **les personnes** (×1,5) — un nom rend sa filmographie ;
     * **les genres** (×1), synonymes compris (« policier » → Crime).
 
-    `filtres` restreint à des valeurs exactes de `champ_filtre` — les genres
-    pour les séries et les films, les langues pour les livres (voir
-    `univers.champ_filtre`). Plusieurs valeurs forment un OU : c'est ce qu'on
-    attend d'une liste à cocher, et un ET viderait la liste dès la deuxième.
+    `filtres` restreint sur plusieurs dimensions à la fois — les genres, les
+    plateformes. **OU à l'intérieur d'une dimension, ET entre elles** : cocher
+    deux genres élargit (un ET viderait la liste dès le deuxième, la plupart
+    des œuvres n'en portant que deux ou trois), tandis que cocher un genre et
+    une plateforme restreint — c'est ce que « des comédies sur Netflix » veut
+    dire.
     """
     filtre: list[dict[str, Any]] = [{"term": {"fiche": True}}]
-    if filtres:
-        filtre.append({"terms": {champ_filtre: list(filtres)}})
+    for champ, valeurs in (filtres or {}).items():
+        if valeurs:
+            filtre.append({"terms": {champ: list(valeurs)}})
 
     return {
         "query": {
@@ -344,7 +348,7 @@ class Recherche:
         taille: int,
         depuis: int = 0,
         langue: str = LANGUE_DEFAUT,
-        filtres: Sequence[str] = (),
+        filtres: dict[str, Sequence[str]] | None = None,
     ) -> PageIds | None:
         """Une page de résultats classés, ou `None` si ES ne peut pas répondre
         — jamais une exception : l'appelant a toujours son chemin SQL.
@@ -366,7 +370,6 @@ class Recherche:
                     taille=taille,
                     depuis=depuis,
                     langue=langue,
-                    champ_filtre=univers.champ_filtre,
                     filtres=filtres,
                 ),
             )
@@ -403,27 +406,35 @@ class Recherche:
             tronque=donnees["hits"]["total"].get("relation") == "gte",
         )
 
-    async def facettes(self, univers: Univers, *, taille: int = 40) -> list[Facette] | None:
-        """Les valeurs de filtre réellement présentes, avec leur nombre.
+    async def facettes(
+        self, univers: Univers, *, langue: str = LANGUE_DEFAUT, taille: int = 40
+    ) -> dict[str, list[Facette]] | None:
+        """Les valeurs présentes de CHAQUE dimension de l'univers, avec leur
+        nombre — en une seule requête, agrégations parallèles.
 
         Une agrégation `terms` sur un champ `keyword` : les doc values sont
         déjà en mémoire, ça se compte en millisecondes même sur 1,2 M de
         documents. C'est LA bonne source pour peupler des cases à cocher —
         elle montre ce que le catalogue contient vraiment, là où une liste
-        figée dans le code divergerait au premier genre ajouté par TMDB.
+        figée dans le code divergerait au premier genre ajouté par TMDB ou à
+        la première plateforme qui perd ses droits.
 
         `fiche: true`, comme la recherche : proposer un filtre qui ne rendrait
         rien serait pire que ne pas le proposer.
         """
         if self._client is None or not self.active:
             return None
+        aggs = {
+            dimension.champ: {"terms": {"field": dimension.champ_index(langue), "size": taille}}
+            for dimension in univers.dimensions
+        }
         try:
             reponse = await self._client.post(
                 f"/{univers.alias_recherche}/_search",
                 json={
                     "size": 0,
                     "query": {"bool": {"filter": [{"term": {"fiche": True}}]}},
-                    "aggs": {"valeurs": {"terms": {"field": univers.champ_filtre, "size": taille}}},
+                    "aggs": aggs,
                 },
             )
             reponse.raise_for_status()
@@ -431,5 +442,11 @@ class Recherche:
             self._coupe_jusqua = time.monotonic() + DISJONCTEUR_SECONDES
             log.warning("Elasticsearch indisponible (%s) — pas de facettes.", exc)
             return None
-        paniers = reponse.json()["aggregations"]["valeurs"]["buckets"]
-        return [Facette(valeur=p["key"], nombre=p["doc_count"]) for p in paniers]
+        agregations = reponse.json().get("aggregations") or {}
+        return {
+            champ: [
+                Facette(valeur=panier["key"], nombre=panier["doc_count"])
+                for panier in (agregations.get(champ) or {}).get("buckets") or []
+            ]
+            for champ in aggs
+        }

@@ -37,10 +37,11 @@ async def recherche(
     q: Annotated[str, Query(min_length=1, max_length=120)],
     taille: Annotated[int, Query(ge=1, le=TAILLE_MAX)] = TAILLE_DEFAUT,
     page: Annotated[int, Query(ge=1, le=PAGE_MAX)] = 1,
-    # Répété : `?filtres=Drame&filtres=Comédie`. La dimension dépend de
-    # l'univers (genres, ou langues pour les livres) — le client la découvre
-    # par `/filtres`, il n'a pas à la connaître.
-    filtres: Annotated[list[str] | None, Query()] = None,
+    # Un paramètre par dimension, répété : `?genres=Drame&genres=Comédie
+    # &plateformes=Netflix`. Les dimensions d'un univers se découvrent par
+    # `/filtres` — le client n'en connaît aucune d'avance.
+    genres: Annotated[list[str] | None, Query()] = None,
+    plateformes: Annotated[list[str] | None, Query()] = None,
     # La langue de qui cherche. Le front la déduit du navigateur et laisse en
     # changer ; le serveur retient celle qu'il sert, ou le français.
     langue: Annotated[str | None, Query(max_length=10)] = None,
@@ -107,20 +108,35 @@ async def recherche(
 
 
 @router.get("/filtres")
-async def filtres(moteur: RechercheDep, univers: UniversDep) -> dict[str, Any]:
-    """Les valeurs de filtre de cet univers, avec leur nombre d'œuvres.
+async def filtres(
+    moteur: RechercheDep,
+    univers: UniversDep,
+    langue: Annotated[str | None, Query(max_length=10)] = None,
+) -> dict[str, Any]:
+    """Les dimensions de filtre de cet univers, chacune avec ses valeurs.
 
-    La dimension n'est pas la même partout et la réponse le dit : les genres
-    pour les séries et les films, les langues pour les livres — qui n'ont
-    aucun genre en base (voir `univers.champ_filtre`). Le front affiche le
-    libellé qu'il reçoit ; il n'a aucune liste en dur.
+    Plusieurs groupes, et pas les mêmes partout : les séries et les films
+    portent les genres ET les plateformes, un livre ne se regarde pas sur
+    Netflix. Le front affiche les libellés qu'il reçoit ; il n'a aucune liste
+    en dur, ce qui lui évite d'inventer une case que le catalogue ne remplit
+    pas.
 
-    ES absent : une liste vide plutôt qu'une erreur. Le composant masque
-    simplement ses cases — la recherche, elle, marche toujours.
+    La langue compte : les plateformes sont indexées par pays, et « Netflix »
+    en France n'est pas « Shahid » en Arabie saoudite.
+
+    ES absent : des groupes vides plutôt qu'une erreur. Le composant masque
+    ses cases — la recherche, elle, marche toujours.
     """
-    trouvees = await moteur.facettes(univers)
+    retenue = langue_servie(langue)
+    trouvees = await moteur.facettes(univers, langue=retenue) or {}
     return {
-        "dimension": univers.champ_filtre,
-        "libelle": univers.label_filtre,
-        "valeurs": [facette.publique() for facette in trouvees or []],
+        "langue": retenue,
+        "groupes": [
+            {
+                "champ": dimension.champ,
+                "libelle": dimension.libelle,
+                "valeurs": [facette.publique() for facette in trouvees.get(dimension.champ, [])],
+            }
+            for dimension in univers.dimensions
+        ],
     }

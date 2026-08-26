@@ -8,22 +8,31 @@ qu'aucune vignette ne porte.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from fiv_webapp.deps import Conn, FichesDep, UniversDep
+from fiv_webapp.recherche import langue_servie
 
 router = APIRouter()
 
 
 @router.get("/fiche/{identifiant}")
 async def fiche(
-    conn: Conn, fiches: FichesDep, univers: UniversDep, identifiant: int
+    conn: Conn,
+    fiches: FichesDep,
+    univers: UniversDep,
+    identifiant: int,
+    langue: Annotated[str | None, Query(max_length=10)] = None,
 ) -> dict[str, Any]:
     """L'œuvre en grand. `identifiant` est la clé de la vignette — id TMDB
-    pour séries et films, pivot pour les livres — celle que la carte porte."""
-    trouvee = await fiches.pour(conn, univers, identifiant)
+    pour séries et films, pivot pour les livres — celle que la carte porte.
+
+    La langue décide du titre et du **synopsis** rendus, et du pays dont on
+    lit la disponibilité : « sur Netflix » n'a de sens que quelque part.
+    """
+    trouvee = await fiches.pour(conn, univers, identifiant, langue=langue_servie(langue))
     if trouvee is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,

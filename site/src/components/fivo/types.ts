@@ -36,14 +36,46 @@ export interface Facette {
   nombre: number
 }
 
-/** Ce sur quoi cet univers se filtre. La dimension varie — genres pour les
- *  séries et les films, langues pour les livres, qui n'ont aucun genre en
- *  base — et le front n'en sait rien d'avance : il affiche ce qu'on lui
- *  répond, libellé compris. */
-export interface Filtres {
-  dimension: string
+/** Une dimension de filtre et ses valeurs. Le front n'en connaît aucune
+ *  d'avance : il affiche les groupes qu'on lui répond, libellés compris — les
+ *  séries et les films portent genres ET plateformes, un livre ne se regarde
+ *  pas sur Netflix. */
+export interface GroupeFiltre {
+  champ: string
   libelle: string
   valeurs: Facette[]
+}
+
+export interface Filtres {
+  langue: string
+  groupes: GroupeFiltre[]
+}
+
+/** Une plateforme de diffusion, telle que JustWatch la rend via TMDB. */
+export interface Plateforme {
+  nom: string
+  logo: string | null
+}
+
+/** Une façon de regarder l'œuvre, et qui la propose. */
+export interface Offre {
+  genre: string
+  libelle: string
+  plateformes: Plateforme[]
+}
+
+/** Une bande-annonce ou un extrait. `url` et `vignette` sont fabriquées par
+ *  le serveur : lui seul sait quels sites il sait adresser. */
+export interface Video {
+  site: string
+  cle: string
+  type: string
+  nom: string | null
+  langue: string | null
+  officielle: boolean
+  saison: number | null
+  url: string | null
+  vignette: string | null
 }
 
 export interface Personne {
@@ -97,6 +129,14 @@ export interface Fiche {
   distribution: Personne[]
   realisation: Personne[]
   saisons: Saison[]
+  /** Où regarder, dans le pays de la langue demandée. */
+  offres: Offre[]
+  /** Le lien JustWatch du pays — TMDB impose de citer la source. */
+  lienOffres: string | null
+  /** Les pays où l'œuvre est disponible : de quoi distinguer « rien chez
+   *  vous » de « aucune donnée ». */
+  paysOffres: string[]
+  videos: Video[]
 }
 
 export interface Suggestion {

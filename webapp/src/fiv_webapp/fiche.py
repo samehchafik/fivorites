@@ -125,6 +125,100 @@ class Episode:
 
 
 @dataclass(frozen=True, slots=True)
+class Plateforme:
+    """Un service, tel que JustWatch le rend à travers TMDB."""
+
+    nom: str
+    logo: str | None
+
+    def publique(self) -> dict[str, Any]:
+        return {"nom": self.nom, "logo": self.logo}
+
+
+@dataclass(frozen=True, slots=True)
+class Offre:
+    """Une façon de regarder l'œuvre, et qui la propose.
+
+    Les cinq types de TMDB, dans l'ordre qui intéresse quelqu'un qui cherche
+    où regarder : ce qui est compris dans un abonnement d'abord, ce qui se
+    paie ensuite.
+    """
+
+    genre: str
+    libelle: str
+    plateformes: list[Plateforme]
+
+    def publique(self) -> dict[str, Any]:
+        return {
+            "genre": self.genre,
+            "libelle": self.libelle,
+            "plateformes": [p.publique() for p in self.plateformes],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Video:
+    """Une bande-annonce ou un extrait, tel que `sourcing.video` le porte."""
+
+    site: str
+    cle: str
+    type: str
+    nom: str | None
+    langue: str | None
+    officielle: bool
+    saison: int | None
+
+    @property
+    def url(self) -> str | None:
+        """L'adresse de la vidéo. YouTube seulement pour l'instant : c'est ce
+        que TMDB rend, et fabriquer une URL pour un site qu'on ne connaît pas
+        donnerait un lien mort."""
+        if self.site.lower() == "youtube":
+            return f"https://www.youtube.com/watch?v={self.cle}"
+        if self.site.lower() == "vimeo":
+            return f"https://vimeo.com/{self.cle}"
+        return None
+
+    @property
+    def vignette(self) -> str | None:
+        """L'image d'attente, servie par le site de la vidéo — jamais un
+        lecteur chargé d'office : trois iframes YouTube dans une modale, c'est
+        trois traceurs et un mégaoctet avant tout clic."""
+        if self.site.lower() == "youtube":
+            return f"https://i.ytimg.com/vi/{self.cle}/mqdefault.jpg"
+        return None
+
+    def publique(self) -> dict[str, Any]:
+        return {
+            "site": self.site,
+            "cle": self.cle,
+            "type": self.type,
+            "nom": self.nom,
+            "langue": self.langue,
+            "officielle": self.officielle,
+            "saison": self.saison,
+            "url": self.url,
+            "vignette": self.vignette,
+        }
+
+
+# Les types d'offre de TMDB, dans l'ordre d'intérêt et avec leur libellé —
+# les mêmes que l'admin (`catalog.WATCH_KINDS`), pour que les deux fronts
+# nomment la même chose pareil.
+OFFRES = (
+    ("flatrate", "Par abonnement"),
+    ("free", "Gratuit"),
+    ("ads", "Gratuit avec publicité"),
+    ("rent", "En location"),
+    ("buy", "À l'achat"),
+)
+
+# Le pays dont on lit la disponibilité, par langue — la même correspondance
+# que l'index (`fiv_admin.search.PAYS_DE_LANGUE`).
+PAYS_DE_LANGUE = {"fr": "FR", "en": "US", "es": "ES", "ar": "SA"}
+
+
+@dataclass(frozen=True, slots=True)
 class Fiche:
     """L'œuvre en grand. `oeuvre_id` est l'identité que les boutons de
     classement manipulent — la modale les garde, c'est tout l'intérêt d'y
@@ -151,6 +245,16 @@ class Fiche:
     distribution: list[Personne] = field(default_factory=list)
     realisation: list[Personne] = field(default_factory=list)
     saisons: list[Saison] = field(default_factory=list)
+    # Où regarder, dans le pays de la langue demandée.
+    offres: list[Offre] = field(default_factory=list)
+    # Le lien JustWatch du pays : la page qui fait autorité, et le seul
+    # endroit où l'on saura si l'offre a changé depuis la collecte. TMDB
+    # impose de citer la source, et c'est ce lien qui le fait.
+    lien_offres: str | None = None
+    # Les pays où l'œuvre est disponible : sert à distinguer « rien chez
+    # vous » de « aucune donnée du tout ».
+    pays_offres: list[str] = field(default_factory=list)
+    videos: list[Video] = field(default_factory=list)
 
     def publique(self) -> dict[str, Any]:
         return {
@@ -175,6 +279,10 @@ class Fiche:
             "distribution": [personne.publique() for personne in self.distribution],
             "realisation": [personne.publique() for personne in self.realisation],
             "saisons": [saison.publique() for saison in self.saisons],
+            "offres": [offre.publique() for offre in self.offres],
+            "lienOffres": self.lien_offres,
+            "paysOffres": self.pays_offres,
+            "videos": [video.publique() for video in self.videos],
         }
 
 
@@ -206,13 +314,68 @@ _FICHE_TMDB = """
                nullif(jsonb_path_query_array(r.payload, %(p_cast_agg)s::jsonpath), '[]'::jsonb),
                jsonb_path_query_array(r.payload, %(p_cast)s::jsonpath)
            )                                                                as distribution,
-           jsonb_path_query_array(r.payload, %(p_crew)s::jsonpath)          as realisation
+           jsonb_path_query_array(r.payload, %(p_crew)s::jsonpath)          as realisation,
+           -- Le synopsis dans la langue demandée. La fiche n'est collectée
+           -- qu'une fois, en `fr-FR` : sans cette extraction, changer de
+           -- langue ne changeait rien au texte — et surtout, une œuvre sans
+           -- synopsis français n'en affichait AUCUN alors que l'anglais dort
+           -- dans le même payload. C'est le « pas de description » constaté.
+           --
+           -- L'ordre départage les variantes régionales : la région de la
+           -- langue d'abord (`fr-FR` avant `fr-CA`), sinon n'importe laquelle.
+           coalesce((
+               select jsonb_agg(tr -> 'data'
+                                order by (tr ->> 'iso_3166_1' = %(region)s) desc)
+               from jsonb_array_elements(
+                   coalesce(r.payload -> 'translations' -> 'translations', '[]'::jsonb)) tr
+               where tr ->> 'iso_639_1' = %(langue)s
+           ), '[]'::jsonb)                                                  as traductions,
+           -- Où regarder, dans le pays de la langue. TMDB en porte une
+           -- centaine ; les envoyer tous ferait transiter un catalogue
+           -- mondial pour afficher trois logos.
+           coalesce(
+               r.payload -> 'watch/providers' -> 'results' -> %(pays)s, '{}'::jsonb
+           )                                                                as offres,
+           -- Les pays où l'œuvre est disponible : de quoi dire « rien chez
+           -- vous, mais disponible ailleurs » plutôt qu'un vide qu'on
+           -- prendrait pour une donnée manquante.
+           coalesce((
+               select jsonb_agg(pays order by pays)
+               from jsonb_object_keys(
+                   coalesce(r.payload -> 'watch/providers' -> 'results', '{}'::jsonb)
+               ) as pays
+           ), '[]'::jsonb)                                                  as pays_offres
     from raw_source r
     where r.source = %(source)s and r.kind = %(kind)s and r.source_id = %(id)s
       and r.http_status between 200 and 299 and r.payload is not null
     order by r.fetched_at desc
     limit 1
 """
+
+# Les vidéos d'une œuvre : bandes-annonces, teasers, extraits. Mêmes règles
+# que l'admin (`catalog.fetch_work`) :
+#
+# * `vivante is not false` et non `is true` — une vidéo jamais vérifiée (null)
+#   reste montrée. La prudence ne doit pas vider la fiche avant que la
+#   première passe de `videos-check` ait tourné ;
+# * l'ordre est celui de `priorite` (bande-annonce avant teaser avant extrait,
+#   officielle avant le reste), puis la langue demandée avant les autres, puis
+#   la plus récente. Aucun FILTRE de langue : une série dont la seule
+#   bande-annonce est italienne doit quand même en avoir une.
+_VIDEOS = """
+    select v.site, v.cle, v.type, v.nom, v.lang, v.officiel, v.saison
+    from sourcing.video v
+    join oeuvre o on o.id = v.oeuvre_id
+    where o.univers = %(univers)s and o.id_tmdb = %(id)s and v.vivante is not false
+    order by v.priorite,
+             case when v.lang = %(langue)s then 0 when v.lang = 'en' then 1 else 2 end,
+             v.publie_le desc nulls last
+    limit %(limite)s
+"""
+
+# Ce qu'on montre de vidéos. Six : de quoi couvrir la bande-annonce, un teaser
+# et quelques extraits sans transformer la fiche en chaîne YouTube.
+VIDEOS_MAX = 6
 
 # Le pivot d'une œuvre TMDB : l'identité que les boutons manipulent. Séparé de
 # la fiche parce qu'il vient d'une autre table, et qu'une œuvre peut avoir un
@@ -275,11 +438,16 @@ class Fiches:
     c'est elle qui garantit au front une seule modale."""
 
     async def pour(
-        self, conn: psycopg.AsyncConnection, univers: Univers, identifiant: int
+        self,
+        conn: psycopg.AsyncConnection,
+        univers: Univers,
+        identifiant: int,
+        *,
+        langue: str = "fr",
     ) -> Fiche | None:
         if univers.pivot_card:
-            return await self._livre(conn, univers, identifiant)
-        return await self._tmdb(conn, univers, identifiant)
+            return await self._livre(conn, univers, identifiant, langue=langue)
+        return await self._tmdb(conn, univers, identifiant, langue=langue)
 
     async def episodes(
         self, conn: psycopg.AsyncConnection, identifiant: int, numero: int
@@ -332,9 +500,15 @@ class Fiches:
     # --- séries et films ----------------------------------------------------
 
     async def _tmdb(
-        self, conn: psycopg.AsyncConnection, univers: Univers, identifiant: int
+        self,
+        conn: psycopg.AsyncConnection,
+        univers: Univers,
+        identifiant: int,
+        *,
+        langue: str,
     ) -> Fiche | None:
         parametres = self._parametres_credits(univers)
+        pays = PAYS_DE_LANGUE.get(langue, "FR")
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 _FICHE_TMDB,
@@ -342,6 +516,9 @@ class Fiches:
                     "source": SOURCE,
                     "kind": KIND_TMDB[univers.interne],
                     "id": str(identifiant),
+                    "langue": langue,
+                    "region": pays,
+                    "pays": pays,
                     **parametres,
                 },
             )
@@ -350,18 +527,34 @@ class Fiches:
                 return None
             await cur.execute(_PIVOT, {"univers": univers.interne, "id": identifiant})
             pivot = await cur.fetchone()
+            await cur.execute(
+                _VIDEOS,
+                {
+                    "univers": univers.interne,
+                    "id": identifiant,
+                    "langue": langue,
+                    "limite": VIDEOS_MAX,
+                },
+            )
+            videos = await cur.fetchall()
 
         sortie = ligne.get("sortie_tv") or ligne.get("sortie_film")
         note = ligne.get("note")
+        # La traduction demandée d'abord, la racine en repli. Un champ vide
+        # dans une traduction veut dire « pas de version localisée » : il ne
+        # doit pas effacer le texte qu'on a.
+        traduction = (ligne.get("traductions") or [{}])[0] or {}
+        titre_traduit = (traduction.get("name") or traduction.get("title") or "").strip()
+        synopsis_traduit = (traduction.get("overview") or "").strip()
         return Fiche(
             id=identifiant,
             oeuvre_id=pivot["id"] if pivot else None,
             univers=univers.slug,
-            titre=ligne.get("titre"),
+            titre=titre_traduit or ligne.get("titre"),
             titre_original=ligne.get("titre_original"),
             accroche=ligne.get("accroche"),
             annee=int(sortie[:4]) if sortie else None,
-            synopsis=ligne.get("synopsis"),
+            synopsis=synopsis_traduit or ligne.get("synopsis"),
             affiche=ligne.get("affiche"),
             fond=ligne.get("fond"),
             genres=[
@@ -379,6 +572,10 @@ class Fiches:
             distribution=self._distribution(ligne.get("distribution")),
             realisation=self._realisation(ligne.get("realisation"), ligne.get("creation")),
             saisons=self._saisons(ligne.get("saisons")),
+            offres=self._offres(ligne.get("offres")),
+            lien_offres=(ligne.get("offres") or {}).get("link"),
+            pays_offres=list(ligne.get("pays_offres") or []),
+            videos=self._videos(videos),
         )
 
     def _parametres_credits(self, univers: Univers) -> dict[str, str]:
@@ -492,6 +689,44 @@ class Fiches:
             )
         return sorted(retenues, key=lambda saison: saison.numero)
 
+    def _offres(self, offres: dict[str, Any] | None) -> list[Offre]:
+        """Les façons de regarder l'œuvre, dans l'ordre d'intérêt.
+
+        Les plateformes de chaque type sont triées par `display_priority` —
+        l'ordre que JustWatch juge pertinent pour le pays, et le seul dont on
+        dispose. Un type sans plateforme ne produit pas de ligne vide.
+        """
+        retenues: list[Offre] = []
+        for genre, libelle in OFFRES:
+            plateformes = [
+                Plateforme(nom=nom, logo=fournisseur.get("logo_path"))
+                for fournisseur in sorted(
+                    (offres or {}).get(genre) or [],
+                    key=lambda f: f.get("display_priority") or 0,
+                )
+                if (nom := (fournisseur.get("provider_name") or "").strip())
+            ]
+            if plateformes:
+                retenues.append(Offre(genre=genre, libelle=libelle, plateformes=plateformes))
+        return retenues
+
+    def _videos(self, lignes: list[dict[str, Any]] | None) -> list[Video]:
+        """Les vidéos, telles que `sourcing.video` les rend. Une clé vide
+        n'est pas une vidéo : elle donnerait un lien mort."""
+        return [
+            Video(
+                site=ligne["site"],
+                cle=ligne["cle"],
+                type=ligne["type"],
+                nom=(ligne.get("nom") or "").strip() or None,
+                langue=(ligne.get("lang") or "").strip() or None,
+                officielle=bool(ligne.get("officiel")),
+                saison=ligne.get("saison"),
+            )
+            for ligne in lignes or []
+            if (ligne.get("cle") or "").strip() and (ligne.get("site") or "").strip()
+        ]
+
     # --- livres --------------------------------------------------------------
 
     def _chapeau(self, article: str | None) -> str | None:
@@ -514,7 +749,12 @@ class Fiches:
         return "\n".join(garde).strip() or None
 
     async def _livre(
-        self, conn: psycopg.AsyncConnection, univers: Univers, identifiant: int
+        self,
+        conn: psycopg.AsyncConnection,
+        univers: Univers,
+        identifiant: int,
+        *,
+        langue: str,
     ) -> Fiche | None:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(_FICHE_LIVRE, {"id": identifiant})

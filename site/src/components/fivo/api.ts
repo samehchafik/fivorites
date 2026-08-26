@@ -50,7 +50,9 @@ export function rechercher(
   q: string,
   options: {
     page?: number
-    filtres?: string[]
+    /** Les valeurs cochées, par dimension : `{genres: [...], plateformes: [...]}`.
+     *  Les dimensions viennent de `/filtres` — rien n'est en dur ici. */
+    filtres?: Record<string, string[]>
     /** La langue de qui cherche — sans elle, la liste mélange les langues. */
     langue?: string
     signal?: AbortSignal
@@ -59,23 +61,32 @@ export function rechercher(
   const params = new URLSearchParams({ univers, q })
   if (options.page && options.page > 1) params.set('page', String(options.page))
   if (options.langue) params.set('langue', options.langue)
-  // Répété plutôt que joint : un genre peut contenir une virgule (« Action &
-  // Adventure » n'en a pas, mais rien ne le garantit), et FastAPI lit
-  // nativement la forme répétée.
-  for (const valeur of options.filtres ?? []) params.append('filtres', valeur)
+  // Répété plutôt que joint : une valeur peut contenir une virgule, et
+  // FastAPI lit nativement la forme répétée. Un paramètre par dimension.
+  for (const [champ, valeurs] of Object.entries(options.filtres ?? {})) {
+    for (const valeur of valeurs) params.append(champ, valeur)
+  }
   return requete(`/recherche?${params}`, { signal: options.signal })
 }
 
-/** Les filtres disponibles pour cet univers — dimension, libellé, valeurs. */
-export function chargerFiltres(univers: UniversSlug): Promise<Filtres> {
+/** Les groupes de filtres de cet univers. La langue compte : les plateformes
+ *  sont indexées par pays, et « Netflix » en France n'est pas « Shahid » en
+ *  Arabie saoudite. */
+export function chargerFiltres(univers: UniversSlug, langue?: string): Promise<Filtres> {
   const params = new URLSearchParams({ univers })
+  if (langue) params.set('langue', langue)
   return requete(`/filtres?${params}`)
 }
 
 /** La fiche détaillée. `identifiant` est la clé de la vignette — celle que
  *  la carte porte dans `id`, jamais le pivot. */
-export function chargerFiche(univers: UniversSlug, identifiant: number): Promise<Fiche> {
+export function chargerFiche(
+  univers: UniversSlug,
+  identifiant: number,
+  langue?: string,
+): Promise<Fiche> {
   const params = new URLSearchParams({ univers })
+  if (langue) params.set('langue', langue)
   return requete(`/fiche/${identifiant}?${params}`)
 }
 

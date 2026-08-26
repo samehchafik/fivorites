@@ -20,8 +20,14 @@ import { useEffect, useRef, useState } from 'react'
 
 import { chargerFiltres, rechercher } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
-import { FiltresGenres } from './FiltresGenres'
-import { TYPE_LABELS, type Carte, type Facette, type Statut, type UniversSlug } from './types'
+import { BarreFiltres } from './BarreFiltres'
+import {
+  TYPE_LABELS,
+  type Carte,
+  type GroupeFiltre,
+  type Statut,
+  type UniversSlug,
+} from './types'
 
 const DEBOUNCE_MS = 150
 const FRAPPE_MIN = 2
@@ -58,12 +64,10 @@ export function Recherche({
   const [page, setPage] = useState(1)
   const [suite, setSuite] = useState(false)
 
-  const [filtres, setFiltres] = useState<{ libelle: string; valeurs: Facette[] }>({
-    libelle: '',
-    valeurs: [],
-  })
-  const [choisis, setChoisis] = useState<string[]>([])
-  const [deplie, setDeplie] = useState(false)
+  const [groupes, setGroupes] = useState<GroupeFiltre[]>([])
+  // Les valeurs cochées, par dimension : `{genres: [...], plateformes: [...]}`.
+  const [choisis, setChoisis] = useState<Record<string, string[]>>({})
+  const [deplies, setDeplies] = useState<string[]>([])
 
   // Ce que les cartes affichées reflètent déjà — même rôle que dans
   // `Suggestions` : revenir sur l'onglet ne doit pas rejouer la requête qui
@@ -76,29 +80,35 @@ export function Recherche({
     langue: string
   } | null>(null)
 
-  // Les valeurs de filtre de l'univers, chargées une fois par univers. En
-  // échec (ES absent), la barre disparaît : la recherche marche toujours.
+  // Les groupes de filtres, rechargés à chaque changement d'univers ET de
+  // langue : les plateformes sont indexées par pays, donc « Netflix » en
+  // France n'est pas la même liste que « Shahid » en Arabie saoudite. En
+  // échec (ES absent), la barre disparaît — la recherche marche toujours.
   useEffect(() => {
     let abandonne = false
-    setChoisis([])
-    setDeplie(false)
-    chargerFiltres(univers)
+    setChoisis({})
+    setDeplies([])
+    chargerFiltres(univers, langue)
       .then((reponse) => {
-        if (!abandonne) setFiltres({ libelle: reponse.libelle, valeurs: reponse.valeurs })
+        if (!abandonne) setGroupes(reponse.groupes)
       })
       .catch(() => {
-        if (!abandonne) setFiltres({ libelle: '', valeurs: [] })
+        if (!abandonne) setGroupes([])
       })
     return () => {
       abandonne = true
     }
-  }, [univers])
+  }, [univers, langue])
 
   // La recherche : première page à chaque changement de frappe, de filtre ou
   // d'univers ; page suivante quand on demande la suite.
   useEffect(() => {
     const propre = texte.trim()
-    const signature = choisis.join('|')
+    // La signature de ce qui est coché, toutes dimensions confondues : c'est
+    // elle qui dit si la recherche affichée est encore la bonne.
+    const signature = JSON.stringify(
+      Object.fromEntries(Object.entries(choisis).map(([c, v]) => [c, [...v].sort()])),
+    )
     if (propre.length < FRAPPE_MIN) {
       setCartes([])
       setEtat('repos')
@@ -149,10 +159,19 @@ export function Recherche({
     }
   }, [texte, univers, actif, choisis, suite, page, langue])
 
-  const basculer = (valeur: string) =>
-    setChoisis((actuels) =>
-      actuels.includes(valeur) ? actuels.filter((v) => v !== valeur) : [...actuels, valeur],
-    )
+  const basculer = (champ: string, valeur: string) =>
+    setChoisis((actuels) => {
+      const cochees = actuels[champ] ?? []
+      const suivantes = cochees.includes(valeur)
+        ? cochees.filter((v) => v !== valeur)
+        : [...cochees, valeur]
+      // Une dimension sans valeur cochée sort de la carte : elle ne doit pas
+      // partir en paramètre vide.
+      const suivants = { ...actuels }
+      if (suivantes.length) suivants[champ] = suivantes
+      else delete suivants[champ]
+      return suivants
+    })
 
   return (
     <div>
@@ -168,14 +187,13 @@ export function Recherche({
         autoComplete="off"
       />
 
-      <FiltresGenres
-        libelle={filtres.libelle}
-        valeurs={filtres.valeurs}
+      <BarreFiltres
+        groupes={groupes}
         choisis={choisis}
-        deplie={deplie}
+        deplies={deplies}
         onBasculer={basculer}
-        onDeplier={() => setDeplie(true)}
-        onEffacer={() => setChoisis([])}
+        onDeplier={(champ) => setDeplies((actuels) => [...actuels, champ])}
+        onEffacer={() => setChoisis({})}
       />
 
       {etat === 'repos' && (
@@ -192,7 +210,7 @@ export function Recherche({
       {etat === 'servi' && cartes.length === 0 && (
         <p className="fivo-message">
           Rien trouvé pour « {texte.trim()} »
-          {choisis.length > 0 ? ' avec ces filtres' : ''}. Essayez autrement ?
+          {Object.keys(choisis).length > 0 ? ' avec ces filtres' : ''}. Essayez autrement ?
         </p>
       )}
 

@@ -454,6 +454,23 @@ PAYLOAD_1399 = {
         ],
     },
     "created_by": [{"name": "David Benioff"}],
+    # La disponibilité, telle que TMDB la range : par pays, et par type
+    # d'offre. Deux pays servis, plus un qui ne l'est pas — il ne doit pas
+    # entrer — et une offre de location, qui ne compte pas comme « incluse ».
+    "watch/providers": {
+        "results": {
+            "FR": {
+                "link": "https://www.themoviedb.org/tv/1399/watch?locale=FR",
+                "flatrate": [
+                    {"provider_id": 8, "provider_name": "Netflix", "display_priority": 1},
+                    {"provider_id": 119, "provider_name": "Amazon Prime Video"},
+                ],
+                "rent": [{"provider_id": 2, "provider_name": "Apple TV"}],
+            },
+            "SA": {"flatrate": [{"provider_id": 350, "provider_name": "Shahid"}]},
+            "BR": {"flatrate": [{"provider_id": 384, "provider_name": "HBO Max"}]},
+        }
+    },
     "alternative_titles": {"results": [{"iso_3166_1": "ES", "title": "Juego de tronos"}]},
     "translations": {
         "translations": [
@@ -530,7 +547,24 @@ class TestExtraction:
             "Kit Harington",
         ]
 
+        # Les plateformes, par pays servi. « HBO Max » n'entre pas : il est
+        # brésilien, et le Brésil n'est pas un pays servi. « Apple TV » non
+        # plus : c'est une location, pas une inclusion.
+        assert got["plateformes_langues"] == {
+            "fr": ["Amazon Prime Video", "Netflix"],
+            "ar": ["Shahid"],
+        } or got["plateformes_langues"] == {
+            "fr": ["Netflix", "Amazon Prime Video"],
+            "ar": ["Shahid"],
+        }
+
         doc = construire_doc(got, "series")
+        assert doc["plateformes_fr"] == ["Amazon Prime Video", "Netflix"]
+        assert doc["plateformes_ar"] == ["Shahid"]
+        # Une langue sans disponibilité n'a pas de champ du tout — pas une
+        # liste vide, qui ferait croire à « aucune plateforme » là où c'est
+        # « pas de donnée ».
+        assert "plateformes_en" not in doc
         assert doc["fiche"] is True
         assert doc["has_poster"] is True
         assert "Le trône de fer" in doc["titres"]

@@ -19,6 +19,7 @@ import type { Fiche, Statut, UniversSlug } from './types'
 
 export function FicheModale({
   univers,
+  langue,
   identifiant,
   statutActuel,
   onFermer,
@@ -26,6 +27,9 @@ export function FicheModale({
   onDeclasser,
 }: {
   univers: UniversSlug
+  /** La langue : elle décide du titre, du synopsis et du pays dont on lit la
+   *  disponibilité. « Sur Netflix » n'a de sens que quelque part. */
+  langue: string
   /** La clé de la vignette — `null` quand rien n'est ouvert. */
   identifiant: number | null
   statutActuel: Statut | null
@@ -41,7 +45,7 @@ export function FicheModale({
     let abandonne = false
     setFiche(null)
     setEtat('en-cours')
-    chargerFiche(univers, identifiant)
+    chargerFiche(univers, identifiant, langue)
       .then((chargee) => {
         if (abandonne) return
         setFiche(chargee)
@@ -53,7 +57,7 @@ export function FicheModale({
     return () => {
       abandonne = true
     }
-  }, [univers, identifiant])
+  }, [univers, identifiant, langue])
 
   const fond = urlAffiche(fiche?.fond ?? null, 'w780')
   const affiche = urlAffiche(fiche?.affiche ?? null, 'w342')
@@ -164,6 +168,93 @@ export function FicheModale({
                       </li>
                     )
                   })}
+                </ul>
+              </section>
+            )}
+
+            {/* Où regarder — la donnée vient de JustWatch via TMDB, qui impose
+                de citer la source : c'est ce que fait le lien. */}
+            {fiche.offres.length > 0 && (
+              <section className="fiche-section">
+                <h3>Où regarder</h3>
+                {fiche.offres.map((offre) => (
+                  <div key={offre.genre} className="fiche-offre">
+                    <span className="fiche-offre-libelle">{offre.libelle}</span>
+                    <ul className="fiche-plateformes">
+                      {offre.plateformes.map((plateforme) => (
+                        <li key={plateforme.nom} title={plateforme.nom}>
+                          {plateforme.logo ? (
+                            <img
+                              src={urlAffiche(plateforme.logo, 'w92') ?? ''}
+                              alt={plateforme.nom}
+                              loading="lazy"
+                            />
+                          ) : (
+                            <span>{plateforme.nom}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+                {fiche.lienOffres && (
+                  <p className="fiche-source">
+                    <a href={fiche.lienOffres} target="_blank" rel="noreferrer noopener">
+                      Offres et disponibilité — JustWatch
+                    </a>
+                  </p>
+                )}
+              </section>
+            )}
+
+            {/* Aucune offre ici, mais ailleurs : le dire vaut mieux qu'un
+                silence qu'on prendrait pour une donnée manquante. */}
+            {fiche.offres.length === 0 && fiche.paysOffres.length > 0 && (
+              <section className="fiche-section">
+                <h3>Où regarder</h3>
+                <p className="fiche-noms">
+                  Rien dans votre pays — mais disponible dans {fiche.paysOffres.length} autre
+                  {fiche.paysOffres.length > 1 ? 's' : ''}.
+                </p>
+              </section>
+            )}
+
+            {/* Les vidéos : la vignette et un lien, jamais un lecteur chargé
+                d'office — trois iframes YouTube dans une modale, ce sont trois
+                traceurs et un mégaoctet avant le moindre clic. */}
+            {fiche.videos.length > 0 && (
+              <section className="fiche-section">
+                <h3>Bandes-annonces</h3>
+                <ul className="fiche-videos">
+                  {fiche.videos.map((video) => (
+                    <li key={`${video.site}-${video.cle}`}>
+                      <a
+                        href={video.url ?? undefined}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        title={video.nom ?? video.type}
+                      >
+                        {video.vignette ? (
+                          <img src={video.vignette} alt="" loading="lazy" />
+                        ) : (
+                          <span className="fiche-video-vide" aria-hidden="true" />
+                        )}
+                        <span className="fiche-video-lecture" aria-hidden="true">
+                          ▶
+                        </span>
+                        <strong>{video.nom ?? video.type}</strong>
+                        <span className="fiche-video-meta">
+                          {[
+                            video.type,
+                            video.langue?.toUpperCase(),
+                            video.saison ? `saison ${video.saison}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
+                      </a>
+                    </li>
+                  ))}
                 </ul>
               </section>
             )}
