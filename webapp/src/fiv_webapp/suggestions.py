@@ -343,8 +343,22 @@ def profil_depuis(
     return [centre[i] + POIDS_REJET * (centre[i] - repoussoir[i]) for i in range(axes)]
 
 
+# Les hubs de chaînes : « HBO Max Amazon Channel » est l'abonnement HBO Max
+# souscrit DANS l'appli Prime Video — l'œuvre se regarde donc aussi là. Sans
+# cette traduction, filtrer « Amazon Prime Video » écartait une série que la
+# fiche montrait pourtant disponible via Prime (le cas signalé : « A Knight
+# of the Seven Kingdoms », flatrate = HBO Max + HBO Max Amazon Channel).
+# Les noms à droite sont les `provider_name` canoniques de TMDB — ceux que
+# portent les puces.
+HUBS_DE_CHAINES = (
+    (" Amazon Channel", "Amazon Prime Video"),
+    (" Apple TV Channel", "Apple TV"),
+)
+
+
 def replier_enseignes(noms: list[str]) -> list[str]:
-    """Les variantes d'une enseigne, repliées sur elle.
+    """Les variantes d'une enseigne, repliées sur elle — et les chaînes des
+    hubs comptées pour le hub.
 
     TMDB liste « Netflix » ET « Netflix Standard with Ads », « Canal+ » ET
     « Canal+ Séries » : des offres commerciales, pas des plateformes — et en
@@ -352,8 +366,24 @@ def replier_enseignes(noms: list[str]) -> list[str]:
     espace) se replie sur elle. Mesuré sur la production : Lucifer passe de
     « Netflix, Netflix Standard with Ads, Molotov TV, SFR Play » à
     « Netflix, Molotov TV, SFR Play ».
+
+    Une chaîne d'un hub (« X Amazon Channel ») produit DEUX enseignes : X —
+    le nom dépouillé du suffixe — et le hub : l'œuvre se regarde dans les
+    deux applis, et le nom complet, lui, n'est le nom d'aucune plateforme.
     """
-    uniques = sorted(set(noms), key=len)
+    elargis = []
+    for nom in noms:
+        chaine = next(
+            ((suffixe, hub) for suffixe, hub in HUBS_DE_CHAINES if nom.endswith(suffixe)),
+            None,
+        )
+        if chaine is None:
+            elargis.append(nom)
+        else:
+            suffixe, hub = chaine
+            elargis.append(nom[: -len(suffixe)].strip())
+            elargis.append(hub)
+    uniques = sorted(set(elargis), key=len)
     retenus: list[str] = []
     for nom in uniques:
         if not any(nom.startswith(enseigne + " ") for enseigne in retenus):

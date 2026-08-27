@@ -646,3 +646,19 @@ async def test_le_filtre_balaie_tout_le_vivier() -> None:
     conn = FauxConn(plateformes={"1004": ["Netflix"]})
     retenues, _ = await lancer(graphe, conn=conn, sur_plateformes=["Netflix"], limite=1)
     assert [s.oeuvre_id for s in retenues] == [2004]
+
+
+def test_une_chaine_amazon_compte_pour_prime_video() -> None:
+    """« HBO Max Amazon Channel » est l'abonnement HBO Max souscrit DANS
+    l'appli Prime Video : l'œuvre se regarde dans les deux. Le cas signalé —
+    une série que le filtre Prime Video écartait alors que la fiche la
+    montrait disponible via Prime."""
+    assert replier_enseignes(["HBO Max", "HBO Max Amazon Channel"]) == [
+        "Amazon Prime Video",
+        "HBO Max",
+    ]
+    # Le hub déjà présent ne se dédouble pas.
+    assert replier_enseignes(["Amazon Prime Video", "Paramount Plus Amazon Channel"]) == [
+        "Amazon Prime Video",
+        "Paramount Plus",
+    ]
