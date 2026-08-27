@@ -21,7 +21,14 @@ import { MaListe } from './MaListe'
 import { PersonneModale } from './PersonneModale'
 import { Recherche } from './Recherche'
 import { Suggestions } from './Suggestions'
-import { LANGUES, LANGUE_DEFAUT, LANGUE_LABELS, adresse_dans, type Langue } from './langue'
+import {
+  LANGUES,
+  LANGUE_DEFAUT,
+  LANGUE_DRAPEAUX,
+  LANGUE_LABELS,
+  adresse_dans,
+  type Langue,
+} from './langue'
 import { FournisseurTextes } from './textes'
 import { textes } from '../../i18n/textes'
 import { UNIVERS, type Statut, type UniversSlug } from './types'
@@ -179,8 +186,12 @@ export default function FivoSuggest({
                 }}
               >
                 {LANGUES.map((code) => (
+                  // Le drapeau devant le nom, comme dans l'en-tête. Un
+                  // `<option>` ne se met pas en forme : l'emoji est le seul
+                  // moyen d'y porter une image, et sans police de drapeaux il
+                  // s'affiche « FR », donc lisible partout.
                   <option key={code} value={code}>
-                    {LANGUE_LABELS[code]}
+                    {LANGUE_DRAPEAUX[code]} {LANGUE_LABELS[code]}
                   </option>
                 ))}
               </select>

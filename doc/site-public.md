@@ -240,8 +240,15 @@ Trois défauts, trois causes distinctes :
    grille, sans dupliquer un mot de HTML), et le bouton d'appel disparaît —
    il pointait vers ce qui est désormais au-dessus de lui.
 
-Plus : l'en-tête tient à 375 px (langues en codes `FR EN ES AR`), les trois
-pilules sur une ligne qui glisse, et un placeholder court — le long se coupait
+Plus : l'en-tête tient à 375 px — le passage d'une langue à l'autre est un
+`<details>` qui se replie sur un seul drapeau (une trentaine de pixels au
+lieu de la centaine que prenaient quatre codes), et la place rendue revient
+aux univers, qui sont ce qu'on vient chercher dans un en-tête. `<details>` et
+non un `<select>` : le contenu reste quatre vrais liens avec leurs
+`hreflang`, et le dépliement ne coûte pas une ligne de script. Un drapeau
+désignant un pays et non une langue, le nom l'accompagne toujours — écrit à
+côté sur grand écran, en étiquette accessible partout. Les trois pilules sur
+une ligne qui glisse, et un placeholder court — le long se coupait
 sur « un auteu », et les exemples ont déménagé dans le message d'accueil, où
 ils tiennent.
 

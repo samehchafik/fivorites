@@ -23,6 +23,27 @@ export const LANGUE_NOMS: Record<Langue, string> = {
   ar: 'العربية',
 }
 
+/** Le drapeau de chaque langue.
+ *
+ *  Un drapeau désigne un PAYS, pas une langue : l'arabe ne se parle pas qu'en
+ *  Arabie saoudite ni l'anglais qu'au Royaume-Uni. C'est un raccourci assumé,
+ *  pour la place qu'il fait gagner sur un téléphone — et il n'est jamais
+ *  seul : le nom de la langue l'accompagne, en texte lisible ou en étiquette
+ *  accessible. Le pays retenu est celui que le serveur utilise déjà pour lire
+ *  la disponibilité des plateformes (`fiv_webapp.fiche.PAYS_DE_LANGUE`), pour
+ *  ne pas avoir deux réponses à la même question.
+ *
+ *  Ces caractères sont des paires d'indicateurs régionaux : sans police
+ *  d'emoji drapeaux — Windows n'en a pas — ils s'affichent « FR », « GB »,
+ *  c'est-à-dire exactement le code qu'on montrait avant. La dégradation est
+ *  lisible, et c'est pour ça qu'on peut s'en servir. */
+export const LANGUE_DRAPEAUX: Record<Langue, string> = {
+  fr: '🇫🇷',
+  en: '🇬🇧',
+  es: '🇪🇸',
+  ar: '🇸🇦',
+}
+
 /** Le sens d'écriture. L'arabe se lit de droite à gauche : `dir` sur la
  *  racine retourne la mise en page entière, y compris les marges logiques. */
 export const LANGUE_SENS: Record<Langue, 'ltr' | 'rtl'> = {

@@ -3,11 +3,25 @@
 // « fivorites » à l'étoile, et les univers en capitales précédés de la puce
 // ▶︎ (U+25B6 + sélecteur de variante texte — le même caractère que la V1).
 //
-// Il porte aussi le passage d'une langue à l'autre. Des LIENS et pas un
-// `select` : ce sont quatre pages distinctes, chacune avec son URL et son
-// `hreflang` — un menu en JavaScript les cacherait aux moteurs, et c'est
-// exactement ce qu'on ne veut pas d'une page de référencement.
-import { LANGUES, LANGUE_NOMS, chemin_localise, type Langue } from '../i18n/langues'
+// Il porte aussi le passage d'une langue à l'autre, dans un sélecteur qui se
+// déplie. Deux choix à connaître :
+//
+// * **`<details>` et non un `<select>`** : le contenu reste quatre LIENS, avec
+//   leurs URL et leurs `hreflang`. Un menu en JavaScript les cacherait aux
+//   moteurs, et c'est exactement ce qu'on ne veut pas d'une page de
+//   référencement. Le dépliement est natif — pas une ligne de script, et le
+//   clavier le manipule sans qu'on ait rien à écrire.
+// * **le drapeau porte le sélecteur replié** : quatre codes de langue en ligne
+//   mangeaient un quart d'un écran de 375 px, le drapeau seul en prend un
+//   dixième. Le nom de la langue reste écrit à côté sur grand écran, et sert
+//   d'étiquette accessible partout — un drapeau ne dit pas une langue.
+import {
+  LANGUES,
+  LANGUE_DRAPEAUX,
+  LANGUE_NOMS,
+  chemin_localise,
+  type Langue,
+} from '../i18n/langues'
 import { traduire } from '../i18n/textes'
 
 interface Props {
@@ -46,24 +60,28 @@ const univers = [
         ))
       }
     </nav>
-    <nav class="entete-langues" aria-label={traduire(langue, 'nav.langues')}>
-      {
-        LANGUES.map((code) => (
-          <a
-            href={chemin_localise(chemin, code)}
-            hreflang={code}
-            lang={code}
-            class={code === langue ? 'actif' : undefined}
-            aria-current={code === langue ? 'true' : undefined}
-          >
-            {/* Le nom entier sur grand écran, le code sur mobile : quatre
-                noms de langue ne tiennent pas dans un bandeau de 375 px, et
-                les faire déborder est ce qu'on a mesuré. */}
-            <span class="langue-long">{LANGUE_NOMS[code]}</span>
-            <span class="langue-courte" aria-hidden="true">{code.toUpperCase()}</span>
-          </a>
-        ))
-      }
-    </nav>
+    <details class="entete-langues">
+      <summary aria-label={`${traduire(langue, 'nav.langues')} : ${LANGUE_NOMS[langue]}`}>
+        <span class="drapeau" aria-hidden="true">{LANGUE_DRAPEAUX[langue]}</span>
+        <span class="langue-long">{LANGUE_NOMS[langue]}</span>
+        <span class="chevron" aria-hidden="true">▾</span>
+      </summary>
+      <nav aria-label={traduire(langue, 'nav.langues')}>
+        {
+          LANGUES.map((code) => (
+            <a
+              href={chemin_localise(chemin, code)}
+              hreflang={code}
+              lang={code}
+              class={code === langue ? 'actif' : undefined}
+              aria-current={code === langue ? 'true' : undefined}
+            >
+              <span class="drapeau" aria-hidden="true">{LANGUE_DRAPEAUX[code]}</span>
+              {LANGUE_NOMS[code]}
+            </a>
+          ))
+        }
+      </nav>
+    </details>
   </div>
 </header>

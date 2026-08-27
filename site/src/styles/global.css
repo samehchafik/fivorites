@@ -462,27 +462,100 @@ html.voile-pose {
 
 /* --- Le passage d'une langue à l'autre ---------------------------------- */
 
-/* Des liens, pas un menu : quatre pages distinctes, chacune avec son URL et
-   son hreflang. Discrets — on change de langue une fois, pas à chaque
-   visite — mais toujours là, et indexables. */
+/* Un sélecteur qui se déplie — `<details>`, donc sans une ligne de script, et
+   qui contient quatre vrais liens avec leurs `hreflang`. Replié, il tient en
+   un drapeau : quatre codes en ligne mangeaient un quart d'un écran de
+   375 px. */
 .entete-langues {
-  gap: 0;
+  position: relative;
   font-size: 0.78rem;
   text-transform: none;
 }
 
-.entete-langues a {
-  padding: 0 0.45rem;
+.entete-langues summary {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 1rem;
+  color: var(--gray-light, #b9b9b9);
+  cursor: pointer;
+  white-space: nowrap;
+  /* Le triangle par défaut de `summary` : remplacé par notre chevron, qui
+     suit l'état ouvert. */
+  list-style: none;
+}
+
+.entete-langues summary::-webkit-details-marker {
+  display: none;
+}
+
+.entete-langues summary:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.entete-langues .drapeau {
+  /* Une taille propre au drapeau : sans police d'emoji drapeaux (Windows),
+     la paire d'indicateurs régionaux s'affiche « FR », « GB » — le code
+     qu'on montrait avant, en plus petit. La dégradation reste lisible. */
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.entete-langues .chevron {
+  font-size: 0.7rem;
+  transition: transform 0.15s ease;
+}
+
+.entete-langues[open] .chevron {
+  transform: rotate(180deg);
+}
+
+/* Le panneau : posé SOUS le bandeau, aligné à droite, au-dessus de tout ce
+   que la page pourrait rendre collant. */
+.entete-langues > nav {
+  /* `.entete nav` met les univers en capitales : la liste des langues, elle,
+     s'écrit comme elles se disent. */
+  text-transform: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 9.5rem;
+  padding: 0.3rem 0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  background: var(--gray-darkest, #1a1a1a);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+/* En RTL, le panneau s'accroche à l'autre bord — sinon il sort de l'écran. */
+[dir='rtl'] .entete-langues > nav {
+  right: auto;
+  left: 0;
+}
+
+.entete-langues > nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.8rem;
+  line-height: 1.6;
   color: var(--gray-light, #b9b9b9);
 }
 
-.entete-langues a.actif {
+.entete-langues > nav a:hover {
+  background: rgba(255, 255, 255, 0.08);
   color: white;
-  font-weight: 500;
 }
 
-.langue-courte {
-  display: none;
+.entete-langues > nav a.actif {
+  color: white;
+  font-weight: 500;
 }
 
 /* --- Mobile ------------------------------------------------------------- */
@@ -495,34 +568,32 @@ html.voile-pose {
     gap: 0.3rem;
   }
 
+  /* La place rendue par le sélecteur replié revient aux univers, qui sont ce
+     qu'on vient chercher dans un en-tête. */
   .entete nav a {
-    padding: 0 0.25rem;
-    font-size: 0.72rem;
+    padding: 0 0.35rem;
+    font-size: 0.78rem;
   }
 
   .logo {
-    width: calc(var(--header-height) * 1.5);
+    width: calc(var(--header-height) * 1.6);
     flex-shrink: 0;
   }
 
-  .entete-langues a {
-    padding: 0 0.22rem;
-    font-size: 0.68rem;
-  }
-
-  /* Dix pixels de gagnés de chaque côté : à 375 px, ce sont les dix qui
-     faisaient sortir « AR » de l'écran. */
   .conteneur {
     padding-left: 0.7rem;
     padding-right: 0.7rem;
   }
 
-  .langue-long {
-    display: none;
+  /* Replié, le sélecteur n'est plus qu'un drapeau et un chevron : une
+     trentaine de pixels au lieu de la centaine que prenaient quatre codes. */
+  .entete-langues summary {
+    padding: 0.25rem 0.3rem;
+    gap: 0.2rem;
   }
 
-  .langue-courte {
-    display: inline;
+  .langue-long {
+    display: none;
   }
 
   /* L'OUTIL D'ABORD. Sur mobile, le héros occupait tout le premier écran —

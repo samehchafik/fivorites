@@ -16,13 +16,14 @@
 import {
   LANGUES,
   LANGUE_DEFAUT,
+  LANGUE_DRAPEAUX,
   LANGUE_NOMS,
   chemin_localise,
   chemin_sans_langue,
   type Langue,
 } from '../../i18n/langues'
 
-export { LANGUES, LANGUE_DEFAUT, LANGUE_NOMS as LANGUE_LABELS }
+export { LANGUES, LANGUE_DEFAUT, LANGUE_DRAPEAUX, LANGUE_NOMS as LANGUE_LABELS }
 export type { Langue }
 
 /** L'adresse de la page courante dans une autre langue. */
