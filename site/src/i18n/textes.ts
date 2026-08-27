@@ -270,6 +270,37 @@ export const TEXTES = {
     es: 'Como tus favoritos: {communs}',
     ar: 'مثل مفضّلاتك: {communs}',
   },
+  'raison.convergences': {
+    fr: 'Empreinte proche de {nombre} de vos œuvres',
+    en: 'Fingerprint close to {nombre} of your works',
+    es: 'Huella cercana a {nombre} de tus obras',
+    ar: 'بصمة قريبة من {nombre} من أعمالك',
+  },
+  'raison.profil': {
+    fr: 'Au plus près de vos axes de goût',
+    en: 'Closest to your taste profile',
+    es: 'Lo más cerca de tu perfil de gustos',
+    ar: 'الأقرب إلى ملامح ذوقك',
+  },
+  'affiner.titre': { fr: 'Moins de :', en: 'Less of:', es: 'Menos de:', ar: 'أقلّ من:' },
+  'affiner.masquer': {
+    fr: 'Masquer les suggestions {genre}',
+    en: 'Hide {genre} suggestions',
+    es: 'Ocultar las sugerencias de {genre}',
+    ar: 'إخفاء اقتراحات {genre}',
+  },
+  'affiner.retablir': {
+    fr: 'Réafficher {genre}',
+    en: 'Show {genre} again',
+    es: 'Volver a mostrar {genre}',
+    ar: 'إظهار {genre} من جديد',
+  },
+  'affiner.groupe': {
+    fr: 'Affiner les suggestions par genre',
+    en: 'Refine suggestions by genre',
+    es: 'Afinar las sugerencias por género',
+    ar: 'تحسين الاقتراحات حسب التصنيف',
+  },
   'raison.defaut': {
     fr: 'Proche de ce que vous avez aimé',
     en: 'Close to what you loved',

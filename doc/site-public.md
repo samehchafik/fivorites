@@ -108,6 +108,48 @@ large écraserait un profil précis. Si les listes rendues paraissent trop
 
 Tout ce qui a été classé est exclu, quel que soit le statut.
 
+## Le moteur, deuxième refonte : la base est figée, le moteur ne l'est plus
+
+*Ajouté le 27 août 2026. La fusion pondérée restait trop portée par les
+voisins des membres — or la base communautaire est figée : plus un membre
+nouveau depuis des années, donc un savoir qui vieillit sans se corriger.*
+
+Cinq gestes, chacun mesurable :
+
+1. **Le profil du visiteur — ses axes.** Chaque œuvre notée porte une
+   empreinte en six axes ; le visiteur en a une aussi désormais : le centre
+   pondéré de ses « vus et aimés » et de ses envies, POUSSÉ à l'écart du
+   centre de ses « j'aime pas ». C'est le seul endroit où le rejet travaille
+   au lieu de seulement filtrer. Le repoussoir est calibré sur la production
+   (×0,15) : à ×0,5, un profil « Lucifer + Shadowhunters, rejet Pokémon »
+   était expulsé hors du nuage et retombait sur des dramas sans rapport ; à
+   ×0,15 il garde ses voisins de goût (Sabrina, Ma sorcière bien-aimée) avec
+   l'animation en retrait. Une seule requête vectorielle, source `profil`.
+2. **La convergence.** Être le voisin de trois graines dit plus qu'être le
+   voisin d'une seule : la meilleure contribution fait la base, chaque graine
+   supplémentaire ajoute 35 % de la sienne, sous plafond. L'explication le
+   dit : « Empreinte proche de N de vos œuvres ».
+3. **La fraîcheur.** Le score final est multiplié par un facteur d'âge
+   (plancher 0,55, constante 12 ans) : la liste se lit du plus récent au plus
+   vieux sans devenir un tri aveugle — un chef-d'œuvre ancien très proche du
+   profil bat encore une nouveauté qui ne l'est guère.
+4. **La communauté rétrogradée** (apport 0,8 → 0,45) : elle corrobore et
+   départage, elle ne conduit plus. Les envies gagnent du poids (0,4 → 0,6)
+   et quatre places de graines leur sont réservées — un simple tri par poids
+   les évinçait dès douze « aimés ».
+5. **« Moins de : » — le masquage de genres.** Les suggestions arrivent avec
+   leurs genres ; le composant en fait des puces construites depuis la liste
+   affichée (les plus fréquents d'abord, huit au plus). Cliquer barre la puce,
+   purge la pile SUR PLACE et recharge sans le genre (`?sans=Animation`) ;
+   la puce reste, barrée — le geste se défait où il s'est fait. Retenu par
+   univers dans le navigateur. C'est un filtre de présentation : il ne touche
+   ni les graines ni les scores.
+
+Au passage, une boucle corrigée : une pile de trois cartes ou moins
+redemandait des suggestions, recevait les mêmes, et redemandait — des
+centaines de requêtes par minute, mesurées à l'écran. Le droit de recharger
+ne se rouvre plus qu'à du neuf reçu ou à un geste du visiteur.
+
 ## Le front : Mantine habillé de la charte V1
 
 Le composant React est construit sur **Mantine** (le framework du front

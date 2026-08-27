@@ -621,7 +621,6 @@ class Fiches:
         # doit pas effacer le texte qu'on a.
         traduction = (ligne.get("traductions") or [{}])[0] or {}
         titre_traduit = (traduction.get("name") or traduction.get("title") or "").strip()
-        synopsis_traduit = (traduction.get("overview") or "").strip()
         synopsis, synopsis_langue = self._synopsis(ligne, langue)
         return Fiche(
             id=identifiant,

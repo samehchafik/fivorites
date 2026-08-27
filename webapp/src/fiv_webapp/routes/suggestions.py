@@ -17,9 +17,9 @@ règle appartient au moteur, pas à la route.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from fiv_webapp.deps import (
     CartesDep,
@@ -44,13 +44,17 @@ async def suggestions(
     signaux: SignauxDep,
     session_id: SessionOptionnelle,
     univers: UniversDep,
+    # Les genres masqués, répétés : `?sans=Animation&sans=Comédie`. Un filtre
+    # de présentation choisi à l'écran (« moins de dessins animés ») — il ne
+    # touche pas au profil, seulement à ce qui s'affiche.
+    sans: Annotated[list[str] | None, Query(max_length=20)] = None,
 ) -> dict[str, Any]:
     if session_id is None:
         return {"items": [], "raison": "aucune_session", "graine": 0}
 
     pivots = await signaux.pivots(conn, session_id)
     moteur = Moteur(recherche, cartes, graphe)
-    retenues, raison = await moteur.pour(conn, univers, pivots_par_statut=pivots)
+    retenues, raison = await moteur.pour(conn, univers, pivots_par_statut=pivots, sans_genres=sans)
     return {
         "items": [suggestion.publique(univers.slug) for suggestion in retenues],
         "raison": raison,

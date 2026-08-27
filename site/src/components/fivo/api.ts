@@ -145,8 +145,11 @@ export function retirerSignal(oeuvreId: number): Promise<{ oeuvreId: number; ret
 
 export function chargerSuggestions(
   univers: UniversSlug,
+  /** Les genres masqués (« moins de dessins animés ») — répétés en `sans=`. */
+  sans: string[] = [],
 ): Promise<{ items: Suggestion[]; raison: string | null; graine?: number }> {
   const params = new URLSearchParams({ univers })
+  for (const genre of sans) params.append('sans', genre)
   return requete(`/suggestions?${params}`)
 }
 

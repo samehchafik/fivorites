@@ -187,13 +187,19 @@ export interface Suggestion {
   annee: number | null
   affiche: string | null
   univers: UniversSlug
-  /** D'où elle vient : `voisins` la communauté, `proche` l'empreinte,
-   *  `affinite` les genres et les gens. Les trois n'ont pas la même force,
-   *  et l'explication affichée les distingue. */
-  source: 'voisins' | 'proche' | 'affinite'
+  /** D'où elle vient : `voisins` la communauté, `proche` l'empreinte d'une
+   *  œuvre, `profil` les axes du visiteur, `affinite` les genres et les
+   *  gens. Les sources n'ont pas la même force, et l'explication affichée
+   *  les distingue. */
+  source: 'voisins' | 'proche' | 'profil' | 'affinite'
   voisins: number | null
   force: number | null
   distance: number | null
+  /** Combien de vos œuvres classées cette suggestion avoisine : au-delà de
+   *  une, c'est l'œuvre vers laquelle votre profil converge. */
+  convergences: number | null
+  /** Les genres de l'œuvre — la matière des puces « Moins de : ». */
+  genres: string[]
   /** Les genres partagés avec les coups de cœur — l'explication de l'étage
    *  des affinités. Vide quand la correspondance s'est faite sur un nom. */
   communs: string[]

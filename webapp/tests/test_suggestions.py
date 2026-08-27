@@ -14,6 +14,7 @@ ni le corps ES, qui ne se testent que contre un vrai service :
 
 from __future__ import annotations
 
+import datetime
 import math
 from typing import Any
 
@@ -23,15 +24,24 @@ from fiv_webapp.cartes import Carte
 from fiv_webapp.suggestions import (
     APPORT_COMMUNAUTE,
     APPORT_EMPREINTE,
+    BONUS_CONVERGENCE,
     DISTANCE_MAX,
+    FRAICHEUR_PLANCHER,
+    GRAINES_ENVIES_MIN,
+    GRAINES_MAX,
     MULTIPLICATEUR_CORROBORATION,
+    POIDS_REJET,
     POIDS_STATUT,
     Candidat,
     Moteur,
     Suggestion,
     distance_depuis_score,
+    facteur_fraicheur,
+    profil_depuis,
 )
 from fiv_webapp.univers import UNIVERS
+
+ANNEE_COURANTE = datetime.date.today().year
 
 
 def score_de_distance(distance: float) -> float:
@@ -52,16 +62,38 @@ def test_distance_depuis_score() -> None:
     assert distance_depuis_score(0.0) == math.inf
 
 
+def test_facteur_fraicheur() -> None:
+    """Du plus récent au plus vieux : 1,0 cette année, décroissant, jamais
+    sous le plancher — l'ancienneté module, elle n'élimine pas."""
+    assert facteur_fraicheur(ANNEE_COURANTE) == pytest.approx(1.0)
+    assert facteur_fraicheur(ANNEE_COURANTE - 12) < facteur_fraicheur(ANNEE_COURANTE - 4)
+    assert facteur_fraicheur(1950) > FRAICHEUR_PLANCHER
+    assert facteur_fraicheur(1950) == pytest.approx(FRAICHEUR_PLANCHER, abs=0.01)
+    # Sans année : ni punie au plancher, ni prise pour une nouveauté.
+    assert FRAICHEUR_PLANCHER < facteur_fraicheur(None) < 1.0
+
+
+def test_le_score_prefere_le_recent() -> None:
+    """À apport égal, l'œuvre récente passe devant : c'est la parade au
+    moteur qui se figeait dans les années de la base communautaire."""
+    recente = Candidat(oeuvre_id=1, annee=ANNEE_COURANTE - 1)
+    ancienne = Candidat(oeuvre_id=2, annee=2005)
+    for candidat in (recente, ancienne):
+        candidat.verser("proche", 0.8)
+    assert recente.score > ancienne.score
+
+
 class TestCandidat:
     def test_le_plus_fort_apport_gagne(self) -> None:
         """Une source qui parle deux fois de la même œuvre ne cumule pas :
         deux graines vaguement proches ne doivent pas battre une graine très
         proche, sinon un profil large écrase un profil précis."""
-        candidat = Candidat(oeuvre_id=1)
+        candidat = Candidat(oeuvre_id=1, annee=ANNEE_COURANTE)
         candidat.verser("proche", 0.3)
         candidat.verser("proche", 0.9)
         candidat.verser("proche", 0.5)
         assert candidat.apports["proche"] == 0.9
+        # Datée de cette année, la fraîcheur vaut 1,0 : le score EST l'apport.
         assert candidat.score == pytest.approx(0.9)
 
     def test_corroboration_multiplie(self) -> None:
@@ -70,7 +102,7 @@ class TestCandidat:
         seul.verser("proche", 0.5)
         assert not seul.corrobore
 
-        accord = Candidat(oeuvre_id=2)
+        accord = Candidat(oeuvre_id=2, annee=ANNEE_COURANTE)
         accord.verser("proche", 0.5)
         accord.verser("voisins", 0.5)
         assert accord.corrobore
@@ -128,15 +160,31 @@ class FauxGraphe:
         self,
         citations: list[dict[str, Any]] | None = None,
         proches: list[dict[str, Any]] | None = None,
+        empreintes: dict[int, list[float]] | None = None,
+        profil_proches: list[dict[str, Any]] | None = None,
         membres: int = 1000,
     ) -> None:
         self._citations = citations or []
         self._proches = proches or []
+        self._empreintes = empreintes or {}
+        self._profil_proches = profil_proches or []
         self.membres = membres
         self.vues: list[dict[str, Any]] = []
+        # Le dernier vecteur de profil interrogé — de quoi vérifier ce que le
+        # moteur a réellement demandé à l'index.
+        self.profil_demande: list[float] | None = None
 
     async def executer(self, cypher: str, **parametres: Any) -> list[dict[str, Any]]:
         self.vues.append({"cypher": cypher, **parametres})
+        if "empreinte AS empreinte" in cypher:
+            return [
+                {"oeuvreId": pivot, "empreinte": empreinte}
+                for pivot, empreinte in self._empreintes.items()
+                if pivot in parametres["pivots"]
+            ]
+        if "$profil" in cypher:
+            self.profil_demande = parametres["profil"]
+            return self._profil_proches
         if "queryNodes" in cypher:
             return self._proches
         if "count(m)" in cypher:
@@ -221,13 +269,17 @@ class FauxConn:
         return [(pivot, pivot - 1000) for pivot in self._pivots]
 
 
-def proche(oeuvre_id: int, distance: float, graine: int = 1001) -> dict[str, Any]:
+def proche(
+    oeuvre_id: int, distance: float, graine: int = 1001, annee: int | None = None
+) -> dict[str, Any]:
     return {
         "graine": graine,
         "oeuvreId": oeuvre_id,
         "idTmdb": oeuvre_id - 1000,
         "titre": f"Œuvre {oeuvre_id}",
-        "annee": 2020,
+        # Datées de cette année par défaut : les tests de POLITIQUE regardent
+        # les apports, et une fraîcheur de 1,0 les laisse lire tels quels.
+        "annee": annee if annee is not None else ANNEE_COURANTE,
         "affiche": None,
         "univers": "series",
         "score": score_de_distance(distance),
@@ -293,7 +345,8 @@ async def test_empreinte_ponderee_par_la_graine() -> None:
     retenues, _ = await lancer(graphe, statuts={"aime": [1001], "a_voir": [1002]})
     par_id = {s.oeuvre_id: s.score for s in retenues}
     assert par_id[2001] > par_id[2002]
-    # Et l'apport suit la formule : (1 − d/DISTANCE_MAX) × poids × apport.
+    # Et l'apport suit la formule : (1 − d/DISTANCE_MAX) × poids × apport —
+    # fraîcheur 1,0, les fixtures étant datées de cette année.
     attendu = APPORT_EMPREINTE * (1 - 0.5 / DISTANCE_MAX) * POIDS_STATUT["aime"]
     assert par_id[2001] == pytest.approx(round(attendu, 3), abs=0.01)
 
@@ -352,9 +405,10 @@ async def test_la_communaute_seule_reste_possible() -> None:
     # 30 voisins sur 100 (30 %) contre 50 citations sur 1 000 membres (5 %) :
     # six fois plus souvent que la moyenne. C'est un signal, et il est nommé.
     assert retenues[0].surrepresentation == pytest.approx(6.0)
-    # L'apport sature au repère : au-delà, « six fois » et « dix fois » ne se
-    # distinguent plus utilement.
-    assert retenues[0].score == pytest.approx(APPORT_COMMUNAUTE, abs=0.01)
+    # L'apport sature au repère — et le score porte la fraîcheur d'une œuvre
+    # de 2019 : la communauté, figée là, ne peut plus dominer une liste.
+    attendu = APPORT_COMMUNAUTE * facteur_fraicheur(2019)
+    assert retenues[0].score == pytest.approx(attendu, abs=0.01)
 
 
 async def test_sans_graphe_les_affinites_repondent() -> None:
@@ -392,3 +446,147 @@ async def test_departage_stable() -> None:
     premier, _ = await lancer(graphe)
     second, _ = await lancer(graphe)
     assert [s.oeuvre_id for s in premier] == [s.oeuvre_id for s in second] == [2001, 2002]
+
+
+# ---------------------------------------------------------------------------
+# Le lot « la base est figée » : convergence, envies, fraîcheur, masquage
+# ---------------------------------------------------------------------------
+
+
+async def test_la_convergence_fait_monter() -> None:
+    """L'œuvre voisine de DEUX graines passe devant l'œuvre voisine d'une
+    seule à distance égale — c'est elle qui a le plus de relations avec ce que
+    le visiteur aime."""
+    graphe = FauxGraphe(
+        proches=[
+            proche(2001, 0.5, graine=1001),
+            proche(2001, 0.5, graine=1002),
+            proche(2002, 0.5, graine=1001),
+        ]
+    )
+    retenues, _ = await lancer(graphe, statuts={"aime": [1001, 1002]})
+    assert [s.oeuvre_id for s in retenues] == [2001, 2002]
+    assert retenues[0].convergences == 2
+    # Le bonus suit la formule : base + fraction de la seconde contribution.
+    base = APPORT_EMPREINTE * (1 - 0.5 / DISTANCE_MAX)
+    assert retenues[0].score == pytest.approx(base * (1 + BONUS_CONVERGENCE), abs=0.01)
+
+
+async def test_les_envies_ont_des_places_reservees() -> None:
+    """Douze « vu et aimé » ne remplissent plus la table : les envies — la
+    seule liste qui parle du goût présent — gardent leurs places."""
+    moteur = Moteur(FauxRecherche(), FauxCartes(), None)  # type: ignore[arg-type]
+    aimes = list(range(1001, 1021))
+    envies = list(range(2001, 2011))
+    graines = moteur.graines({"aime": aimes, "a_voir": envies})
+    assert len(graines) == GRAINES_MAX
+    des_envies = [graine for graine in graines if graine.poids == POIDS_STATUT["a_voir"]]
+    assert len(des_envies) == GRAINES_ENVIES_MIN
+
+
+async def test_le_recent_passe_devant_le_vieux() -> None:
+    """À proximité égale, la liste se lit du plus récent au plus vieux — la
+    parade demandée au moteur qui se figeait dans les années de la base."""
+    graphe = FauxGraphe(
+        proches=[
+            proche(2001, 0.5, annee=2008),
+            proche(2002, 0.5, annee=ANNEE_COURANTE - 1),
+            proche(2003, 0.5, annee=2015),
+        ]
+    )
+    retenues, _ = await lancer(graphe)
+    assert [s.annee for s in retenues] == [ANNEE_COURANTE - 1, 2015, 2008]
+
+
+async def test_un_vieux_tres_proche_bat_un_recent_vague() -> None:
+    """La fraîcheur module, elle n'élimine pas : un chef-d'œuvre ancien collé
+    au profil doit encore battre une nouveauté qui ne lui ressemble guère."""
+    graphe = FauxGraphe(
+        proches=[
+            proche(2001, 0.2, annee=1999),
+            proche(2002, 1.6, annee=ANNEE_COURANTE),
+        ]
+    )
+    retenues, _ = await lancer(graphe)
+    assert [s.oeuvre_id for s in retenues] == [2001, 2002]
+
+
+async def test_sans_genres_ecarte() -> None:
+    """« Moins de dessins animés » : le genre masqué sort de la liste, sans
+    toucher les scores de ce qui reste."""
+    graphe = FauxGraphe(proches=[proche(2001, 0.4), proche(2002, 0.6)])
+    cartes = FauxCartes(genres_par_id={1001: ["Animation"], 1002: ["Drame"]})
+    moteur = Moteur(FauxRecherche(), cartes, graphe)  # type: ignore[arg-type]
+    retenues, _ = await moteur.pour(
+        FauxConn(),  # type: ignore[arg-type]
+        UNIVERS["series"],
+        pivots_par_statut={"aime": [1001]},
+        sans_genres=["animation"],
+    )
+    assert [s.oeuvre_id for s in retenues] == [2002]
+    assert retenues[0].genres == ["Drame"]
+
+
+# ---------------------------------------------------------------------------
+# Les axes du visiteur
+# ---------------------------------------------------------------------------
+
+
+def test_profil_centre_pondere() -> None:
+    """Le profil est le centre pondéré des empreintes aimées : un verdict y
+    pèse plus qu'une envie."""
+    profil = profil_depuis([([2.0, 0.0], 1.0), ([0.0, 2.0], 1.0)], [])
+    assert profil == pytest.approx([1.0, 1.0])
+    # Pondéré : l'œuvre au poids double tire le centre vers elle.
+    penche = profil_depuis([([2.0, 0.0], 1.0), ([0.0, 2.0], 0.5)], [])
+    assert penche[0] > penche[1]
+
+
+def test_profil_repousse_par_les_rejets() -> None:
+    """« J'aime pas » cesse d'être un simple filtre : il déplace le profil à
+    l'écart du centre des rejets."""
+    sans_rejet = profil_depuis([([1.0, 1.0], 1.0)], [])
+    avec_rejet = profil_depuis([([1.0, 1.0], 1.0)], [[3.0, 1.0]])
+    assert sans_rejet == pytest.approx([1.0, 1.0])
+    # Le rejet est à droite du centre : le profil part à gauche, d'une
+    # demi-longueur (POIDS_REJET), et l'axe non concerné ne bouge pas.
+    assert avec_rejet == pytest.approx([1.0 - POIDS_REJET * 2.0, 1.0])
+
+
+def test_profil_sans_matiere_positive() -> None:
+    """Des rejets seuls ne pointent nulle part : pas de profil, pas de
+    requête vectorielle sur du vide."""
+    assert profil_depuis([], [[1.0, 2.0]]) is None
+
+
+async def test_le_profil_interroge_les_axes_du_visiteur() -> None:
+    """La source lit les trois listes : aimés et envies font le centre, les
+    rejets le déplacent, et c'est CE vecteur qui part à l'index."""
+    graphe = FauxGraphe(
+        empreintes={1001: [2.0, 0.0], 1002: [0.0, 2.0], 1003: [4.0, 1.0]},
+        profil_proches=[
+            {
+                "oeuvreId": 2001,
+                "idTmdb": 1001,
+                "titre": "Œuvre 2001",
+                "annee": ANNEE_COURANTE,
+                "affiche": None,
+                "univers": "series",
+                "score": score_de_distance(0.4),
+            }
+        ],
+    )
+    retenues, _ = await lancer(graphe, statuts={"aime": [1001, 1002], "aime_pas": [1003]})
+    assert [s.oeuvre_id for s in retenues] == [2001]
+    assert retenues[0].source == "profil"
+    # Centre (1,1), rejet (4,1) : le profil fuit le rejet sur le premier axe.
+    assert graphe.profil_demande == pytest.approx([1.0 - POIDS_REJET * 3.0, 1.0])
+
+
+async def test_le_profil_corrobore_avec_la_communaute() -> None:
+    """Le profil est une source de CONTENU : d'accord avec la communauté, il
+    déclenche la corroboration comme les voisins d'empreinte."""
+    candidat = Candidat(oeuvre_id=1, annee=ANNEE_COURANTE)
+    candidat.verser("profil", 0.5)
+    candidat.verser("voisins", 0.4)
+    assert candidat.corrobore

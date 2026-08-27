@@ -43,6 +43,27 @@ function vueInitiale(): Vue {
   return retenu(CLE_VUE) === 'liste' ? 'liste' : 'pile'
 }
 
+// Les genres masqués, retenus PAR UNIVERS : « moins de dessins animés » dans
+// les séries ne dit rien des livres.
+function cleMasques(univers: UniversSlug): string {
+  return `fivo-sans-genres-${univers}`
+}
+
+function masquesRetenus(univers: UniversSlug): string[] {
+  try {
+    const brut = retenu(cleMasques(univers))
+    const lus = brut ? JSON.parse(brut) : []
+    return Array.isArray(lus) ? lus.filter((g): g is string => typeof g === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+// Combien de puces la barre « Moins de : » propose. Au-delà, elle devient un
+// formulaire — et les genres rares ne polluent pas la liste au point de
+// mériter une case.
+const GENRES_PROPOSES = 8
+
 function expliquer(suggestion: Suggestion, t: Textes): string {
   const voisins = suggestion.voisins ?? 0
   if (suggestion.corrobore) {
@@ -51,7 +72,17 @@ function expliquer(suggestion: Suggestion, t: Textes): string {
   if (suggestion.source === 'voisins') {
     return t.compte(voisins, 'raison.voisins_un', 'raison.voisins')
   }
+  // Le profil : la suggestion colle aux axes du visiteur — le centre de tout
+  // ce qu'il a classé, rejets compris — pas à une œuvre en particulier.
+  if (suggestion.source === 'profil') {
+    return t.dit('raison.profil')
+  }
   if (suggestion.source === 'proche') {
+    // La convergence d'abord : « proche de 3 de vos œuvres » dit plus qu'une
+    // distance, et c'est le signal que le moteur privilégie désormais.
+    if ((suggestion.convergences ?? 0) > 1) {
+      return t.dit('raison.convergences', { nombre: t.nombre(suggestion.convergences!) })
+    }
     return suggestion.distance != null
       ? t.dit('raison.proche_distance', { distance: t.nombre(Number(suggestion.distance.toFixed(2))) })
       : t.dit('raison.proche')
@@ -105,15 +136,48 @@ export function Suggestions({
   // — la page est construite à l'avance, le navigateur de qui la reçoit n'est
   // pas connu au build.
   const [vue, setVue] = useState<Vue>('pile')
+  // Les genres masqués. Lus après le montage, pour la même raison que la vue.
+  const [masques, setMasques] = useState<string[]>([])
 
   useEffect(() => {
     setVue(vueInitiale())
   }, [])
 
+  useEffect(() => {
+    setMasques(masquesRetenus(univers))
+  }, [univers])
+
   const choisirVue = (choisie: Vue) => {
     setVue(choisie)
     retenir(CLE_VUE, choisie)
   }
+
+  const basculerGenre = (genre: string) => {
+    setMasques((actuels) => {
+      const suivants = actuels.includes(genre)
+        ? actuels.filter((g) => g !== genre)
+        : [...actuels, genre]
+      retenir(cleMasques(univers), JSON.stringify(suivants))
+      return suivants
+    })
+  }
+
+  // Les genres qu'on PROPOSE de masquer : ceux des suggestions à l'écran, les
+  // plus fréquents d'abord — la barre parle de ce qu'on regarde, pas d'une
+  // taxonomie. Les genres déjà masqués restent affichés, barrés : le geste
+  // doit pouvoir se défaire sans chercher où.
+  const genresPresents = (() => {
+    const comptes = new Map<string, number>()
+    for (const suggestion of items) {
+      for (const genre of suggestion.genres ?? []) {
+        comptes.set(genre, (comptes.get(genre) ?? 0) + 1)
+      }
+    }
+    return [...comptes.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, GENRES_PROPOSES)
+      .map(([genre]) => genre)
+  })()
   // Ce que la liste affichée reflète déjà. Une référence plutôt qu'un état :
   // elle ne décide d'aucun rendu, elle évite seulement de recharger ce qui
   // est à jour — la mettre en `useState` relancerait l'effet pour rien.
@@ -121,6 +185,7 @@ export function Suggestions({
     univers: UniversSlug
     version: number
     recharges: number
+    masques: string
   } | null>(null)
 
   useEffect(() => {
@@ -129,22 +194,24 @@ export function Suggestions({
     // classements venus d'ailleurs (l'onglet Recherche, la fiche) justifient
     // de rejouer la requête.
     const utile = versionSignaux - absorbees.current
+    const signatureMasques = [...masques].sort().join('|')
     const dejaVu =
       charge.current !== null &&
       charge.current.univers === univers &&
       charge.current.version === utile &&
-      charge.current.recharges === recharges
+      charge.current.recharges === recharges &&
+      charge.current.masques === signatureMasques
     if (dejaVu) return
 
     let abandonne = false
     setEtat('en-cours')
-    chargerSuggestions(univers)
+    chargerSuggestions(univers, masques)
       .then((reponse) => {
         if (abandonne) return
         setItems(reponse.items)
         setRaison(reponse.raison)
         setEtat('servi')
-        charge.current = { univers, version: utile, recharges }
+        charge.current = { univers, version: utile, recharges, masques: signatureMasques }
       })
       .catch(() => {
         if (!abandonne) setEtat('erreur')
@@ -152,7 +219,7 @@ export function Suggestions({
     return () => {
       abandonne = true
     }
-  }, [univers, versionSignaux, actif, recharges])
+  }, [univers, versionSignaux, actif, recharges, masques])
 
   // Les suggestions déjà classées pendant la consultation restent affichées
   // (avec leur bouton allumé) jusqu'au prochain rechargement : les faire
@@ -193,9 +260,38 @@ export function Suggestions({
             </UnstyledButton>
           </div>
 
+          {/* « Moins de : » — les genres des suggestions à l'écran, à
+              masquer d'un geste. Cliquer barre la puce et recharge sans le
+              genre ; la puce reste, barrée : le geste se défait au même
+              endroit. C'est la parade au mur de dessins animés — chacun
+              choisit ce qu'il ne veut plus voir, le moteur n'invente pas. */}
+          {(genresPresents.length > 0 || masques.length > 0) && (
+            <div className="fivo-affiner" role="group" aria-label={t.dit('affiner.groupe')}>
+              <span className="fivo-affiner-titre">{t.dit('affiner.titre')}</span>
+              {[...masques, ...genresPresents.filter((g) => !masques.includes(g))].map(
+                (genre) => {
+                  const masque = masques.includes(genre)
+                  return (
+                    <UnstyledButton
+                      key={genre}
+                      className={`fivo-filtre fivo-genre-masquable${masque ? ' masque' : ''}`}
+                      aria-pressed={masque}
+                      onClick={() => basculerGenre(genre)}
+                      title={t.dit(masque ? 'affiner.retablir' : 'affiner.masquer', { genre })}
+                    >
+                      {genre}
+                      <span aria-hidden="true"> {masque ? '↺' : '✕'}</span>
+                    </UnstyledButton>
+                  )
+                },
+              )}
+            </div>
+          )}
+
           {vue === 'pile' ? (
             <PileSuggestions
               suggestions={items}
+              masques={masques}
               type={t.dit(`type.${univers}`)}
               explication={(suggestion) => expliquer(suggestion, t)}
               onClasser={(oeuvreId, statut) => {
@@ -213,7 +309,12 @@ export function Suggestions({
             // sauter la ligne qu'on lisait. Le geste est absorbé de la même
             // façon — c'est à la bascule d'onglet que la liste se renouvelle.
             <div className="fivo-liste">
-              {items.map((suggestion) => (
+              {items
+                .filter(
+                  (suggestion) =>
+                    !(suggestion.genres ?? []).some((genre) => masques.includes(genre)),
+                )
+                .map((suggestion) => (
                 <CarteOeuvre
                   key={suggestion.oeuvreId}
                   titre={suggestion.titre}

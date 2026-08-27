@@ -54,6 +54,7 @@ const GESTES: Record<Geste, { classe: string; statut: Statut | null }> = {
 
 export function PileSuggestions({
   suggestions,
+  masques = [],
   type,
   explication,
   onClasser,
@@ -61,6 +62,10 @@ export function PileSuggestions({
   onRecharger,
 }: {
   suggestions: Suggestion[]
+  /** Les genres masqués (« moins de dessins animés »). La pile purge sa file
+   *  locale elle-même : attendre le rechargement laisserait la carte du
+   *  genre qu'on vient de masquer sous le doigt. */
+  masques?: string[]
   /** « Série », « Film », « Livre » — affiché sous le titre. */
   type: string
   /** La phrase qui dit pourquoi cette œuvre est proposée. */
@@ -82,14 +87,32 @@ export function PileSuggestions({
 
   // Les nouvelles cartes s'ajoutent à la suite, sans jeter ce qui reste : on
   // ne veut pas qu'un rechargement fasse disparaître la carte qu'on regarde.
+  //
+  // Le droit de redemander ne se rouvre QUE si la réponse a apporté du neuf.
+  // Sans cette condition, une pile courte bouclait : moins de trois cartes →
+  // recharge → le moteur rend les mêmes œuvres → rien de neuf mais le
+  // verrou sautait → recharge… Mesuré à l'écran : des centaines de requêtes
+  // identiques en quelques secondes. Un geste du visiteur rouvre le droit
+  // (voir `jeter`) — lui change réellement la donne, il ajoute une exclusion.
   useEffect(() => {
     setFile((restantes) => {
       const connues = new Set(restantes.map((s) => s.oeuvreId))
       const neuves = suggestions.filter((s) => !connues.has(s.oeuvreId))
-      demande.current = false
+      if (neuves.length > 0) demande.current = false
       return [...restantes, ...neuves]
     })
   }, [suggestions])
+
+  // Le masquage purge la file SUR PLACE : la carte du genre écarté disparaît
+  // au clic, et le rechargement — qui suit — comble avec autre chose.
+  useEffect(() => {
+    if (masques.length === 0) return
+    setFile((restantes) =>
+      restantes.filter(
+        (suggestion) => !(suggestion.genres ?? []).some((genre) => masques.includes(genre)),
+      ),
+    )
+  }, [masques])
 
   useEffect(() => {
     if (file.length <= RESTE_AVANT_RECHARGE && !demande.current) {
@@ -110,6 +133,10 @@ export function PileSuggestions({
     window.setTimeout(() => {
       setFile((restantes) => restantes.slice(1))
       setSortie(null)
+      // Un geste rouvre le droit de recharger : la donne a changé — une
+      // œuvre de plus est classée ou passée, la prochaine réponse peut
+      // différer de la précédente.
+      demande.current = false
     }, SORTIE_MS)
   }
 

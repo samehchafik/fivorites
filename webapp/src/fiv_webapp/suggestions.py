@@ -44,6 +44,7 @@ Tout ce qui a déjà été classé reste exclu, quel que soit le statut.
 
 from __future__ import annotations
 
+import datetime
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -59,13 +60,20 @@ from fiv_webapp.univers import Univers
 #
 # « J'ai vu et aimé » est un verdict, « je veux voir » une intention : les
 # traiter à égalité ferait dériver le profil vers une liste d'envies, dont
-# rien ne dit encore qu'elles ont plu.
-POIDS_STATUT = {"aime": 1.0, "a_voir": 0.4}
+# rien ne dit encore qu'elles ont plu. Mais l'intention pèse plus qu'avant
+# (0,6 contre 0,4) : c'est la seule liste qui parle du goût PRÉSENT du
+# visiteur, là où la communauté parle du goût de 2019.
+POIDS_STATUT = {"aime": 1.0, "a_voir": 0.6}
 
-# Les graines retenues, les plus récemment classées d'abord : un profil se
-# déplace, et soixante coups de cœur feraient une requête aussi large que le
-# catalogue.
+# Les graines retenues : un profil se déplace, et soixante coups de cœur
+# feraient une requête aussi large que le catalogue.
 GRAINES_MAX = 12
+
+# Des places RÉSERVÉES aux envies. Sans elles, douze « vu et aimé »
+# évinçaient toutes les « je veux voir » du seul fait de leur poids — et la
+# moitié du profil demandé (« ce qu'il a aimé + ce qu'il aimerait voir »)
+# n'entrait jamais dans le moteur.
+GRAINES_ENVIES_MIN = 4
 
 # --- Les apports des sources ----------------------------------------------
 #
@@ -73,8 +81,56 @@ GRAINES_MAX = 12
 # mesurés) au-dessus de la communauté (des gens qui ont aimé les mêmes
 # choses), elle-même au-dessus des affinités (un genre, un acteur en commun).
 APPORT_EMPREINTE = 1.0
-APPORT_COMMUNAUTE = 0.8
+# La communauté est un BONUS, plus un moteur : sa base est figée — dernier
+# membre en 2019, dernière œuvre citée avec elle. Un apport qui la laissait
+# presque à hauteur de l'empreinte (0,8) suffisait à remplir la liste
+# d'œuvres d'avant 2019 dès qu'un classique servait de graine. Elle
+# corrobore, elle départage — elle ne conduit plus.
+APPORT_COMMUNAUTE = 0.45
 APPORT_AFFINITE = 0.55
+
+# --- La convergence : les voisins que PLUSIEURS graines désignent ----------
+#
+# `verser()` garde le meilleur apport d'une source — deux graines vaguement
+# proches ne doivent pas battre une graine très proche. Mais être le voisin
+# de TROIS œuvres qu'on a aimées dit plus qu'être le voisin d'une seule :
+# c'est l'œuvre vers laquelle le graphe du visiteur converge, celle qui a le
+# plus de relations avec ce qu'il aime. Chaque graine au-delà de la première
+# ajoute donc une fraction de sa contribution, sous plafond.
+BONUS_CONVERGENCE = 0.35
+PLAFOND_EMPREINTE = APPORT_EMPREINTE * 1.6
+
+# --- Le profil : les axes du visiteur --------------------------------------
+#
+# Chaque œuvre notée porte une empreinte — six axes de goût. Le visiteur en a
+# une aussi, dès qu'il classe : le CENTRE de ce qu'il aime, POUSSÉ à l'écart
+# de ce qu'il rejette. C'est la seule source qui lise les trois listes à la
+# fois — « vu et aimé » et « je veux voir » attirent le centre, « j'aime
+# pas » le repousse — et elle interroge l'index vectoriel en un seul vecteur,
+# là où les voisins de graines en lancent un par œuvre.
+APPORT_PROFIL = 0.9
+# La force du repoussoir — CALIBRÉE sur la production, pas choisie de tête.
+# À 0,5, un profil « Lucifer + Shadowhunters, rejet Pokémon » était expulsé
+# hors du nuage (l'axe animation tombait à 1,0) et retombait sur des dramas
+# sans rapport ; à 0,15, les voisins restent ceux du goût (Sabrina, Ma
+# sorcière bien-aimée) avec l'animation en retrait — l'inflexion voulue,
+# sans la fuite. Nul, dire « pas ça » ne servirait à rien.
+POIDS_REJET = 0.15
+
+# --- La fraîcheur : du plus récent au plus vieux ---------------------------
+#
+# Le score final est multiplié par un facteur d'âge. Sans lui, le moteur se
+# figeait dans les années de la base communautaire : les graines mènent à des
+# voisins de leur époque, la communauté ne connaît rien après 2019, et un
+# visiteur au goût actuel recevait un mur d'œuvres anciennes. Le facteur est
+# exponentiel avec un PLANCHER : une œuvre ancienne perd la moitié de son
+# score, jamais sa place — un chef-d'œuvre de 1994 très proche du profil doit
+# encore pouvoir battre une œuvre récente qui ne l'est guère.
+FRAICHEUR_PLANCHER = 0.55
+FRAICHEUR_CONSTANTE = 12.0
+# L'âge prêté à une œuvre sans année : celui d'une œuvre déjà ancienne, ni
+# punie au plancher ni hissée parmi les nouveautés qu'elle n'est pas.
+FRAICHEUR_AGE_INCONNU = 15
 
 # La corroboration : le multiplicateur appliqué au total d'une œuvre que DEUX
 # familles de sources désignent — le contenu (empreinte ou affinités) et la
@@ -191,6 +247,64 @@ LIMIT $limite
 """
 
 
+# Les empreintes d'une liste d'œuvres — la matière du profil.
+_CY_EMPREINTES = """
+MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $pivots AND s.empreinte IS NOT NULL
+RETURN s.oeuvreId AS oeuvreId, s.empreinte AS empreinte
+"""
+
+# Les voisins du PROFIL : une seule interrogation de l'index vectoriel, sur
+# le vecteur du visiteur plutôt que sur chaque graine.
+_CY_PROFIL = """
+CALL db.index.vector.queryNodes('fivEmpreinteVoisins', $candidats, $profil)
+YIELD node, score
+WHERE node.univers = $univers AND NOT node.oeuvreId IN $exclues
+RETURN node.oeuvreId AS oeuvreId, node.idTmdb AS idTmdb, node.titre AS titre,
+       node.annee AS annee, node.affiche AS affiche, node.univers AS univers, score
+ORDER BY score DESC
+LIMIT $limite
+"""
+
+
+def profil_depuis(
+    positives: list[tuple[list[float], float]], rejets: list[list[float]]
+) -> list[float] | None:
+    """Le vecteur du visiteur sur les six axes.
+
+    Le centre PONDÉRÉ des empreintes aimées et voulues (un verdict pèse plus
+    qu'une envie), poussé à l'écart du centre des rejets : `« j'aime pas »`
+    cesse d'être un simple filtre — il déplace le profil, comme demandé.
+
+    Rend `None` sans matière positive : un profil fait uniquement de rejets
+    ne pointe nulle part.
+    """
+    portees = [(empreinte, poids) for empreinte, poids in positives if empreinte]
+    if not portees:
+        return None
+    axes = len(portees[0][0])
+    total = sum(poids for _, poids in portees)
+    centre = [
+        sum(empreinte[i] * poids for empreinte, poids in portees) / total for i in range(axes)
+    ]
+    utiles = [empreinte for empreinte in rejets if len(empreinte) == axes]
+    if not utiles:
+        return centre
+    repoussoir = [sum(empreinte[i] for empreinte in utiles) / len(utiles) for i in range(axes)]
+    return [centre[i] + POIDS_REJET * (centre[i] - repoussoir[i]) for i in range(axes)]
+
+
+def facteur_fraicheur(annee: int | None, courante: int | None = None) -> float:
+    """Le poids d'une œuvre selon son âge — 1,0 cette année, le plancher pour
+    les très anciennes.
+
+    C'est lui qui ordonne la liste « du plus récent au plus vieux » sans en
+    faire un tri aveugle : la pertinence compte toujours, l'âge la module.
+    """
+    courante = courante if courante is not None else datetime.date.today().year
+    age = FRAICHEUR_AGE_INCONNU if annee is None else max(0, courante - annee)
+    return FRAICHEUR_PLANCHER + (1.0 - FRAICHEUR_PLANCHER) * math.exp(-age / FRAICHEUR_CONSTANTE)
+
+
 def distance_depuis_score(score: float) -> float:
     """Le score euclidien de Neo4j (1/(1+d²)) rendu en distance, en points de
     note — l'unité dans laquelle `DISTANCE_MAX` a un sens."""
@@ -239,6 +353,13 @@ class Candidat:
     # Combien de fois plus souvent les voisins citent cette œuvre que la base
     # entière. C'est ce qui distingue un signal d'une popularité.
     surrepresentation: float | None = None
+    # Combien de graines DISTINCTES ont désigné cette œuvre comme voisine :
+    # au-delà de une, c'est l'œuvre vers laquelle le graphe du visiteur
+    # converge, et l'explication le dit.
+    convergences: int | None = None
+    # Les genres de la vignette, attachés à l'hydratation finale : le front
+    # en fait ses puces d'exclusion (« moins de dessins animés »).
+    genres: list[str] = field(default_factory=list)
 
     def verser(self, source: str, apport: float) -> None:
         """Ajoute un apport. Le plus fort gagne quand une source parle deux
@@ -255,13 +376,25 @@ class Candidat:
         C'est le geste demandé : deux savoirs indépendants qui tombent
         d'accord valent mieux que deux fois le même.
         """
-        contenu = self.apports.get("proche", 0.0) + self.apports.get("affinite", 0.0)
+        contenu = (
+            self.apports.get("proche", 0.0)
+            + self.apports.get("profil", 0.0)
+            + self.apports.get("affinite", 0.0)
+        )
         return contenu > 0.0 and self.apports.get("voisins", 0.0) > 0.0
 
     @property
     def score(self) -> float:
+        """Le total des apports, corroboration comprise, MODULÉ par l'âge.
+
+        La fraîcheur s'applique au total et non à une source : la communauté,
+        figée en 2019, ne propose que de l'ancien — c'est précisément elle que
+        le facteur ramène derrière les voisins d'empreinte récents.
+        """
         total = sum(self.apports.values())
-        return total * MULTIPLICATEUR_CORROBORATION if self.corrobore else total
+        if self.corrobore:
+            total *= MULTIPLICATEUR_CORROBORATION
+        return total * facteur_fraicheur(self.annee)
 
     @property
     def retenu(self) -> bool:
@@ -304,6 +437,8 @@ class Suggestion:
     distance: float | None = None
     communs: list[str] = field(default_factory=list)
     surrepresentation: float | None = None
+    convergences: int | None = None
+    genres: list[str] = field(default_factory=list)
     # Le contenu et la communauté sont-ils d'accord ? Le front le dit, parce
     # que c'est la suggestion la plus solide qu'on sache produire.
     corrobore: bool = False
@@ -330,6 +465,8 @@ class Suggestion:
             distance=candidat.distance,
             communs=candidat.communs,
             surrepresentation=candidat.surrepresentation,
+            convergences=candidat.convergences,
+            genres=candidat.genres,
             corrobore=candidat.corrobore,
             score=round(candidat.score, 3),
         )
@@ -348,6 +485,8 @@ class Suggestion:
             "distance": self.distance,
             "communs": self.communs,
             "surrepresentation": self.surrepresentation,
+            "convergences": self.convergences,
+            "genres": self.genres,
             "corrobore": self.corrobore,
         }
 
@@ -497,6 +636,11 @@ class SourceEmpreinte:
             exclues=exclues,
             limite=CANDIDATS_PAR_SOURCE * 3,
         )
+        # Les contributions s'ACCUMULENT par candidat avant de verser : c'est
+        # ce qui permet la convergence — être le voisin de trois graines dit
+        # plus qu'être le voisin d'une seule, et `verser()` seul, qui garde le
+        # max, ne pouvait pas le voir.
+        contributions: dict[int, dict[int, float]] = {}
         for ligne in lignes:
             distance = distance_depuis_score(float(ligne["score"]))
             # Au-delà du plafond, l'apport est nul : une œuvre « vaguement du
@@ -510,15 +654,86 @@ class SourceEmpreinte:
             candidat.annee = candidat.annee if candidat.annee is not None else ligne.get("annee")
             candidat.affiche = candidat.affiche or ligne.get("affiche")
             candidat.univers_interne = ligne.get("univers") or univers.interne
-            # L'apport décroît linéairement avec la distance et se pondère par
-            # la graine : être à 0,3 point d'une œuvre qu'on a vue et aimée
-            # vaut plus qu'être à 0,3 point d'une œuvre qu'on veut voir.
+            # La contribution décroît linéairement avec la distance et se
+            # pondère par la graine : être à 0,3 point d'une œuvre qu'on a vue
+            # et aimée vaut plus qu'être à 0,3 point d'une œuvre qu'on veut
+            # voir. Par graine, on garde la meilleure — une graine ne converge
+            # pas avec elle-même.
             proximite = 1.0 - distance / DISTANCE_MAX
-            candidat.verser(
-                "proche", APPORT_EMPREINTE * proximite * poids.get(ligne["graine"], 1.0)
-            )
+            contribution = APPORT_EMPREINTE * proximite * poids.get(ligne["graine"], 1.0)
+            par_graine = contributions.setdefault(oeuvre_id, {})
+            graine = int(ligne["graine"])
+            par_graine[graine] = max(par_graine.get(graine, 0.0), contribution)
             # La distance affichée est la meilleure trouvée, toutes graines
             # confondues : c'est celle qui explique la présence de l'œuvre.
+            if candidat.distance is None or distance < candidat.distance:
+                candidat.distance = round(distance, 2)
+
+        for oeuvre_id, par_graine in contributions.items():
+            classees = sorted(par_graine.values(), reverse=True)
+            # La meilleure graine donne la base ; chaque graine SUPPLÉMENTAIRE
+            # ajoute une fraction de sa propre contribution, sous plafond —
+            # un profil large ne doit pas écraser un profil précis, mais une
+            # œuvre vers laquelle tout le profil converge doit monter.
+            apport = classees[0] + BONUS_CONVERGENCE * sum(classees[1:])
+            candidat = candidats[oeuvre_id]
+            candidat.convergences = len(classees)
+            candidat.verser("proche", min(apport, PLAFOND_EMPREINTE))
+
+
+class SourceProfil:
+    """Les voisins des AXES du visiteur — son profil, pas ses œuvres une à une.
+
+    Ce que cette source voit et que `SourceEmpreinte` ne voit pas : le centre.
+    Les voisins de graines rapprochent de CHAQUE œuvre aimée ; le profil
+    rapproche de leur barycentre — et il est le seul endroit où « j'aime
+    pas » travaille, en repoussant ce centre au lieu de seulement filtrer.
+    """
+
+    def __init__(self, graphe: Graphe) -> None:
+        self._graphe = graphe
+
+    async def verser(
+        self,
+        univers: Univers,
+        *,
+        graines: list[Graine],
+        rejets: list[int],
+        exclues: list[int],
+        candidats: dict[int, Candidat],
+    ) -> None:
+        pivots = [graine.oeuvre_id for graine in graines] + rejets
+        lignes = await self._graphe.executer(_CY_EMPREINTES, pivots=pivots)
+        empreintes = {ligne["oeuvreId"]: ligne["empreinte"] for ligne in lignes}
+        poids = {graine.oeuvre_id: graine.poids for graine in graines}
+        profil = profil_depuis(
+            [(empreintes[pivot], poids[pivot]) for pivot in poids if empreintes.get(pivot)],
+            [empreintes[pivot] for pivot in rejets if empreintes.get(pivot)],
+        )
+        if profil is None:
+            return
+
+        lignes = await self._graphe.executer(
+            _CY_PROFIL,
+            profil=profil,
+            candidats=CANDIDATS_PAR_SOURCE,
+            univers=univers.interne,
+            exclues=exclues,
+            limite=CANDIDATS_PAR_SOURCE,
+        )
+        for ligne in lignes:
+            distance = distance_depuis_score(float(ligne["score"]))
+            if distance >= DISTANCE_MAX:
+                continue
+            oeuvre_id = ligne["oeuvreId"]
+            candidat = candidats.setdefault(oeuvre_id, Candidat(oeuvre_id=oeuvre_id))
+            candidat.id_tmdb = candidat.id_tmdb or ligne.get("idTmdb")
+            candidat.titre = candidat.titre or ligne.get("titre")
+            candidat.annee = candidat.annee if candidat.annee is not None else ligne.get("annee")
+            candidat.affiche = candidat.affiche or ligne.get("affiche")
+            candidat.univers_interne = ligne.get("univers") or univers.interne
+            proximite = 1.0 - distance / DISTANCE_MAX
+            candidat.verser("profil", APPORT_PROFIL * proximite)
             if candidat.distance is None or distance < candidat.distance:
                 candidat.distance = round(distance, 2)
 
@@ -631,20 +846,32 @@ class Moteur:
 
     def __init__(self, recherche: Recherche, cartes: Cartes, graphe: Graphe | None = None) -> None:
         self._graphe = graphe
+        self._cartes = cartes
         self._affinites = SourceAffinites(recherche, cartes)
 
     def graines(self, pivots_par_statut: dict[str, list[int]]) -> list[Graine]:
-        """Les graines pondérées, les plus fortes d'abord et plafonnées.
+        """Les graines pondérées et plafonnées — avec des places RÉSERVÉES aux
+        envies.
+
+        Le profil demandé est « ce qu'il a vu et aimé + ce qu'il aimerait
+        voir ». Or un simple tri par poids donnait toutes les places aux
+        « aimé » dès qu'il y en avait douze, et les envies — la seule liste
+        qui parle du goût présent — n'entraient jamais. Les « aimé » gardent
+        la priorité, mais jamais toute la table.
 
         `aime_pas` n'en produit aucune : ce qui a été écarté ne décrit pas un
         goût à poursuivre. Il reste exclu des résultats, ce qui est son rôle.
         """
-        retenues = [
-            Graine(oeuvre_id=pivot, poids=POIDS_STATUT[statut])
-            for statut, pivots in pivots_par_statut.items()
-            if statut in POIDS_STATUT
-            for pivot in pivots
+        aimes = [
+            Graine(oeuvre_id=pivot, poids=POIDS_STATUT["aime"])
+            for pivot in pivots_par_statut.get("aime", [])
         ]
+        envies = [
+            Graine(oeuvre_id=pivot, poids=POIDS_STATUT["a_voir"])
+            for pivot in pivots_par_statut.get("a_voir", [])
+        ]
+        places_envies = min(len(envies), GRAINES_ENVIES_MIN)
+        retenues = aimes[: GRAINES_MAX - places_envies] + envies
         retenues.sort(key=lambda graine: -graine.poids)
         return retenues[:GRAINES_MAX]
 
@@ -655,8 +882,14 @@ class Moteur:
         *,
         pivots_par_statut: dict[str, list[int]],
         limite: int = SUGGESTIONS_MAX,
+        sans_genres: list[str] | None = None,
     ) -> tuple[list[Suggestion], str | None]:
-        """La liste classée et, si elle est vide, la raison de l'être."""
+        """La liste classée et, si elle est vide, la raison de l'être.
+
+        `sans_genres` écarte les genres que le visiteur a masqués (« moins de
+        dessins animés ») — un filtre de présentation, pas un signal de goût :
+        il ne touche ni les graines ni les scores, il retire de la table.
+        """
         graines = self.graines(pivots_par_statut)
         if not graines:
             return [], "aucun_aime"
@@ -670,6 +903,14 @@ class Moteur:
         if self._graphe is not None:
             empreinte = SourceEmpreinte(self._graphe)
             await empreinte.verser(univers, graines=graines, exclues=exclues, candidats=candidats)
+            profil = SourceProfil(self._graphe)
+            await profil.verser(
+                univers,
+                graines=graines,
+                rejets=pivots_par_statut.get("aime_pas", []),
+                exclues=exclues,
+                candidats=candidats,
+            )
             communaute = SourceCommunaute(self._graphe)
             await communaute.verser(univers, graines=graines, exclues=exclues, candidats=candidats)
         await self._affinites.verser(
@@ -678,14 +919,50 @@ class Moteur:
 
         retenus = sorted(
             (candidat for candidat in candidats.values() if candidat.retenu),
-            # Le score, puis le pivot : sans ce départage, deux œuvres à
-            # égalité changeraient de place d'un appel à l'autre.
-            key=lambda candidat: (-candidat.score, candidat.oeuvre_id),
+            # Le score (fraîcheur comprise), puis l'année la plus récente,
+            # puis le pivot : sans départage, deux œuvres à égalité
+            # changeraient de place d'un appel à l'autre.
+            key=lambda candidat: (-candidat.score, -(candidat.annee or 0), candidat.oeuvre_id),
         )
-        suggestions = [Suggestion.depuis(candidat) for candidat in retenus[:limite]]
+        # L'hydratation des GENRES sur la tête de liste, avant la coupe : le
+        # front en fait ses puces d'exclusion, et le filtre « sans » se joue
+        # ici — élargi à trois pages pour que masquer un genre ne rende pas
+        # une liste courte.
+        tete = retenus[: limite * 3]
+        genres_connus = await self._genres_de(conn, univers, tete)
+        for candidat in tete:
+            cle = candidat.id_tmdb if candidat.id_tmdb is not None else candidat.oeuvre_id
+            candidat.genres = genres_connus.get(cle, [])
+        if sans_genres:
+            ecartes = {genre.strip().casefold() for genre in sans_genres if genre.strip()}
+            tete = [
+                candidat
+                for candidat in tete
+                if not ecartes & {genre.casefold() for genre in candidat.genres}
+            ]
+
+        suggestions = [Suggestion.depuis(candidat) for candidat in tete[:limite]]
         if suggestions:
             return suggestions, None
         # Rien : la cause est presque toujours la même — les œuvres classées
         # ne sont pas dans l'index de cet univers (jamais collectées, ou
         # `search reindex` pas encore passé).
         return [], "aucun_resultat"
+
+    async def _genres_de(
+        self, conn: psycopg.AsyncConnection, univers: Univers, candidats: list[Candidat]
+    ) -> dict[int, list[str]]:
+        """Les genres de chaque candidat, par clé de vignette.
+
+        Une seule requête sur les projections, et une tolérance : un candidat
+        que l'hydratation ne connaît pas garde une liste vide — il reste
+        proposé, et simplement infiltrables par genre.
+        """
+        cles = [
+            candidat.id_tmdb if candidat.id_tmdb is not None else candidat.oeuvre_id
+            for candidat in candidats
+        ]
+        if not cles:
+            return {}
+        hydratees = await self._cartes.hydrater(conn, univers, cles)
+        return {carte.id: carte.genres for carte in hydratees}

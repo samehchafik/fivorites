@@ -1885,3 +1885,33 @@
   font-style: italic;
   color: var(--texte-doux-sur-sombre, #b9b9b9);
 }
+
+/* --- « Moins de : » — masquer un genre des suggestions ------------------- */
+
+.fivo-affiner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.2rem 0 0.7rem;
+}
+
+.fivo-affiner-titre {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.85);
+  margin-inline-end: 0.2rem;
+}
+
+/* La puce reprend la forme des filtres de recherche — même vocabulaire
+   visuel pour le même genre de geste. Masquée, elle reste EN PLACE, barrée
+   et éteinte : le geste se défait là où il s'est fait, sans chercher un
+   panneau de réglages. */
+.fivo-genre-masquable.masque {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.75);
+  text-decoration: line-through;
+}
