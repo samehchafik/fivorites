@@ -276,6 +276,18 @@ export const TEXTES = {
     es: 'Huella cercana a {nombre} de tus obras',
     ar: 'بصمة قريبة من {nombre} من أعمالك',
   },
+  'raison.gens': {
+    fr: 'Avec {noms}',
+    en: 'With {noms}',
+    es: 'Con {noms}',
+    ar: 'مع {noms}',
+  },
+  'raison.gens_plusieurs': {
+    fr: '{nombre} de ses acteurs et réalisateurs ont fait vos œuvres',
+    en: '{nombre} of its cast and crew made your works',
+    es: '{nombre} de sus actores y directores hicieron tus obras',
+    ar: '{nombre} من ممثّليه ومخرجيه صنعوا أعمالك',
+  },
   'raison.profil': {
     fr: 'Au plus près de vos axes de goût',
     en: 'Closest to your taste profile',

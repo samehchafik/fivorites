@@ -160,6 +160,22 @@ Cinq gestes, chacun mesurable :
    univers dans le navigateur. C'est un filtre de présentation : il ne touche
    ni les graines ni les scores.
 
+**La cinquième source : les gens** *(ajoutée le 28 août 2026, sur la
+question juste « les acteurs sont des relations dans Neo4j, en principe ils
+contribuent ? »)*. Les relations FIV_JOUE_DANS / FIV_A_REALISE / FIV_A_CREE
+existaient — les filmographies s'en servent — mais le moteur ne les
+traversait pas. C'est la source qui OUVRE sur le récent : les crédits
+arrivent avec la collecte, sans attendre ni notes ni membres. Une série de
+2025 sans empreinte mesurée ni citation (« Le Catalogue d'Amina ») était
+invisible des quatre autres sources ; par ses acteurs, elle mène à ses
+consœurs de 2022-2026. Le signal sature avec le nombre de personnes
+partagées (une seule est faible — un second rôle prolifique relie tout à
+tout ; sept est un quasi-jumelage d'équipe), les noms partent dans
+l'explication (« Avec Melissa Fumero »), et la source compte comme du
+CONTENU pour la corroboration. Mesuré sur les quatre graines réelles : The
+Good Place (7 personnes en commun, corroborée par la communauté), Parks and
+Recreation, Machos alfa — par le créateur de Muertos S.L.
+
 **Et le correctif qui conditionne tout le reste, trouvé sur un cas réel**
 (« La Brea, Brooklyn Nine-Nine, Muertos S.L., Lucifer » rendait un mur de
 séries inconnues) : **98,5 % des empreintes du graphe ne sont pas des

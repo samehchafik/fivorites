@@ -54,6 +54,7 @@ import psycopg
 from fiv_webapp.cartes import Cartes
 from fiv_webapp.fiche import KIND_TMDB, PAYS_DE_LANGUE, SOURCE
 from fiv_webapp.graphe import Graphe
+from fiv_webapp.personnes import ROLES as ROLES_PERSONNES
 from fiv_webapp.recherche import Recherche
 from fiv_webapp.univers import Univers
 
@@ -89,6 +90,19 @@ APPORT_EMPREINTE = 1.0
 # corrobore, elle départage — elle ne conduit plus.
 APPORT_COMMUNAUTE = 0.45
 APPORT_AFFINITE = 0.55
+# Les GENS : les acteurs, réalisateurs et créateurs des graines, et ce
+# qu'ils ont fait d'autre — les relations FIV_JOUE_DANS / FIV_A_REALISE /
+# FIV_A_CREE du graphe. C'est la source qui sert le RÉCENT : les crédits
+# arrivent avec la collecte, sans attendre ni notes ni membres — là où une
+# série de 2025 n'a ni empreinte mesurée ni citation. Mesuré sur la
+# production : les gens de quatre graines mènent à The Good Place (7
+# personnes en commun), Parks and Recreation, Community — et ceux d'une
+# série égyptienne de 2025 mènent à ses consœurs de 2022-2026.
+APPORT_GENS = 0.65
+
+# La saturation du signal : partager UNE personne est faible (un second rôle
+# prolifique relie tout à tout), en partager sept est un quasi-jumelage.
+GENS_REPERE = 4
 
 # --- La convergence : les voisins que PLUSIEURS graines désignent ----------
 #
@@ -304,6 +318,26 @@ WHERE node.oeuvreId <> s.oeuvreId
 RETURN graine, node.oeuvreId AS oeuvreId, node.idTmdb AS idTmdb, node.titre AS titre,
        node.annee AS annee, node.affiche AS affiche, node.univers AS univers, score
 ORDER BY score DESC, node.votes DESC
+LIMIT $limite
+"""
+
+# Ce que les gens des graines ont fait d'autre. `count(DISTINCT p)` :
+# c'est le NOMBRE de personnes partagées qui fait le signal, pas leur
+# célébrité — et les noms partent pour l'explication. Départage par les
+# votes : entre deux œuvres d'un même acteur, la plus connue est la
+# suggestion la plus sûre.
+_CY_GENS = """
+MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $graines
+MATCH (p:FivPersonne)-[r1]->(s)
+WHERE type(r1) IN $roles
+MATCH (p)-[r2]->(reco:FivOeuvre)
+WHERE type(r2) IN $roles
+  AND reco.univers = $univers AND NOT reco.oeuvreId IN $exclues
+WITH reco, count(DISTINCT p) AS gens, collect(DISTINCT p.nom) AS noms
+RETURN reco.oeuvreId AS oeuvreId, reco.idTmdb AS idTmdb, reco.titre AS titre,
+       reco.annee AS annee, reco.affiche AS affiche, reco.univers AS univers,
+       gens, noms[..4] AS noms
+ORDER BY gens DESC, reco.votes DESC
 LIMIT $limite
 """
 
@@ -526,6 +560,10 @@ class Candidat:
     # Combien de fois plus souvent les voisins citent cette œuvre que la base
     # entière. C'est ce qui distingue un signal d'une popularité.
     surrepresentation: float | None = None
+    # Les gens partagés avec les graines — combien, et qui : l'explication
+    # « Avec Melissa Fumero » vaut mieux qu'un score.
+    gens: int | None = None
+    avec: list[str] = field(default_factory=list)
     # Combien de graines DISTINCTES ont désigné cette œuvre comme voisine :
     # au-delà de une, c'est l'œuvre vers laquelle le graphe du visiteur
     # converge, et l'explication le dit.
@@ -556,6 +594,7 @@ class Candidat:
         contenu = (
             self.apports.get("proche", 0.0)
             + self.apports.get("profil", 0.0)
+            + self.apports.get("gens", 0.0)
             + self.apports.get("affinite", 0.0)
         )
         return contenu > 0.0 and self.apports.get("voisins", 0.0) > 0.0
@@ -615,6 +654,8 @@ class Suggestion:
     communs: list[str] = field(default_factory=list)
     surrepresentation: float | None = None
     convergences: int | None = None
+    gens: int | None = None
+    avec: list[str] = field(default_factory=list)
     genres: list[str] = field(default_factory=list)
     plateformes: list[dict[str, Any]] = field(default_factory=list)
     # Le contenu et la communauté sont-ils d'accord ? Le front le dit, parce
@@ -644,6 +685,8 @@ class Suggestion:
             communs=candidat.communs,
             surrepresentation=candidat.surrepresentation,
             convergences=candidat.convergences,
+            gens=candidat.gens,
+            avec=candidat.avec,
             genres=candidat.genres,
             plateformes=candidat.plateformes,
             corrobore=candidat.corrobore,
@@ -665,6 +708,8 @@ class Suggestion:
             "communs": self.communs,
             "surrepresentation": self.surrepresentation,
             "convergences": self.convergences,
+            "gens": self.gens,
+            "avec": self.avec,
             "genres": self.genres,
             "plateformes": self.plateformes,
             "corrobore": self.corrobore,
@@ -919,6 +964,54 @@ class SourceProfil:
                 candidat.distance = round(distance, 2)
 
 
+class SourceGens:
+    """Ce que les acteurs, réalisateurs et créateurs des graines ont fait
+    d'autre — les relations de personnes du graphe.
+
+    La source qui OUVRE sur le récent : une série de 2025 n'a ni empreinte
+    mesurée ni citation communautaire, mais ses crédits sont arrivés avec la
+    collecte. Elle relie « Le Catalogue d'Amina » à ses consœurs par sa
+    distribution, quand toutes les autres sources la regardent en silence.
+    """
+
+    def __init__(self, graphe: Graphe) -> None:
+        self._graphe = graphe
+
+    async def verser(
+        self,
+        univers: Univers,
+        *,
+        graines: list[Graine],
+        exclues: list[int],
+        candidats: dict[int, Candidat],
+        ampleur: int = 1,
+    ) -> None:
+        lignes = await self._graphe.executer(
+            _CY_GENS,
+            graines=[graine.oeuvre_id for graine in graines],
+            roles=list(ROLES_PERSONNES),
+            univers=univers.interne,
+            exclues=exclues,
+            limite=CANDIDATS_PAR_SOURCE * ampleur,
+        )
+        for ligne in lignes:
+            oeuvre_id = ligne["oeuvreId"]
+            candidat = candidats.setdefault(oeuvre_id, Candidat(oeuvre_id=oeuvre_id))
+            candidat.id_tmdb = candidat.id_tmdb or ligne.get("idTmdb")
+            candidat.titre = candidat.titre or ligne.get("titre")
+            candidat.annee = candidat.annee if candidat.annee is not None else ligne.get("annee")
+            candidat.affiche = candidat.affiche or ligne.get("affiche")
+            candidat.univers_interne = ligne.get("univers") or univers.interne
+            gens = int(ligne["gens"])
+            candidat.gens = max(candidat.gens or 0, gens)
+            candidat.avec = candidat.avec or [nom for nom in ligne.get("noms") or [] if nom]
+            # Le signal sature : partager une personne est faible — un second
+            # rôle prolifique relie tout à tout — en partager sept est un
+            # quasi-jumelage d'équipe.
+            confiance = min(1.0, math.log(1 + gens) / math.log(1 + GENS_REPERE))
+            candidat.verser("gens", APPORT_GENS * confiance)
+
+
 class SourceCommunaute:
     """Les membres qui citent les graines, et ce qu'ils citent d'autre.
 
@@ -1104,6 +1197,10 @@ class Moteur:
                 exclues=exclues,
                 candidats=candidats,
                 ampleur=ampleur,
+            )
+            gens = SourceGens(self._graphe)
+            await gens.verser(
+                univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
             )
             communaute = SourceCommunaute(self._graphe)
             await communaute.verser(

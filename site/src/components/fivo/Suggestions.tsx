@@ -95,6 +95,17 @@ function expliquer(suggestion: Suggestion, t: Textes): string {
   if (suggestion.source === 'voisins') {
     return t.compte(voisins, 'raison.voisins_un', 'raison.voisins')
   }
+  // Les gens : les noms d'abord — « Avec Melissa Fumero » se lit, un compte
+  // ne se lit pas. Au-delà de deux noms, le nombre dit mieux l'ampleur.
+  if (suggestion.source === 'gens') {
+    const noms = (suggestion.avec ?? []).slice(0, 2)
+    if ((suggestion.gens ?? 0) > 2) {
+      return t.dit('raison.gens_plusieurs', { nombre: t.nombre(suggestion.gens!) })
+    }
+    if (noms.length > 0) {
+      return t.dit('raison.gens', { noms: noms.join(', ') })
+    }
+  }
   // Le profil : la suggestion colle aux axes du visiteur — le centre de tout
   // ce qu'il a classé, rejets compris — pas à une œuvre en particulier.
   if (suggestion.source === 'profil') {

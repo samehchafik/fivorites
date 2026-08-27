@@ -198,16 +198,20 @@ export interface Suggestion {
   affiche: string | null
   univers: UniversSlug
   /** D'où elle vient : `voisins` la communauté, `proche` l'empreinte d'une
-   *  œuvre, `profil` les axes du visiteur, `affinite` les genres et les
-   *  gens. Les sources n'ont pas la même force, et l'explication affichée
-   *  les distingue. */
-  source: 'voisins' | 'proche' | 'profil' | 'affinite'
+   *  œuvre, `profil` les axes du visiteur, `gens` les acteurs et
+   *  réalisateurs du graphe, `affinite` les genres et les gens de l'index.
+   *  Les sources n'ont pas la même force, et l'explication les distingue. */
+  source: 'voisins' | 'proche' | 'profil' | 'gens' | 'affinite'
   voisins: number | null
   force: number | null
   distance: number | null
   /** Combien de vos œuvres classées cette suggestion avoisine : au-delà de
    *  une, c'est l'œuvre vers laquelle votre profil converge. */
   convergences: number | null
+  /** Les gens partagés avec vos œuvres — combien, et qui : « Avec Melissa
+   *  Fumero » vaut mieux qu'un score. */
+  gens: number | null
+  avec: string[]
   /** Les genres de l'œuvre — la matière des puces « Moins de : ». */
   genres: string[]
   /** Où et COMMENT l'œuvre se regarde, dans le pays de la langue — la

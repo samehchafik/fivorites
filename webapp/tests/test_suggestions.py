@@ -163,10 +163,12 @@ class FauxGraphe:
         proches: list[dict[str, Any]] | None = None,
         empreintes: dict[int, list[float]] | None = None,
         profil_proches: list[dict[str, Any]] | None = None,
+        gens: list[dict[str, Any]] | None = None,
         membres: int = 1000,
     ) -> None:
         self._citations = citations or []
         self._proches = proches or []
+        self._gens = gens or []
         self._empreintes = empreintes or {}
         self._profil_proches = profil_proches or []
         self.membres = membres
@@ -186,6 +188,8 @@ class FauxGraphe:
         if "$profil" in cypher:
             self.profil_demande = parametres["profil"]
             return self._profil_proches
+        if "FivPersonne" in cypher:
+            return self._gens
         if "UNWIND $graines" in cypher:
             return self._proches
         if "count(m)" in cypher:
@@ -708,3 +712,58 @@ async def test_la_location_seule_ne_fait_pas_matcher() -> None:
     conn = FauxConn(plateformes={"1001": {"buy": [{"provider_name": "Amazon Video"}]}})
     retenues, _ = await lancer(graphe, conn=conn, sur_plateformes=["Amazon Prime Video"])
     assert retenues == []
+
+
+# ---------------------------------------------------------------------------
+# Les gens : les acteurs et réalisateurs ouvrent sur le récent
+# ---------------------------------------------------------------------------
+
+
+def par_les_gens(oeuvre_id: int, gens: int, noms: list[str]) -> dict[str, Any]:
+    return {
+        "oeuvreId": oeuvre_id,
+        "idTmdb": oeuvre_id - 1000,
+        "titre": f"Œuvre {oeuvre_id}",
+        "annee": ANNEE_COURANTE,
+        "affiche": None,
+        "univers": "series",
+        "gens": gens,
+        "noms": noms,
+    }
+
+
+async def test_les_gens_ouvrent_sur_le_recent() -> None:
+    """Une graine sans empreinte mesurée ni citation reste muette pour trois
+    sources — ses ACTEURS, eux, sont dans le graphe dès la collecte : ce
+    qu'ils ont fait d'autre entre par cette source, avec leurs noms pour
+    l'explication."""
+    graphe = FauxGraphe(gens=[par_les_gens(2001, 3, ["Melissa Fumero", "Andy Samberg"])])
+    retenues, _ = await lancer(graphe)
+    assert [s.oeuvre_id for s in retenues] == [2001]
+    assert retenues[0].source == "gens"
+    assert retenues[0].gens == 3
+    assert retenues[0].avec == ["Melissa Fumero", "Andy Samberg"]
+
+
+async def test_les_gens_saturent() -> None:
+    """Partager une personne est faible — un second rôle prolifique relie
+    tout à tout ; en partager beaucoup sature au lieu d'exploser."""
+    graphe = FauxGraphe(
+        gens=[par_les_gens(2001, 1, ["A"]), par_les_gens(2002, 7, ["B", "C", "D", "E"])]
+    )
+    retenues, _ = await lancer(graphe)
+    par_id = {s.oeuvre_id: s.score for s in retenues}
+    assert par_id[2002] > par_id[2001]
+    # 7 personnes dépassent le repère : l'apport est plafonné à APPORT_GENS.
+    from fiv_webapp.suggestions import APPORT_GENS
+
+    assert par_id[2002] == pytest.approx(APPORT_GENS, abs=0.01)
+
+
+async def test_les_gens_corroborent_avec_la_communaute() -> None:
+    """Les gens sont une source de CONTENU : d'accord avec la communauté,
+    ils déclenchent la corroboration."""
+    candidat = Candidat(oeuvre_id=1, annee=ANNEE_COURANTE)
+    candidat.verser("gens", 0.5)
+    candidat.verser("voisins", 0.4)
+    assert candidat.corrobore
