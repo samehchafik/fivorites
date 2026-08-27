@@ -319,12 +319,17 @@ ils tiennent.
 
 ## Ce qui reste devant
 
-* **Deux gestes d'exploitation pour le moteur** : un index Neo4j
-  `CREATE INDEX ... FOR (n:FivOeuvre) ON (n.univers, n.empreinteSource)`
-  réduirait le balayage des juges (~2 s aujourd'hui, mesuré depuis le poste) ;
-  et le vrai chantier est de RATTRAPER les empreintes `interne` — mesurer de
-  vraies empreintes pour les œuvres récentes, sans quoi le vectoriel ne voit
-  que 1,5 % du catalogue.
+* **Le rattrapage des empreintes reste LE chantier du moteur.** L'index
+  Neo4j `fivEmpreinteSource (univers, empreinteSource)` est POSÉ (27 août
+  2026, autorisé) : le balayage des juges est passé de ~2 s à 134 ms, le
+  moteur complet répond en 1,5 s depuis le poste. Mais élargir aux empreintes
+  `interne` a été essayé et MESURÉ : même filtrées (votes ≥ 100, vecteurs non
+  saturés — il en reste 1 531 côté séries, moins que les juges), leurs
+  voisins ne localisent pas le goût — « La Brea » y voisine avec des
+  telenovelas mexicaines, « Muertos S.L. » avec des K-dramas. La note
+  scalaire prédite par l'élève est bonne (la grille l'affiche) ; l'empreinte
+  par AXES `interne`, elle, ne porte pas encore un profil de goût. Tant
+  qu'elle n'est pas recalculée, le vectoriel reste sur les juges.
 * **Neo4j en local** : le poste n'a pas encore de Neo4j vendorisé dans ce
   module — les suggestions se testent contre le serveur ou après `make -C
   admin bootstrap-neo4j` ; le moteur, lui, est couvert par des tests
