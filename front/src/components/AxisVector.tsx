@@ -72,13 +72,24 @@ export function AxisVector({
   internal?: Record<string, number> | null
   size?: 'sm' | 'md'
 }) {
-  if (!scores || Object.keys(scores).length === 0) return null
+  const juge = scores && Object.keys(scores).length > 0 ? scores : null
+  const prediction = internal && Object.keys(internal).length > 0 ? internal : null
+  // Le juge d'abord, la prédiction en repli — la même préséance que partout
+  // (graphe, entraînement). Ne rien afficher quand seule la prédiction existe
+  // était le bon choix tant qu'elle couvrait 2 298 œuvres ; depuis que la
+  // régression a noté 638 000 œuvres, c'est elle la note de la quasi-totalité
+  // du catalogue, et la cacher faisait passer la notation pour absente —
+  // constaté page 304 de la grille, où « aucune série n'a de note ».
+  const affiches = juge ?? prediction
+  if (!affiches) return null
+  const predit = juge === null
 
-  const ecarts = internal
-    ? orderedAxes(scores)
-        .filter(({ key }) => typeof internal[key] === 'number')
-        .map(({ key, label }) => ({ label, gap: Math.abs(scores[key] - internal[key]) }))
-    : []
+  const ecarts =
+    juge && prediction
+      ? orderedAxes(juge)
+          .filter(({ key }) => typeof prediction[key] === 'number')
+          .map(({ key, label }) => ({ label, gap: Math.abs(juge[key] - prediction[key]) }))
+      : []
   const moyen = ecarts.length
     ? ecarts.reduce((somme, e) => somme + e.gap, 0) / ecarts.length
     : null
@@ -88,10 +99,26 @@ export function AxisVector({
 
   return (
     <Group gap={size === 'sm' ? 3 : 5} align="flex-end" wrap="nowrap">
-      {orderedAxes(scores).map(({ key, label, color }) => {
-        const value = scores[key]
+      {predit && (
+        <Tooltip
+          withinPortal
+          multiline
+          w={220}
+          label="Prédiction de la régression (encodeur local) — le juge n'est pas passé sur cette œuvre."
+        >
+          <Badge size="xs" variant="light" color="gray" mr={2}>
+            ≈
+          </Badge>
+        </Tooltip>
+      )}
+      {orderedAxes(affiches).map(({ key, label, color }) => {
+        const value = affiches[key]
         return (
-          <Tooltip key={key} label={`${label} : ${value}/10`} withinPortal>
+          <Tooltip
+            key={key}
+            label={`${label} : ${value}/10${predit ? ' (prédit)' : ''}`}
+            withinPortal
+          >
             <div
               style={{
                 width,
@@ -110,6 +137,9 @@ export function AxisVector({
                   height: `${(value / 10) * 100}%`,
                   background: color,
                   borderRadius: 2,
+                  // La prédiction en demi-teinte : lisible, mais pas
+                  // confondable avec un verdict du juge.
+                  opacity: predit ? 0.65 : 1,
                 }}
               />
             </div>
