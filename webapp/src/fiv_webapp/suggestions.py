@@ -1157,11 +1157,18 @@ class Moteur:
         *,
         pivots_par_statut: dict[str, list[int]],
         limite: int = SUGGESTIONS_MAX,
+        depuis: int = 0,
         sans_genres: list[str] | None = None,
         sur_plateformes: list[str] | None = None,
         langue: str = "fr",
-    ) -> tuple[list[Suggestion], str | None]:
-        """La liste classée et, si elle est vide, la raison de l'être.
+    ) -> tuple[list[Suggestion], str | None, int]:
+        """Une PAGE de la liste classée, la raison d'un vide, et le total.
+
+        `depuis` pagine : le vivier est classé en entier, la fenêtre se coupe
+        en dernier — la page 2 continue là où la première s'arrête, et le
+        TOTAL (après filtres) dit au front s'il y a une suite. Le classement
+        est déterministe (départages par année puis pivot) : les pages sont
+        disjointes tant que les signaux ne bougent pas.
 
         `sans_genres` écarte les genres masqués (« moins de dessins animés »),
         `sur_plateformes` ne garde que ce qui se regarde sur les plateformes
@@ -1171,7 +1178,7 @@ class Moteur:
         """
         graines = self.graines(pivots_par_statut)
         if not graines:
-            return [], "aucun_aime"
+            return [], "aucun_aime", 0
 
         # Tout ce qui est classé est exclu, quel que soit le statut : le connu
         # n'est pas une suggestion, l'écarté ne se repropose pas, et l'envie
@@ -1225,7 +1232,9 @@ class Moteur:
         if sans_genres or sur_plateformes:
             tete = retenus[:VIVIER_FILTRE_MAX]
         else:
-            tete = retenus[: limite * 3]
+            # Assez de profondeur pour la page demandée, jamais plus que le
+            # plafond d'hydratation.
+            tete = retenus[: min(max(limite * 3, depuis + limite), VIVIER_FILTRE_MAX)]
         genres_connus = await self._genres_de(conn, univers, tete)
         for candidat in tete:
             cle = candidat.id_tmdb if candidat.id_tmdb is not None else candidat.oeuvre_id
@@ -1260,13 +1269,19 @@ class Moteur:
                     }
                 ]
 
-        suggestions = [Suggestion.depuis(candidat) for candidat in tete[:limite]]
+        total = len(tete)
+        fenetre = tete[depuis : depuis + limite]
+        suggestions = [Suggestion.depuis(candidat) for candidat in fenetre]
         if suggestions:
-            return suggestions, None
+            return suggestions, None, total
+        if depuis > 0:
+            # Une page au-delà de la fin n'est pas une panne : la liste est
+            # simplement parcourue.
+            return [], None, total
         # Rien : la cause est presque toujours la même — les œuvres classées
         # ne sont pas dans l'index de cet univers (jamais collectées, ou
         # `search reindex` pas encore passé).
-        return [], "aucun_resultat"
+        return [], "aucun_resultat", 0
 
     async def _genres_de(
         self, conn: psycopg.AsyncConnection, univers: Univers, candidats: list[Candidat]

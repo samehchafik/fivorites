@@ -345,12 +345,13 @@ async def lancer(
         cartes or FauxCartes(),  # type: ignore[arg-type]
         graphe,  # type: ignore[arg-type]
     )
-    return await moteur.pour(
+    retenues, raison, _total = await moteur.pour(
         conn or FauxConn(),  # type: ignore[arg-type]
         UNIVERS["series"],
         pivots_par_statut=statuts or {"aime": [1001], "aime_pas": [], "a_voir": []},
         **options,
     )
+    return retenues, raison
 
 
 # ---------------------------------------------------------------------------
@@ -767,3 +768,39 @@ async def test_les_gens_corroborent_avec_la_communaute() -> None:
     candidat.verser("gens", 0.5)
     candidat.verser("voisins", 0.4)
     assert candidat.corrobore
+
+
+async def test_la_pagination_decoupe_le_vivier() -> None:
+    """La page 2 continue exactement là où la première s'arrête — pages
+    disjointes, total annoncé, et une page au-delà de la fin n'est pas une
+    panne."""
+    graphe = FauxGraphe(proches=[proche(2000 + i, 0.2 + i * 0.02) for i in range(1, 8)])
+    moteur = Moteur(FauxRecherche(), FauxCartes(), graphe)  # type: ignore[arg-type]
+    statuts = {"aime": [1001], "aime_pas": [], "a_voir": []}
+    page1, raison1, total1 = await moteur.pour(
+        FauxConn(),  # type: ignore[arg-type]
+        UNIVERS["series"],
+        pivots_par_statut=statuts,
+        limite=3,
+        depuis=0,
+    )
+    page2, raison2, total2 = await moteur.pour(
+        FauxConn(),  # type: ignore[arg-type]
+        UNIVERS["series"],
+        pivots_par_statut=statuts,
+        limite=3,
+        depuis=3,
+    )
+    assert total1 == total2 == 7
+    assert [s.oeuvre_id for s in page1] == [2001, 2002, 2003]
+    assert [s.oeuvre_id for s in page2] == [2004, 2005, 2006]
+    assert raison1 is None and raison2 is None
+    # Au-delà de la fin : vide, sans raison d'erreur — la liste est parcourue.
+    apres, raison3, _ = await moteur.pour(
+        FauxConn(),  # type: ignore[arg-type]
+        UNIVERS["series"],
+        pivots_par_statut=statuts,
+        limite=3,
+        depuis=9,
+    )
+    assert apres == [] and raison3 is None

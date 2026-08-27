@@ -152,12 +152,22 @@ export function chargerSuggestions(
     sur?: string[]
     /** La langue : elle décide du pays dont on lit la disponibilité. */
     langue?: string
+    /** La page du vivier classé — la 2 continue où la 1 s'arrête. */
+    page?: number
   } = {},
-): Promise<{ items: Suggestion[]; raison: string | null; graine?: number }> {
+): Promise<{
+  items: Suggestion[]
+  raison: string | null
+  graine?: number
+  total: number
+  encore: boolean
+  page: number
+}> {
   const params = new URLSearchParams({ univers })
   for (const genre of options.sans ?? []) params.append('sans', genre)
   for (const plateforme of options.sur ?? []) params.append('sur', plateforme)
   if (options.langue) params.set('langue', options.langue)
+  if (options.page && options.page > 1) params.set('page', String(options.page))
   return requete(`/suggestions?${params}`)
 }
 

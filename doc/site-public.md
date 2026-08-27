@@ -191,6 +191,16 @@ graine `interne` n'en lance pas : elle nourrit la communauté et les
 affinités. Sur le même cas réel, les suggestions deviennent Psych (corroboré
 par 27 voisins), iZombie, Ted Lasso, The Orville, Lupin, Warehouse 13.
 
+**Et la pagination** *(28 août 2026, demandée avec insistance — à raison)*.
+Le vivier classé (~100-600 candidats) se parcourt : `?page=2` continue
+exactement où la première fenêtre s'arrête (classement déterministe, pages
+disjointes), la réponse annonce `total` et `encore`. En vue liste, un
+compteur « 24 sur 94 » et un bouton « Charger plus » qui AJOUTE ; la pile
+passe par le même canal — quand elle s'épuise, elle demande la page
+suivante au lieu de recevoir éternellement les 24 mêmes. L'ajout déduplique
+par pivot : chaque geste étant une exclusion de plus, les fenêtres bougent
+côté serveur.
+
 Au passage, une boucle corrigée : une pile de trois cartes ou moins
 redemandait des suggestions, recevait les mêmes, et redemandait — des
 centaines de requêtes par minute, mesurées à l'écran. Le droit de recharger

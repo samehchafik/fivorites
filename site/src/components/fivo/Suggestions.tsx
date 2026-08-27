@@ -160,6 +160,11 @@ export function Suggestions({
   const [items, setItems] = useState<Suggestion[]>([])
   const [raison, setRaison] = useState<string | null>(null)
   const [etat, setEtat] = useState<'en-cours' | 'servi' | 'erreur'>('en-cours')
+  // La pagination du vivier : la page servie, s'il y a une suite, et le
+  // total — le vivier compte ~100-600 candidats, la page 24.
+  const [page, setPage] = useState(1)
+  const [encore, setEncore] = useState(false)
+  const [total, setTotal] = useState(0)
   // Les classements faits DANS la pile. Ils font monter `versionSignaux`
   // comme les autres, mais ne doivent pas provoquer de rechargement : la pile
   // gère sa file elle-même, et refaire la requête à chaque carte jetée
@@ -270,22 +275,41 @@ export function Suggestions({
     const utile = versionSignaux - absorbees.current
     const signatureMasques = [...masques].sort().join('|')
     const signatureSur = [...surPlateformes].sort().join('|')
-    const dejaVu =
+    const memeContexte =
       charge.current !== null &&
       charge.current.univers === univers &&
       charge.current.version === utile &&
-      charge.current.recharges === recharges &&
       charge.current.masques === signatureMasques &&
       charge.current.sur === signatureSur &&
       charge.current.langue === langue
-    if (dejaVu) return
+    if (memeContexte && charge.current!.recharges === recharges) return
+
+    // Le contexte n'a pas bougé et on demande la suite : la page suivante
+    // s'AJOUTE. Tout autre changement — univers, geste venu d'ailleurs,
+    // filtre, langue — repart à la première page et remplace.
+    const demandee = memeContexte && encore ? page + 1 : 1
 
     let abandonne = false
     setEtat('en-cours')
-    chargerSuggestions(univers, { sans: masques, sur: surPlateformes, langue })
+    chargerSuggestions(univers, {
+      sans: masques,
+      sur: surPlateformes,
+      langue,
+      page: demandee,
+    })
       .then((reponse) => {
         if (abandonne) return
-        setItems(reponse.items)
+        setItems((actuels) => {
+          if (demandee === 1) return reponse.items
+          // Les gestes déplacent les fenêtres côté serveur (chaque
+          // classement est une exclusion de plus) : on déduplique par pivot
+          // plutôt que de faire confiance à des pages parfaitement disjointes.
+          const connus = new Set(actuels.map((s) => s.oeuvreId))
+          return [...actuels, ...reponse.items.filter((s) => !connus.has(s.oeuvreId))]
+        })
+        setPage(reponse.page)
+        setEncore(reponse.encore)
+        setTotal(reponse.total)
         setRaison(reponse.raison)
         setEtat('servi')
         charge.current = {
@@ -303,7 +327,7 @@ export function Suggestions({
     return () => {
       abandonne = true
     }
-  }, [univers, versionSignaux, actif, recharges, masques, surPlateformes, langue])
+  }, [univers, versionSignaux, actif, recharges, masques, surPlateformes, langue, page, encore])
 
   // Les suggestions déjà classées pendant la consultation restent affichées
   // (avec leur bouton allumé) jusqu'au prochain rechargement : les faire
@@ -402,6 +426,15 @@ export function Suggestions({
             </div>
           )}
 
+          {total > items.length && (
+            <p className="fivo-compte">
+              {t.dit('recherche.compte', {
+                montres: t.nombre(items.length),
+                total: t.nombre(total),
+              })}
+            </p>
+          )}
+
           {vue === 'pile' ? (
             <PileSuggestions
               suggestions={items}
@@ -456,6 +489,19 @@ export function Suggestions({
                 />
               ))}
             </div>
+          )}
+
+          {/* La suite du vivier, en vue liste — le même canal que la pile :
+              `recharges` monte, l'effet demande la page suivante et AJOUTE. */}
+          {vue === 'liste' && encore && (
+            <button
+              type="button"
+              className="fivo-suite"
+              disabled={etat === 'en-cours'}
+              onClick={() => setRecharges((tour) => tour + 1)}
+            >
+              {t.dit(etat === 'en-cours' ? 'commun.chargement' : 'recherche.charger')}
+            </button>
           )}
         </>
       )}
