@@ -179,6 +179,16 @@ export interface FichePersonne {
   source: 'graphe' | 'index'
 }
 
+/** Une plateforme et la façon d'y accéder : incluse dans l'abonnement, via
+ *  une chaîne payante du hub (« HBO Max via Prime Video »), ou seulement à
+ *  la location. `location` dit si la boutique loue AUSSI. */
+export interface AccesPlateforme {
+  nom: string
+  acces: 'incluse' | 'chaine' | 'location'
+  via: string | null
+  location: boolean
+}
+
 export interface Suggestion {
   /** La clé de vignette — id TMDB, ou pivot pour un livre. Ouvre la fiche. */
   id: number
@@ -200,9 +210,10 @@ export interface Suggestion {
   convergences: number | null
   /** Les genres de l'œuvre — la matière des puces « Moins de : ». */
   genres: string[]
-  /** Où l'œuvre se regarde, dans le pays de la langue — la matière des puces
-   *  « Sur : ». Vide pour un livre. */
-  plateformes: string[]
+  /** Où et COMMENT l'œuvre se regarde, dans le pays de la langue — la
+   *  matière des puces « Sur : » et de l'indication d'accès. Vide pour un
+   *  livre. */
+  plateformes: AccesPlateforme[]
   /** Les genres partagés avec les coups de cœur — l'explication de l'étage
    *  des affinités. Vide quand la correspondance s'est faite sur un nom. */
   communs: string[]

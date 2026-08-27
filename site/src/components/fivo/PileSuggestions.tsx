@@ -58,6 +58,7 @@ export function PileSuggestions({
   sur = [],
   type,
   explication,
+  acces,
   onClasser,
   onOuvrir,
   onRecharger,
@@ -73,6 +74,8 @@ export function PileSuggestions({
   type: string
   /** La phrase qui dit pourquoi cette œuvre est proposée. */
   explication: (suggestion: Suggestion) => string
+  /** L'accès sur les plateformes filtrées, ou rien sans filtre. */
+  acces?: (suggestion: Suggestion) => string | undefined
   onClasser: (oeuvreId: number, statut: Statut) => void
   onOuvrir: (identifiant: number, oeuvreId: number | null) => void
   /** La pile s'épuise : il faut d'autres cartes. */
@@ -116,7 +119,9 @@ export function PileSuggestions({
         (suggestion) =>
           !(suggestion.genres ?? []).some((genre) => masques.includes(genre)) &&
           (sur.length === 0 ||
-            (suggestion.plateformes ?? []).some((plateforme) => sur.includes(plateforme))),
+            (suggestion.plateformes ?? []).some(
+              (entree) => entree.acces !== 'location' && sur.includes(entree.nom),
+            )),
       ),
     )
   }, [masques, sur])
@@ -315,6 +320,7 @@ export function PileSuggestions({
                   {suggestion.corrobore && <span aria-hidden="true">✦ </span>}
                   {explication(suggestion)}
                 </p>
+                {acces?.(suggestion) && <p className="fivo-acces">{acces(suggestion)}</p>}
                 {/* Le ⓘ de la V1 : il ouvrait le synopsis, il ouvre ici la
                     fiche entière — saisons, distribution, gestes compris. */}
                 <button

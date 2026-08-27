@@ -308,6 +308,9 @@ export const TEXTES = {
     es: 'Dejar de filtrar por {plateforme}',
     ar: 'إيقاف التصفية حسب {plateforme}',
   },
+  'acces.incluse': { fr: 'inclus', en: 'included', es: 'incluido', ar: 'مشمول' },
+  'acces.chaine': { fr: 'via {via}', en: 'via {via}', es: 'vía {via}', ar: 'عبر {via}' },
+  'acces.location': { fr: 'à la location', en: 'to rent', es: 'en alquiler', ar: 'للإيجار' },
   'affiner.groupe': {
     fr: 'Affiner les suggestions par genre',
     en: 'Refine suggestions by genre',

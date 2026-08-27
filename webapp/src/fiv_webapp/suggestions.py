@@ -139,28 +139,35 @@ FRAICHEUR_AGE_INCONNU = 15
 # (`fiv_admin.search.OFFRES_INCLUSES`).
 OFFRES_REGARDABLES = ("flatrate", "free", "ads")
 
-# Les plateformes des candidats de tête, en une requête sur le brut TMDB.
-# `distinct on` : un même id peut avoir plusieurs collectes, on lit la plus
-# récente — la règle de la fiche. Le pays vient de la langue : « sur
-# Netflix » n'a de sens que quelque part.
+# La location et l'achat : ils ne font PAS matcher le filtre — presque tout
+# se loue — mais ils s'INDIQUENT sur la carte : « à la location sur Prime »
+# est une information, pas un critère.
+OFFRES_LOCATION = ("rent", "buy")
+
+# Les boutiques des hubs : « Amazon Video » est la boutique de location de
+# l'appli Prime Video, « Apple TV Store » celle d'Apple TV. Sans cette
+# traduction, la location sur Prime s'affichait sous un nom que personne
+# n'emploie.
+BOUTIQUES_DE_HUB = {
+    "Amazon Video": "Amazon Prime Video",
+    "Apple TV Store": "Apple TV",
+}
+
+# Les offres des candidats de tête, en une requête sur le brut TMDB —
+# l'objet PAYS entier, la qualification (incluse, chaîne, location) se fait
+# en Python, où elle se teste. `distinct on` : un même id peut avoir
+# plusieurs collectes, on lit la plus récente — la règle de la fiche. Le
+# pays vient de la langue : « sur Netflix » n'a de sens que quelque part.
 _SQL_PLATEFORMES = """
-    select source_id, coalesce((
-               select jsonb_agg(distinct fournisseur ->> 'provider_name')
-               from jsonb_each(offres_pays) as offre(genre, contenu)
-               cross join lateral jsonb_array_elements(offre.contenu) fournisseur
-               where offre.genre = any(%(genres)s)
-           ), '[]'::jsonb) as plateformes
-    from (
-        select distinct on (r.source_id)
-               r.source_id,
-               coalesce(r.payload -> 'watch/providers' -> 'results' -> %(pays)s,
-                        '{}'::jsonb) as offres_pays
-        from raw_source r
-        where r.source = %(source)s and r.kind = %(kind)s
-          and r.source_id = any(%(ids)s)
-          and r.http_status between 200 and 299 and r.payload is not null
-        order by r.source_id, r.fetched_at desc
-    ) recent
+    select distinct on (r.source_id)
+           r.source_id,
+           coalesce(r.payload -> 'watch/providers' -> 'results' -> %(pays)s,
+                    '{}'::jsonb) as offres_pays
+    from raw_source r
+    where r.source = %(source)s and r.kind = %(kind)s
+      and r.source_id = any(%(ids)s)
+      and r.http_status between 200 and 299 and r.payload is not null
+    order by r.source_id, r.fetched_at desc
 """
 
 # La corroboration : le multiplicateur appliqué au total d'une œuvre que DEUX
@@ -196,7 +203,15 @@ SUGGESTIONS_MAX = 24
 # tête faisait fondre la liste (mesuré : « sur Netflix » rendait huit cartes
 # alors que la matière existait plus bas dans le classement). Plafonné pour
 # borner les deux requêtes SQL d'hydratation.
-VIVIER_FILTRE_MAX = 240
+VIVIER_FILTRE_MAX = 600
+
+# L'AMPLEUR de la récolte quand un filtre est actif : les sources rendent
+# trois fois plus de candidats. Un filtre de plateforme ne garde qu'une
+# fraction du vivier (~un quart pour Netflix), et un vivier de 240 s'épuisait
+# en quelques dizaines de gestes — « tout tombe rapidement », constaté à
+# l'usage. Élargir ne coûte presque rien : le balayage des juges lit déjà
+# tout, seule la récolte était bridée.
+AMPLEUR_FILTRE = 3
 
 # Les candidats demandés à chaque source avant fusion. Large : c'est le
 # recouvrement entre sources qui fait la corroboration, et un pool étroit le
@@ -391,6 +406,66 @@ def replier_enseignes(noms: list[str]) -> list[str]:
     return sorted(retenus)
 
 
+def qualifier_offres(offres_pays: dict[str, Any]) -> list[dict[str, Any]]:
+    """L'objet pays de TMDB rendu en plateformes QUALIFIÉES.
+
+    Chaque entrée dit comment l'œuvre s'y regarde :
+
+    * `incluse` — dans l'abonnement (ou gratuite) ;
+    * `chaine` — via une chaîne payante du hub (« HBO Max Amazon Channel » :
+      l'abonnement HBO Max souscrit dans l'appli Prime Video) — `via` nomme
+      la chaîne ;
+    * `location` — à la location ou à l'achat, et RIEN d'autre : elle ne fait
+      pas matcher le filtre (presque tout se loue), elle s'indique.
+
+    Et `location: bool` sur chaque entrée : une plateforme incluse peut aussi
+    louer — la carte peut le dire d'un mot.
+    """
+    entrees: dict[str, dict[str, Any]] = {}
+    RANGS = {"incluse": 0, "chaine": 1, "location": 2}
+
+    def poser(nom: str, acces: str, via: str | None = None) -> None:
+        propre = (nom or "").strip()
+        if not propre:
+            return
+        connue = entrees.get(propre)
+        if connue is None:
+            entrees[propre] = {"nom": propre, "acces": acces, "via": via, "location": False}
+        elif RANGS[acces] < RANGS[connue["acces"]]:
+            connue["acces"], connue["via"] = acces, via
+
+    def noms(genre: str) -> list[str]:
+        contenu = offres_pays.get(genre) or []
+        if not isinstance(contenu, list):
+            return []
+        return [f.get("provider_name") or "" for f in contenu if isinstance(f, dict)]
+
+    regardables: list[str] = []
+    for genre in OFFRES_REGARDABLES:
+        regardables.extend(noms(genre))
+    for nom in replier_enseignes(regardables):
+        poser(nom, "incluse")
+    # Les chaînes des hubs : le repli a produit le hub — requalifions-le en
+    # `chaine` si RIEN d'autre ne l'inclut en propre.
+    for brut in regardables:
+        for suffixe, hub in HUBS_DE_CHAINES:
+            if brut.endswith(suffixe):
+                chaine = brut[: -len(suffixe)].strip()
+                if hub in entrees and not any(
+                    n == hub or n.startswith(hub + " ") for n in regardables
+                ):
+                    entrees[hub]["acces"], entrees[hub]["via"] = "chaine", chaine
+
+    louables: list[str] = []
+    for genre in OFFRES_LOCATION:
+        louables.extend(noms(genre))
+    for nom in replier_enseignes([BOUTIQUES_DE_HUB.get(nom, nom) for nom in louables]):
+        poser(nom, "location")
+        entrees[nom]["location"] = True
+
+    return sorted(entrees.values(), key=lambda e: (RANGS[e["acces"]], e["nom"]))
+
+
 def facteur_fraicheur(annee: int | None, courante: int | None = None) -> float:
     """Le poids d'une œuvre selon son âge — 1,0 cette année, le plancher pour
     les très anciennes.
@@ -458,9 +533,10 @@ class Candidat:
     # Les genres de la vignette, attachés à l'hydratation finale : le front
     # en fait ses puces d'exclusion (« moins de dessins animés »).
     genres: list[str] = field(default_factory=list)
-    # Où l'œuvre se regarde, dans le pays de la langue — la matière du filtre
-    # « Sur : Netflix, Canal+… ». Vide pour un livre.
-    plateformes: list[str] = field(default_factory=list)
+    # Où l'œuvre se regarde, QUALIFIÉ — `{nom, acces, via, location}` : la
+    # matière du filtre « Sur : » et de l'indication d'accès sur la carte.
+    # Vide pour un livre.
+    plateformes: list[dict[str, Any]] = field(default_factory=list)
 
     def verser(self, source: str, apport: float) -> None:
         """Ajoute un apport. Le plus fort gagne quand une source parle deux
@@ -540,7 +616,7 @@ class Suggestion:
     surrepresentation: float | None = None
     convergences: int | None = None
     genres: list[str] = field(default_factory=list)
-    plateformes: list[str] = field(default_factory=list)
+    plateformes: list[dict[str, Any]] = field(default_factory=list)
     # Le contenu et la communauté sont-ils d'accord ? Le front le dit, parce
     # que c'est la suggestion la plus solide qu'on sache produire.
     corrobore: bool = False
@@ -645,6 +721,7 @@ class SourceAffinites:
         graines: list[Graine],
         exclues: list[int],
         candidats: dict[int, Candidat],
+        ampleur: int = 1,
     ) -> None:
         """Ajoute ses apports aux candidats — en créant ceux qu'elle découvre."""
         pivots = [graine.oeuvre_id for graine in graines]
@@ -664,7 +741,7 @@ class SourceAffinites:
             genres=genres,
             personnes=personnes,
             exclus=[cles[pivot] for pivot in exclues if pivot in cles],
-            taille=CANDIDATS_PAR_SOURCE,
+            taille=CANDIDATS_PAR_SOURCE * ampleur,
         )
         if not trouvees:
             return
@@ -730,6 +807,7 @@ class SourceEmpreinte:
         graines: list[Graine],
         exclues: list[int],
         candidats: dict[int, Candidat],
+        ampleur: int = 1,
     ) -> None:
         poids = {graine.oeuvre_id: graine.poids for graine in graines}
         lignes = await self._graphe.executer(
@@ -737,7 +815,7 @@ class SourceEmpreinte:
             graines=list(poids),
             univers=univers.interne,
             exclues=exclues,
-            limite=CANDIDATS_PAR_SOURCE * 3,
+            limite=CANDIDATS_PAR_SOURCE * 3 * ampleur,
         )
         # Les contributions s'ACCUMULENT par candidat avant de verser : c'est
         # ce qui permet la convergence — être le voisin de trois graines dit
@@ -804,6 +882,7 @@ class SourceProfil:
         rejets: list[int],
         exclues: list[int],
         candidats: dict[int, Candidat],
+        ampleur: int = 1,
     ) -> None:
         pivots = [graine.oeuvre_id for graine in graines] + rejets
         lignes = await self._graphe.executer(_CY_EMPREINTES, pivots=pivots)
@@ -821,7 +900,7 @@ class SourceProfil:
             profil=profil,
             univers=univers.interne,
             exclues=exclues,
-            limite=CANDIDATS_PAR_SOURCE,
+            limite=CANDIDATS_PAR_SOURCE * ampleur,
         )
         for ligne in lignes:
             distance = distance_depuis_score(float(ligne["score"]))
@@ -882,6 +961,7 @@ class SourceCommunaute:
         graines: list[Graine],
         exclues: list[int],
         candidats: dict[int, Candidat],
+        ampleur: int = 1,
     ) -> None:
         membres = await self._total_membres()
         lignes = await self._graphe.executer(
@@ -891,7 +971,7 @@ class SourceCommunaute:
             exclues=exclues,
             minimum=VOISINS_MINIMUM,
             membres=membres,
-            limite=CANDIDATS_PAR_SOURCE,
+            limite=CANDIDATS_PAR_SOURCE * ampleur,
         )
         if not lignes:
             return
@@ -1005,10 +1085,17 @@ class Moteur:
         # est déjà une suggestion acceptée.
         exclues = sorted({pivot for pivots in pivots_par_statut.values() for pivot in pivots})
 
+        # Un filtre actif élargit la récolte : il ne gardera qu'une fraction
+        # du vivier, et un vivier de taille normale s'épuisait en quelques
+        # dizaines de gestes.
+        ampleur = AMPLEUR_FILTRE if (sans_genres or sur_plateformes) else 1
+
         candidats: dict[int, Candidat] = {}
         if self._graphe is not None:
             empreinte = SourceEmpreinte(self._graphe)
-            await empreinte.verser(univers, graines=graines, exclues=exclues, candidats=candidats)
+            await empreinte.verser(
+                univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
+            )
             profil = SourceProfil(self._graphe)
             await profil.verser(
                 univers,
@@ -1016,11 +1103,14 @@ class Moteur:
                 rejets=pivots_par_statut.get("aime_pas", []),
                 exclues=exclues,
                 candidats=candidats,
+                ampleur=ampleur,
             )
             communaute = SourceCommunaute(self._graphe)
-            await communaute.verser(univers, graines=graines, exclues=exclues, candidats=candidats)
+            await communaute.verser(
+                univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
+            )
         await self._affinites.verser(
-            conn, univers, graines=graines, exclues=exclues, candidats=candidats
+            conn, univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
         )
 
         retenus = sorted(
@@ -1060,10 +1150,17 @@ class Moteur:
         if sur_plateformes:
             voulues = {nom.strip().casefold() for nom in sur_plateformes if nom.strip()}
             if voulues:
+                # Une plateforme matche si l'œuvre s'y REGARDE — incluse ou
+                # via une chaîne. La location n'est qu'une indication.
                 tete = [
                     candidat
                     for candidat in tete
-                    if voulues & {nom.casefold() for nom in candidat.plateformes}
+                    if voulues
+                    & {
+                        entree["nom"].casefold()
+                        for entree in candidat.plateformes
+                        if entree["acces"] != "location"
+                    }
                 ]
 
         suggestions = [Suggestion.depuis(candidat) for candidat in tete[:limite]]
@@ -1099,9 +1196,10 @@ class Moteur:
         candidats: list[Candidat],
         *,
         langue: str,
-    ) -> dict[str, list[str]]:
-        """Où chaque candidat se regarde, par id TMDB (en texte, la clé du
-        brut) — abonnement et gratuit seulement, dans le pays de la langue."""
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Où et COMMENT chaque candidat se regarde, par id TMDB (en texte, la
+        clé du brut), dans le pays de la langue — entrées qualifiées :
+        incluse, via une chaîne, ou à la location (voir `qualifier_offres`)."""
         ids = [str(candidat.id_tmdb) for candidat in candidats if candidat.id_tmdb is not None]
         if not ids:
             return {}
@@ -1113,10 +1211,7 @@ class Moteur:
                     "kind": KIND_TMDB[univers.interne],
                     "ids": ids,
                     "pays": PAYS_DE_LANGUE.get(langue, "FR"),
-                    "genres": list(OFFRES_REGARDABLES),
                 },
             )
             lignes = await cur.fetchall()
-        return {
-            source_id: replier_enseignes([nom for nom in noms if nom]) for source_id, noms in lignes
-        }
+        return {source_id: qualifier_offres(offres_pays or {}) for source_id, offres_pays in lignes}

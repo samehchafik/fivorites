@@ -1915,3 +1915,16 @@
   color: rgba(255, 255, 255, 0.75);
   text-decoration: line-through;
 }
+
+/* L'accès aux plateformes filtrées : « Prime Video : via HBO Max · à la
+   location ». Une ligne discrète — l'information, pas un badge criard. */
+.fivo-acces {
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--texte-doux-sur-clair, #6d6d6d);
+}
+
+.fivo-pile-texte .fivo-acces {
+  color: rgba(255, 255, 255, 0.85);
+}

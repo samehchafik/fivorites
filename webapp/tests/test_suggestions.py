@@ -255,7 +255,8 @@ class FauxConn:
     """Les deux lectures SQL du moteur : la traduction pivot → clé de
     vignette (`Cles`), et les plateformes des candidats de tête."""
 
-    def __init__(self, plateformes: dict[str, list[str]] | None = None) -> None:
+    def __init__(self, plateformes: dict[str, dict[str, Any]] | None = None) -> None:
+        # `plateformes` : source_id → l'objet pays TMDB (`{"flatrate": [...]}`).
         self._plateformes = plateformes or {}
         self._requete = ""
 
@@ -606,20 +607,30 @@ async def test_sur_plateformes_ne_garde_que_le_regardable() -> None:
     choisie restent — et chaque suggestion porte ses plateformes, la matière
     des puces du front."""
     graphe = FauxGraphe(proches=[proche(2001, 0.4), proche(2002, 0.6)])
-    conn = FauxConn(plateformes={"1001": ["Netflix"], "1002": ["Canal+"]})
+    conn = FauxConn(
+        plateformes={
+            "1001": {"flatrate": [{"provider_name": "Netflix"}]},
+            "1002": {"flatrate": [{"provider_name": "Canal+"}]},
+        }
+    )
     retenues, _ = await lancer(graphe, conn=conn, sur_plateformes=["netflix"])
     assert [s.oeuvre_id for s in retenues] == [2001]
-    assert retenues[0].plateformes == ["Netflix"]
+    assert retenues[0].plateformes == [
+        {"nom": "Netflix", "acces": "incluse", "via": None, "location": False}
+    ]
 
 
 async def test_sans_plateforme_choisie_tout_reste_et_tout_est_nomme() -> None:
     """Sans filtre, rien ne sort — mais les plateformes sont attachées quand
     l'univers en porte : le front construit ses puces avec."""
     graphe = FauxGraphe(proches=[proche(2001, 0.4)])
-    conn = FauxConn(plateformes={"1001": ["Netflix", "Canal+"]})
+    conn = FauxConn(
+        plateformes={
+            "1001": {"flatrate": [{"provider_name": "Netflix"}, {"provider_name": "Canal+"}]}
+        }
+    )
     retenues, _ = await lancer(graphe, conn=conn)
-    # Triées par le repli d'enseignes — l'ordre d'arrivée ne veut rien dire.
-    assert retenues[0].plateformes == ["Canal+", "Netflix"]
+    assert [e["nom"] for e in retenues[0].plateformes] == ["Canal+", "Netflix"]
 
 
 def test_replier_enseignes() -> None:
@@ -643,7 +654,7 @@ async def test_le_filtre_balaie_tout_le_vivier() -> None:
     graphe = FauxGraphe(
         proches=[proche(2001, 0.2), proche(2002, 0.3), proche(2003, 0.4), proche(2004, 0.5)]
     )
-    conn = FauxConn(plateformes={"1004": ["Netflix"]})
+    conn = FauxConn(plateformes={"1004": {"flatrate": [{"provider_name": "Netflix"}]}})
     retenues, _ = await lancer(graphe, conn=conn, sur_plateformes=["Netflix"], limite=1)
     assert [s.oeuvre_id for s in retenues] == [2004]
 
@@ -662,3 +673,38 @@ def test_une_chaine_amazon_compte_pour_prime_video() -> None:
         "Amazon Prime Video",
         "Paramount Plus",
     ]
+
+
+def test_qualifier_offres_le_cas_signale() -> None:
+    """« A Knight of the Seven Kingdoms » : regardable via HBO Max (en direct
+    ou par la chaîne Amazon), à la location sur la boutique de Prime. La
+    qualification doit dire les trois choses."""
+    from fiv_webapp.suggestions import qualifier_offres
+
+    entrees = qualifier_offres(
+        {
+            "flatrate": [
+                {"provider_name": "HBO Max"},
+                {"provider_name": "HBO Max Amazon Channel"},
+            ],
+            "buy": [{"provider_name": "Amazon Video"}, {"provider_name": "Apple TV Store"}],
+        }
+    )
+    par_nom = {e["nom"]: e for e in entrees}
+    assert par_nom["HBO Max"]["acces"] == "incluse"
+    # Prime Video : PAS incluse — accessible par la chaîne HBO Max, et la
+    # boutique loue aussi.
+    prime = par_nom["Amazon Prime Video"]
+    assert prime["acces"] == "chaine" and prime["via"] == "HBO Max"
+    assert prime["location"] is True
+    # Apple TV : location seulement.
+    assert par_nom["Apple TV"]["acces"] == "location"
+
+
+async def test_la_location_seule_ne_fait_pas_matcher() -> None:
+    """Presque tout se loue : une œuvre seulement louable sur Prime ne doit
+    pas répondre au filtre « sur Prime » — elle s'indique, sans matcher."""
+    graphe = FauxGraphe(proches=[proche(2001, 0.4)])
+    conn = FauxConn(plateformes={"1001": {"buy": [{"provider_name": "Amazon Video"}]}})
+    retenues, _ = await lancer(graphe, conn=conn, sur_plateformes=["Amazon Prime Video"])
+    assert retenues == []

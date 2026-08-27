@@ -68,6 +68,25 @@ function listeRetenue(cle: string): string[] {
 // mériter une case.
 const GENRES_PROPOSES = 8
 
+/** L'accès aux plateformes CHOISIES : « Prime Video : via HBO Max ·
+ *  à la location ». Rien sans filtre — la carte reste sobre, la fiche porte
+ *  le détail complet. C'est la réponse au cas signalé : une série matchait
+ *  « Prime Video » par une chaîne payante, et rien ne le disait. */
+function acces(suggestion: Suggestion, sur: string[], t: Textes): string | undefined {
+  if (sur.length === 0) return undefined
+  const morceaux: string[] = []
+  for (const entree of suggestion.plateformes ?? []) {
+    if (!sur.includes(entree.nom)) continue
+    const parts: string[] = []
+    if (entree.acces === 'incluse') parts.push(t.dit('acces.incluse'))
+    if (entree.acces === 'chaine' && entree.via)
+      parts.push(t.dit('acces.chaine', { via: entree.via }))
+    if (entree.location) parts.push(t.dit('acces.location'))
+    if (parts.length) morceaux.push(`${entree.nom} : ${parts.join(' · ')}`)
+  }
+  return morceaux.join(' — ') || undefined
+}
+
 function expliquer(suggestion: Suggestion, t: Textes): string {
   const voisins = suggestion.voisins ?? 0
   if (suggestion.corrobore) {
@@ -199,6 +218,10 @@ export function Suggestions({
       .map(([valeur]) => valeur)
   }
   const genresPresents = frequents((suggestion) => suggestion.genres)
+  const regardables = (suggestion: Suggestion) =>
+    (suggestion.plateformes ?? [])
+      .filter((entree) => entree.acces !== 'location')
+      .map((entree) => entree.nom)
   // Les plateformes proposées CUMULENT ce qu'on a vu : une fois « Netflix »
   // choisi, la réponse ne porte plus que du Netflix — sans cette mémoire,
   // Canal+ disparaissait de la rangée et le choix ne pouvait plus s'élargir,
@@ -210,7 +233,7 @@ export function Suggestions({
   if (plateformesVues.current.univers !== univers) {
     plateformesVues.current = { univers, noms: [] }
   }
-  for (const nom of frequents((suggestion) => suggestion.plateformes)) {
+  for (const nom of frequents(regardables)) {
     if (!plateformesVues.current.noms.includes(nom)) {
       plateformesVues.current.noms.push(nom)
     }
@@ -375,6 +398,7 @@ export function Suggestions({
               sur={surPlateformes}
               type={t.dit(`type.${univers}`)}
               explication={(suggestion) => expliquer(suggestion, t)}
+              acces={(suggestion) => acces(suggestion, surPlateformes, t)}
               onClasser={(oeuvreId, statut) => {
                 // Le geste de la pile est absorbé : il ne doit pas rejouer la
                 // requête et réordonner ce qui reste (voir `absorbees`).
@@ -395,7 +419,7 @@ export function Suggestions({
                   (suggestion) =>
                     !(suggestion.genres ?? []).some((genre) => masques.includes(genre)) &&
                     (surPlateformes.length === 0 ||
-                      (suggestion.plateformes ?? []).some((p) => surPlateformes.includes(p))),
+                      regardables(suggestion).some((nom) => surPlateformes.includes(nom))),
                 )
                 .map((suggestion) => (
                 <CarteOeuvre
@@ -405,6 +429,7 @@ export function Suggestions({
                   type={t.dit(`type.${univers}`)}
                   affiche={suggestion.affiche}
                   explication={expliquer(suggestion, t)}
+                  acces={acces(suggestion, surPlateformes, t)}
                   fort={suggestion.corrobore}
                   statutActuel={statuts[suggestion.oeuvreId] ?? null}
                   classable

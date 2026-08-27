@@ -145,6 +145,13 @@ Cinq gestes, chacun mesurable :
    POSITIVES : cocher Netflix ne garde que ce qui s'y regarde
    (`?sur=Netflix`), la pile se purge sur place, et les plateformes déjà
    vues restent proposées pour pouvoir élargir le choix. Retenu par univers.
+   Chaque plateforme est QUALIFIÉE — incluse, via une chaîne payante du hub
+   (« Prime Video : via HBO Max »), ou à la location — et la carte porte
+   cette indication quand un filtre est actif : une série accessible par une
+   chaîne payante matchait « Prime Video » sans que rien ne le dise. La
+   location ne fait jamais matcher (presque tout se loue) : elle s'indique.
+   Et un filtre actif élargit la récolte des sources (×3) : il ne garde
+   qu'une fraction du vivier, qui s'épuisait en quelques dizaines de gestes.
 6. **« Moins de : » — le masquage de genres.** Les suggestions arrivent avec
    leurs genres ; le composant en fait des puces construites depuis la liste
    affichée (les plus fréquents d'abord, huit au plus). Cliquer barre la puce,

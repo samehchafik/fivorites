@@ -16,6 +16,7 @@ export function CarteOeuvre({
   synopsis,
   note,
   explication,
+  acces,
   fort,
   statutActuel,
   classable,
@@ -34,6 +35,9 @@ export function CarteOeuvre({
   note?: number | null
   /** Pourquoi cette carte est là — affichée sur les suggestions seulement. */
   explication?: string
+  /** Comment l'œuvre s'accède sur les plateformes filtrées — « Prime Video :
+   *  via HBO Max · à la location ». Affichée quand un filtre est actif. */
+  acces?: string
   /** La suggestion est corroborée : le contenu et la communauté tombent
    *  d'accord. C'est la plus solide, et son explication se détache. */
   fort?: boolean
@@ -98,6 +102,7 @@ export function CarteOeuvre({
             {explication}
           </p>
         )}
+        {acces && <p className="fivo-acces">{acces}</p>}
         {synopsis && (
           <p className="fivo-synopsis" dir="auto">
             {synopsis}
