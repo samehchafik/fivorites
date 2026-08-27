@@ -460,6 +460,14 @@ html.voile-pose {
   color: white;
 }
 
+/* La puce ▶︎ pointe vers le mot qu'elle annonce : en arabe, elle doit donc
+   pointer à gauche. Un miroir, pas un autre caractère — c'est le même signe,
+   lu dans l'autre sens. */
+[dir='rtl'] .entete nav .fleche {
+  display: inline-block;
+  transform: scaleX(-1);
+}
+
 /* --- Le passage d'une langue à l'autre ---------------------------------- */
 
 /* Un sélecteur qui se déplie — `<details>`, donc sans une ligne de script, et

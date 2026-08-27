@@ -31,7 +31,7 @@
   padding: 8px 5px;
   text-align: center;
   border: 0;
-  border-right: 1px solid var(--gray-lighter, #d6d6d6);
+  border-inline-end: 1px solid var(--gray-lighter, #d6d6d6);
   background: transparent;
   color: var(--gray-darkest, #1a1a1a);
   font-family: inherit;
@@ -43,7 +43,7 @@
 }
 
 .fivo-selecteur-onglet:last-child {
-  border-right: 0;
+  border-inline-end: 0;
 }
 
 /* L'onglet actif : l'aplat carmin sombre de la V1. */
@@ -135,7 +135,7 @@
 }
 
 .fivo-pastille {
-  margin-left: 0.4rem;
+  margin-inline-start: 0.4rem;
   font-size: 0.85em;
 }
 
@@ -203,7 +203,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: rgba(255, 255, 255, 0.85);
-  margin-right: 0.2rem;
+  margin-inline-end: 0.2rem;
 }
 
 /* Sur le carmin : le contour blanc translucide suffit à poser la pastille,
@@ -521,9 +521,13 @@
   max-height: 460px;
   margin-top: 0.5rem;
   overflow: hidden;
-  /* Le glissement vertical du doigt appartient à la carte, pas à la page :
-     sans ça, sur mobile, jeter une carte vers le haut fait défiler le site. */
-  touch-action: none;
+  /* `pan-y` et NON `none` : le plateau fait 62 % de la hauteur d'un
+     téléphone, et lui interdire le geste vertical revenait à poser un mur en
+     travers de la page — un doigt qui atterrissait dedans ne pouvait plus
+     remonter le site. Seule la carte du dessus garde le geste entier ; tout
+     le reste du plateau — le fond carmin, les demi-disques, la légende —
+     défile comme n'importe quelle partie de la page. */
+  touch-action: pan-y;
 }
 
 /* --- Les demi-disques ---------------------------------------------------- */
@@ -653,6 +657,19 @@
     opacity 0.4s;
   transform: translate(-50%, -50%);
   user-select: none;
+}
+
+/* L'AFFICHE de la carte du dessus, et elle seule, prend le geste dans les
+   quatre directions : c'est l'objet qu'on jette, il porte l'affordance (les
+   flèches l'entourent), et il est petit — 156 px sur 200 au téléphone, une
+   fraction de la page.
+   Pas la carte entière : sa légende fait 310 px de large sur 130 de haut,
+   posée au milieu de l'écran, et un doigt qui y atterrit doit pouvoir
+   remonter la page. Les restrictions de `touch-action` s'additionnent en
+   descendant — un enfant peut interdire ce que son parent permet, jamais
+   l'inverse — donc c'est bien ici qu'il faut la poser. */
+.fivo-carte-rang-0 .fivo-pile-affiche {
+  touch-action: none;
 }
 
 .fivo-carte-pile:active {
@@ -1143,7 +1160,7 @@
   background: rgba(255, 255, 255, 0.04);
   color: inherit;
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -1286,7 +1303,7 @@
   background: transparent;
   color: inherit;
   font-family: inherit;
-  text-align: left;
+  text-align: start;
   text-decoration: none;
   cursor: pointer;
 }
@@ -1717,7 +1734,9 @@
     gap: 0.4rem;
     overflow-x: auto;
     scrollbar-width: none;
-    padding-bottom: 0.15rem;
+    /* Deux pixels de chaque côté : sans eux, la pilule du bord touchait la
+       marge du panneau et son liseré se lisait comme une coupure. */
+    padding: 0 2px 0.15rem;
   }
 
   .fivo-pilules::-webkit-scrollbar {

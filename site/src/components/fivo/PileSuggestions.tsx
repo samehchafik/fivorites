@@ -129,6 +129,15 @@ export function PileSuggestions({
     })
   }
 
+  // Le navigateur reprend le doigt (il a décidé que c'était un défilement) :
+  // on ABANDONNE, on ne classe pas. Brancher `pointercancel` sur le
+  // relâchement classait « passer » — voire « j'ai vu & aimé » — au premier
+  // doigt qui remontait la page depuis la carte.
+  const auAnnulation = () => {
+    depart.current = null
+    setGlisse(null)
+  }
+
   const auRelachement = (evenement: React.PointerEvent) => {
     if (!depart.current) return
     // L'écart se lit sur l'événement de RELÂCHEMENT, pas sur le dernier
@@ -239,7 +248,7 @@ export function PileSuggestions({
               onPointerDown={estDessus ? auDepart : undefined}
               onPointerMove={estDessus ? auMouvement : undefined}
               onPointerUp={estDessus ? auRelachement : undefined}
-              onPointerCancel={estDessus ? auRelachement : undefined}
+              onPointerCancel={estDessus ? auAnnulation : undefined}
               onKeyDown={estDessus ? auClavier : undefined}
               tabIndex={estDessus ? 0 : -1}
               aria-hidden={!estDessus}
