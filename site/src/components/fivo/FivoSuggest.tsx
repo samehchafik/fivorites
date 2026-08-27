@@ -256,6 +256,7 @@ export default function FivoSuggest({
             >
               <Suggestions
                 univers={univers}
+                langue={langue}
                 statuts={statuts}
                 versionSignaux={versionSignaux}
                 actif={onglet === 'suggestions'}

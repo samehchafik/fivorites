@@ -145,11 +145,19 @@ export function retirerSignal(oeuvreId: number): Promise<{ oeuvreId: number; ret
 
 export function chargerSuggestions(
   univers: UniversSlug,
-  /** Les genres masqués (« moins de dessins animés ») — répétés en `sans=`. */
-  sans: string[] = [],
+  options: {
+    /** Les genres masqués (« moins de dessins animés ») — répétés en `sans=`. */
+    sans?: string[]
+    /** Les plateformes choisies (« sur Netflix ») — répétées en `sur=`. */
+    sur?: string[]
+    /** La langue : elle décide du pays dont on lit la disponibilité. */
+    langue?: string
+  } = {},
 ): Promise<{ items: Suggestion[]; raison: string | null; graine?: number }> {
   const params = new URLSearchParams({ univers })
-  for (const genre of sans) params.append('sans', genre)
+  for (const genre of options.sans ?? []) params.append('sans', genre)
+  for (const plateforme of options.sur ?? []) params.append('sur', plateforme)
+  if (options.langue) params.set('langue', options.langue)
   return requete(`/suggestions?${params}`)
 }
 

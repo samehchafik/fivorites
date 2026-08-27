@@ -137,7 +137,15 @@ Cinq gestes, chacun mesurable :
    départage, elle ne conduit plus. Les envies gagnent du poids (0,4 → 0,6)
    et quatre places de graines leur sont réservées — un simple tri par poids
    les évinçait dès douze « aimés ».
-5. **« Moins de : » — le masquage de genres.** Les suggestions arrivent avec
+5. **« Sur : » — le filtre de plateformes** (séries et films). Les
+   suggestions arrivent avec leurs plateformes — lues du brut TMDB
+   (`watch/providers`) dans le pays de la langue, offres regardables
+   seulement (abonnement et gratuit, pas la location), variantes repliées sur
+   l'enseigne (« Netflix Standard with Ads » est du Netflix). Des puces
+   POSITIVES : cocher Netflix ne garde que ce qui s'y regarde
+   (`?sur=Netflix`), la pile se purge sur place, et les plateformes déjà
+   vues restent proposées pour pouvoir élargir le choix. Retenu par univers.
+6. **« Moins de : » — le masquage de genres.** Les suggestions arrivent avec
    leurs genres ; le composant en fait des puces construites depuis la liste
    affichée (les plus fréquents d'abord, huit au plus). Cliquer barre la puce,
    purge la pile SUR PLACE et recharge sans le genre (`?sans=Animation`) ;

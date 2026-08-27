@@ -49,9 +49,13 @@ function cleMasques(univers: UniversSlug): string {
   return `fivo-sans-genres-${univers}`
 }
 
-function masquesRetenus(univers: UniversSlug): string[] {
+function cleSur(univers: UniversSlug): string {
+  return `fivo-sur-plateformes-${univers}`
+}
+
+function listeRetenue(cle: string): string[] {
   try {
-    const brut = retenu(cleMasques(univers))
+    const brut = retenu(cle)
     const lus = brut ? JSON.parse(brut) : []
     return Array.isArray(lus) ? lus.filter((g): g is string => typeof g === 'string') : []
   } catch {
@@ -98,6 +102,7 @@ function expliquer(suggestion: Suggestion, t: Textes): string {
 
 export function Suggestions({
   univers,
+  langue,
   statuts,
   versionSignaux,
   actif,
@@ -106,6 +111,8 @@ export function Suggestions({
   onDeclasser,
 }: {
   univers: UniversSlug
+  /** La langue : elle décide du pays dont on lit « sur Netflix ». */
+  langue: string
   /** Les classements de la session, par pivot. La LISTE s'en sert pour
    *  rallumer ses boutons ; la pile n'en a pas besoin — une carte jetée
    *  quitte la pile. */
@@ -136,15 +143,18 @@ export function Suggestions({
   // — la page est construite à l'avance, le navigateur de qui la reçoit n'est
   // pas connu au build.
   const [vue, setVue] = useState<Vue>('pile')
-  // Les genres masqués. Lus après le montage, pour la même raison que la vue.
+  // Les genres masqués et les plateformes choisies. Lus après le montage,
+  // pour la même raison que la vue.
   const [masques, setMasques] = useState<string[]>([])
+  const [surPlateformes, setSurPlateformes] = useState<string[]>([])
 
   useEffect(() => {
     setVue(vueInitiale())
   }, [])
 
   useEffect(() => {
-    setMasques(masquesRetenus(univers))
+    setMasques(listeRetenue(cleMasques(univers)))
+    setSurPlateformes(listeRetenue(cleSur(univers)))
   }, [univers])
 
   const choisirVue = (choisie: Vue) => {
@@ -162,22 +172,50 @@ export function Suggestions({
     })
   }
 
+  const basculerPlateforme = (plateforme: string) => {
+    setSurPlateformes((actuelles) => {
+      const suivantes = actuelles.includes(plateforme)
+        ? actuelles.filter((p) => p !== plateforme)
+        : [...actuelles, plateforme]
+      retenir(cleSur(univers), JSON.stringify(suivantes))
+      return suivantes
+    })
+  }
+
   // Les genres qu'on PROPOSE de masquer : ceux des suggestions à l'écran, les
   // plus fréquents d'abord — la barre parle de ce qu'on regarde, pas d'une
   // taxonomie. Les genres déjà masqués restent affichés, barrés : le geste
   // doit pouvoir se défaire sans chercher où.
-  const genresPresents = (() => {
+  const frequents = (valeurs: (suggestion: Suggestion) => string[]) => {
     const comptes = new Map<string, number>()
     for (const suggestion of items) {
-      for (const genre of suggestion.genres ?? []) {
-        comptes.set(genre, (comptes.get(genre) ?? 0) + 1)
+      for (const valeur of valeurs(suggestion) ?? []) {
+        comptes.set(valeur, (comptes.get(valeur) ?? 0) + 1)
       }
     }
     return [...comptes.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, GENRES_PROPOSES)
-      .map(([genre]) => genre)
-  })()
+      .map(([valeur]) => valeur)
+  }
+  const genresPresents = frequents((suggestion) => suggestion.genres)
+  // Les plateformes proposées CUMULENT ce qu'on a vu : une fois « Netflix »
+  // choisi, la réponse ne porte plus que du Netflix — sans cette mémoire,
+  // Canal+ disparaissait de la rangée et le choix ne pouvait plus s'élargir,
+  // seulement se défaire.
+  const plateformesVues = useRef<{ univers: UniversSlug; noms: string[] }>({
+    univers,
+    noms: [],
+  })
+  if (plateformesVues.current.univers !== univers) {
+    plateformesVues.current = { univers, noms: [] }
+  }
+  for (const nom of frequents((suggestion) => suggestion.plateformes)) {
+    if (!plateformesVues.current.noms.includes(nom)) {
+      plateformesVues.current.noms.push(nom)
+    }
+  }
+  const plateformesPresentes = plateformesVues.current.noms
   // Ce que la liste affichée reflète déjà. Une référence plutôt qu'un état :
   // elle ne décide d'aucun rendu, elle évite seulement de recharger ce qui
   // est à jour — la mettre en `useState` relancerait l'effet pour rien.
@@ -186,6 +224,8 @@ export function Suggestions({
     version: number
     recharges: number
     masques: string
+    sur: string
+    langue: string
   } | null>(null)
 
   useEffect(() => {
@@ -195,23 +235,33 @@ export function Suggestions({
     // de rejouer la requête.
     const utile = versionSignaux - absorbees.current
     const signatureMasques = [...masques].sort().join('|')
+    const signatureSur = [...surPlateformes].sort().join('|')
     const dejaVu =
       charge.current !== null &&
       charge.current.univers === univers &&
       charge.current.version === utile &&
       charge.current.recharges === recharges &&
-      charge.current.masques === signatureMasques
+      charge.current.masques === signatureMasques &&
+      charge.current.sur === signatureSur &&
+      charge.current.langue === langue
     if (dejaVu) return
 
     let abandonne = false
     setEtat('en-cours')
-    chargerSuggestions(univers, masques)
+    chargerSuggestions(univers, { sans: masques, sur: surPlateformes, langue })
       .then((reponse) => {
         if (abandonne) return
         setItems(reponse.items)
         setRaison(reponse.raison)
         setEtat('servi')
-        charge.current = { univers, version: utile, recharges, masques: signatureMasques }
+        charge.current = {
+          univers,
+          version: utile,
+          recharges,
+          masques: signatureMasques,
+          sur: signatureSur,
+          langue,
+        }
       })
       .catch(() => {
         if (!abandonne) setEtat('erreur')
@@ -219,7 +269,7 @@ export function Suggestions({
     return () => {
       abandonne = true
     }
-  }, [univers, versionSignaux, actif, recharges, masques])
+  }, [univers, versionSignaux, actif, recharges, masques, surPlateformes, langue])
 
   // Les suggestions déjà classées pendant la consultation restent affichées
   // (avec leur bouton allumé) jusqu'au prochain rechargement : les faire
@@ -265,6 +315,36 @@ export function Suggestions({
               genre ; la puce reste, barrée : le geste se défait au même
               endroit. C'est la parade au mur de dessins animés — chacun
               choisit ce qu'il ne veut plus voir, le moteur n'invente pas. */}
+          {/* « Sur : » — les plateformes des suggestions à l'écran, en
+              filtre POSITIF : cocher Netflix ne garde que ce qui s'y
+              regarde. L'inverse de « Moins de : », et les deux se lisent
+              ensemble : garde ceci, cache cela. */}
+          {(plateformesPresentes.length > 0 || surPlateformes.length > 0) && (
+            <div className="fivo-affiner" role="group" aria-label={t.dit('affiner.sur')}>
+              <span className="fivo-affiner-titre">{t.dit('affiner.sur')}</span>
+              {[
+                ...surPlateformes,
+                ...plateformesPresentes.filter((p) => !surPlateformes.includes(p)),
+              ].map((plateforme) => {
+                const choisie = surPlateformes.includes(plateforme)
+                return (
+                  <UnstyledButton
+                    key={plateforme}
+                    className={`fivo-filtre fivo-plateforme-choisissable${choisie ? ' actif' : ''}`}
+                    aria-pressed={choisie}
+                    onClick={() => basculerPlateforme(plateforme)}
+                    title={t.dit(choisie ? 'affiner.sur_retirer' : 'affiner.sur_choisir', {
+                      plateforme,
+                    })}
+                  >
+                    {plateforme}
+                    {choisie && <span aria-hidden="true"> ✓</span>}
+                  </UnstyledButton>
+                )
+              })}
+            </div>
+          )}
+
           {(genresPresents.length > 0 || masques.length > 0) && (
             <div className="fivo-affiner" role="group" aria-label={t.dit('affiner.groupe')}>
               <span className="fivo-affiner-titre">{t.dit('affiner.titre')}</span>
@@ -292,6 +372,7 @@ export function Suggestions({
             <PileSuggestions
               suggestions={items}
               masques={masques}
+              sur={surPlateformes}
               type={t.dit(`type.${univers}`)}
               explication={(suggestion) => expliquer(suggestion, t)}
               onClasser={(oeuvreId, statut) => {
@@ -312,7 +393,9 @@ export function Suggestions({
               {items
                 .filter(
                   (suggestion) =>
-                    !(suggestion.genres ?? []).some((genre) => masques.includes(genre)),
+                    !(suggestion.genres ?? []).some((genre) => masques.includes(genre)) &&
+                    (surPlateformes.length === 0 ||
+                      (suggestion.plateformes ?? []).some((p) => surPlateformes.includes(p))),
                 )
                 .map((suggestion) => (
                 <CarteOeuvre

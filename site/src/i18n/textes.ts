@@ -295,6 +295,19 @@ export const TEXTES = {
     es: 'Volver a mostrar {genre}',
     ar: 'إظهار {genre} من جديد',
   },
+  'affiner.sur': { fr: 'Sur :', en: 'On:', es: 'En:', ar: 'على:' },
+  'affiner.sur_choisir': {
+    fr: 'Ne garder que ce qui se regarde sur {plateforme}',
+    en: 'Keep only what streams on {plateforme}',
+    es: 'Conservar solo lo que se ve en {plateforme}',
+    ar: 'إبقاء ما يُشاهَد على {plateforme} فقط',
+  },
+  'affiner.sur_retirer': {
+    fr: 'Ne plus filtrer sur {plateforme}',
+    en: 'Stop filtering on {plateforme}',
+    es: 'Dejar de filtrar por {plateforme}',
+    ar: 'إيقاف التصفية حسب {plateforme}',
+  },
   'affiner.groupe': {
     fr: 'Affiner les suggestions par genre',
     en: 'Refine suggestions by genre',

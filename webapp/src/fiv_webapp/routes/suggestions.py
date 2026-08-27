@@ -48,6 +48,12 @@ async def suggestions(
     # de présentation choisi à l'écran (« moins de dessins animés ») — il ne
     # touche pas au profil, seulement à ce qui s'affiche.
     sans: Annotated[list[str] | None, Query(max_length=20)] = None,
+    # Les plateformes choisies, répétées : `?sur=Netflix&sur=Canal+`. Même
+    # règle — de la présentation, pas du goût.
+    sur: Annotated[list[str] | None, Query(max_length=20)] = None,
+    # La langue : elle décide du PAYS dont on lit la disponibilité — être
+    # « sur Netflix » n'a de sens que quelque part.
+    langue: Annotated[str | None, Query(max_length=10)] = None,
 ) -> dict[str, Any]:
     if session_id is None:
         return {"items": [], "raison": "aucune_session", "graine": 0}

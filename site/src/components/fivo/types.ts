@@ -200,6 +200,9 @@ export interface Suggestion {
   convergences: number | null
   /** Les genres de l'œuvre — la matière des puces « Moins de : ». */
   genres: string[]
+  /** Où l'œuvre se regarde, dans le pays de la langue — la matière des puces
+   *  « Sur : ». Vide pour un livre. */
+  plateformes: string[]
   /** Les genres partagés avec les coups de cœur — l'explication de l'étage
    *  des affinités. Vide quand la correspondance s'est faite sur un nom. */
   communs: string[]

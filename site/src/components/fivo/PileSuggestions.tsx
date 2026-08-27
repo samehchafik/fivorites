@@ -55,6 +55,7 @@ const GESTES: Record<Geste, { classe: string; statut: Statut | null }> = {
 export function PileSuggestions({
   suggestions,
   masques = [],
+  sur = [],
   type,
   explication,
   onClasser,
@@ -66,6 +67,8 @@ export function PileSuggestions({
    *  locale elle-même : attendre le rechargement laisserait la carte du
    *  genre qu'on vient de masquer sous le doigt. */
   masques?: string[]
+  /** Les plateformes choisies (« sur Netflix ») — même purge, en positif. */
+  sur?: string[]
   /** « Série », « Film », « Livre » — affiché sous le titre. */
   type: string
   /** La phrase qui dit pourquoi cette œuvre est proposée. */
@@ -103,16 +106,20 @@ export function PileSuggestions({
     })
   }, [suggestions])
 
-  // Le masquage purge la file SUR PLACE : la carte du genre écarté disparaît
-  // au clic, et le rechargement — qui suit — comble avec autre chose.
+  // Le masquage et le choix de plateformes purgent la file SUR PLACE : la
+  // carte écartée disparaît au clic, et le rechargement — qui suit — comble
+  // avec autre chose.
   useEffect(() => {
-    if (masques.length === 0) return
+    if (masques.length === 0 && sur.length === 0) return
     setFile((restantes) =>
       restantes.filter(
-        (suggestion) => !(suggestion.genres ?? []).some((genre) => masques.includes(genre)),
+        (suggestion) =>
+          !(suggestion.genres ?? []).some((genre) => masques.includes(genre)) &&
+          (sur.length === 0 ||
+            (suggestion.plateformes ?? []).some((plateforme) => sur.includes(plateforme))),
       ),
     )
-  }, [masques])
+  }, [masques, sur])
 
   useEffect(() => {
     if (file.length <= RESTE_AVANT_RECHARGE && !demande.current) {

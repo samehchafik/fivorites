@@ -52,6 +52,7 @@ from typing import Any
 import psycopg
 
 from fiv_webapp.cartes import Cartes
+from fiv_webapp.fiche import KIND_TMDB, PAYS_DE_LANGUE, SOURCE
 from fiv_webapp.graphe import Graphe
 from fiv_webapp.recherche import Recherche
 from fiv_webapp.univers import Univers
@@ -131,6 +132,36 @@ FRAICHEUR_CONSTANTE = 12.0
 # L'âge prêté à une œuvre sans année : celui d'une œuvre déjà ancienne, ni
 # punie au plancher ni hissée parmi les nouveautés qu'elle n'est pas.
 FRAICHEUR_AGE_INCONNU = 15
+
+# Les genres d'offre qui veulent dire « se regarde sur » : l'abonnement et le
+# gratuit — pas la location ni l'achat, qui sont vrais de presque tout et
+# rendraient le filtre menteur. La même règle que l'indexation
+# (`fiv_admin.search.OFFRES_INCLUSES`).
+OFFRES_REGARDABLES = ("flatrate", "free", "ads")
+
+# Les plateformes des candidats de tête, en une requête sur le brut TMDB.
+# `distinct on` : un même id peut avoir plusieurs collectes, on lit la plus
+# récente — la règle de la fiche. Le pays vient de la langue : « sur
+# Netflix » n'a de sens que quelque part.
+_SQL_PLATEFORMES = """
+    select source_id, coalesce((
+               select jsonb_agg(distinct fournisseur ->> 'provider_name')
+               from jsonb_each(offres_pays) as offre(genre, contenu)
+               cross join lateral jsonb_array_elements(offre.contenu) fournisseur
+               where offre.genre = any(%(genres)s)
+           ), '[]'::jsonb) as plateformes
+    from (
+        select distinct on (r.source_id)
+               r.source_id,
+               coalesce(r.payload -> 'watch/providers' -> 'results' -> %(pays)s,
+                        '{}'::jsonb) as offres_pays
+        from raw_source r
+        where r.source = %(source)s and r.kind = %(kind)s
+          and r.source_id = any(%(ids)s)
+          and r.http_status between 200 and 299 and r.payload is not null
+        order by r.source_id, r.fetched_at desc
+    ) recent
+"""
 
 # La corroboration : le multiplicateur appliqué au total d'une œuvre que DEUX
 # familles de sources désignent — le contenu (empreinte ou affinités) et la
@@ -293,6 +324,24 @@ def profil_depuis(
     return [centre[i] + POIDS_REJET * (centre[i] - repoussoir[i]) for i in range(axes)]
 
 
+def replier_enseignes(noms: list[str]) -> list[str]:
+    """Les variantes d'une enseigne, repliées sur elle.
+
+    TMDB liste « Netflix » ET « Netflix Standard with Ads », « Canal+ » ET
+    « Canal+ Séries » : des offres commerciales, pas des plateformes — et en
+    puces, du bruit. Une entrée dont une autre est le préfixe (suivi d'un
+    espace) se replie sur elle. Mesuré sur la production : Lucifer passe de
+    « Netflix, Netflix Standard with Ads, Molotov TV, SFR Play » à
+    « Netflix, Molotov TV, SFR Play ».
+    """
+    uniques = sorted(set(noms), key=len)
+    retenus: list[str] = []
+    for nom in uniques:
+        if not any(nom.startswith(enseigne + " ") for enseigne in retenus):
+            retenus.append(nom)
+    return sorted(retenus)
+
+
 def facteur_fraicheur(annee: int | None, courante: int | None = None) -> float:
     """Le poids d'une œuvre selon son âge — 1,0 cette année, le plancher pour
     les très anciennes.
@@ -360,6 +409,9 @@ class Candidat:
     # Les genres de la vignette, attachés à l'hydratation finale : le front
     # en fait ses puces d'exclusion (« moins de dessins animés »).
     genres: list[str] = field(default_factory=list)
+    # Où l'œuvre se regarde, dans le pays de la langue — la matière du filtre
+    # « Sur : Netflix, Canal+… ». Vide pour un livre.
+    plateformes: list[str] = field(default_factory=list)
 
     def verser(self, source: str, apport: float) -> None:
         """Ajoute un apport. Le plus fort gagne quand une source parle deux
@@ -439,6 +491,7 @@ class Suggestion:
     surrepresentation: float | None = None
     convergences: int | None = None
     genres: list[str] = field(default_factory=list)
+    plateformes: list[str] = field(default_factory=list)
     # Le contenu et la communauté sont-ils d'accord ? Le front le dit, parce
     # que c'est la suggestion la plus solide qu'on sache produire.
     corrobore: bool = False
@@ -467,6 +520,7 @@ class Suggestion:
             surrepresentation=candidat.surrepresentation,
             convergences=candidat.convergences,
             genres=candidat.genres,
+            plateformes=candidat.plateformes,
             corrobore=candidat.corrobore,
             score=round(candidat.score, 3),
         )
@@ -487,6 +541,7 @@ class Suggestion:
             "surrepresentation": self.surrepresentation,
             "convergences": self.convergences,
             "genres": self.genres,
+            "plateformes": self.plateformes,
             "corrobore": self.corrobore,
         }
 
@@ -883,12 +938,16 @@ class Moteur:
         pivots_par_statut: dict[str, list[int]],
         limite: int = SUGGESTIONS_MAX,
         sans_genres: list[str] | None = None,
+        sur_plateformes: list[str] | None = None,
+        langue: str = "fr",
     ) -> tuple[list[Suggestion], str | None]:
         """La liste classée et, si elle est vide, la raison de l'être.
 
-        `sans_genres` écarte les genres que le visiteur a masqués (« moins de
-        dessins animés ») — un filtre de présentation, pas un signal de goût :
-        il ne touche ni les graines ni les scores, il retire de la table.
+        `sans_genres` écarte les genres masqués (« moins de dessins animés »),
+        `sur_plateformes` ne garde que ce qui se regarde sur les plateformes
+        choisies — deux filtres de présentation, pas des signaux de goût : ils
+        ne touchent ni aux graines ni aux scores, ils retirent de la table.
+        La `langue` décide du pays dont on lit la disponibilité.
         """
         graines = self.graines(pivots_par_statut)
         if not graines:
@@ -933,6 +992,13 @@ class Moteur:
         for candidat in tete:
             cle = candidat.id_tmdb if candidat.id_tmdb is not None else candidat.oeuvre_id
             candidat.genres = genres_connus.get(cle, [])
+        # Les plateformes, pour les univers qui en ont (un livre ne se
+        # regarde pas sur Netflix) : attachées à tous les candidats de tête —
+        # le front en fait ses puces — et filtre quand on en a choisi.
+        if univers.dimension("plateformes") is not None:
+            trouvees = await self._plateformes_de(conn, univers, tete, langue=langue)
+            for candidat in tete:
+                candidat.plateformes = trouvees.get(str(candidat.id_tmdb), [])
         if sans_genres:
             ecartes = {genre.strip().casefold() for genre in sans_genres if genre.strip()}
             tete = [
@@ -940,6 +1006,14 @@ class Moteur:
                 for candidat in tete
                 if not ecartes & {genre.casefold() for genre in candidat.genres}
             ]
+        if sur_plateformes:
+            voulues = {nom.strip().casefold() for nom in sur_plateformes if nom.strip()}
+            if voulues:
+                tete = [
+                    candidat
+                    for candidat in tete
+                    if voulues & {nom.casefold() for nom in candidat.plateformes}
+                ]
 
         suggestions = [Suggestion.depuis(candidat) for candidat in tete[:limite]]
         if suggestions:
@@ -966,3 +1040,32 @@ class Moteur:
             return {}
         hydratees = await self._cartes.hydrater(conn, univers, cles)
         return {carte.id: carte.genres for carte in hydratees}
+
+    async def _plateformes_de(
+        self,
+        conn: psycopg.AsyncConnection,
+        univers: Univers,
+        candidats: list[Candidat],
+        *,
+        langue: str,
+    ) -> dict[str, list[str]]:
+        """Où chaque candidat se regarde, par id TMDB (en texte, la clé du
+        brut) — abonnement et gratuit seulement, dans le pays de la langue."""
+        ids = [str(candidat.id_tmdb) for candidat in candidats if candidat.id_tmdb is not None]
+        if not ids:
+            return {}
+        async with conn.cursor() as cur:
+            await cur.execute(
+                _SQL_PLATEFORMES,
+                {
+                    "source": SOURCE,
+                    "kind": KIND_TMDB[univers.interne],
+                    "ids": ids,
+                    "pays": PAYS_DE_LANGUE.get(langue, "FR"),
+                    "genres": list(OFFRES_REGARDABLES),
+                },
+            )
+            lignes = await cur.fetchall()
+        return {
+            source_id: replier_enseignes([nom for nom in noms if nom]) for source_id, noms in lignes
+        }

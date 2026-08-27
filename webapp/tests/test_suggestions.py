@@ -38,6 +38,7 @@ from fiv_webapp.suggestions import (
     distance_depuis_score,
     facteur_fraicheur,
     profil_depuis,
+    replier_enseignes,
 )
 from fiv_webapp.univers import UNIVERS
 
@@ -251,7 +252,12 @@ class FauxCartes:
 
 
 class FauxConn:
-    """La traduction pivot → clé de vignette, telle que `Cles` la lit."""
+    """Les deux lectures SQL du moteur : la traduction pivot → clé de
+    vignette (`Cles`), et les plateformes des candidats de tête."""
+
+    def __init__(self, plateformes: dict[str, list[str]] | None = None) -> None:
+        self._plateformes = plateformes or {}
+        self._requete = ""
 
     def cursor(self) -> Any:
         return self
@@ -263,9 +269,15 @@ class FauxConn:
         return None
 
     async def execute(self, requete: str, parametres: Any = None) -> None:
-        self._pivots = list(parametres["pivots"]) if parametres else []
+        self._requete = requete
+        if "watch/providers" in requete:
+            self._ids = list(parametres["ids"])
+        else:
+            self._pivots = list(parametres["pivots"]) if parametres else []
 
-    async def fetchall(self) -> list[tuple[int, int]]:
+    async def fetchall(self) -> list[tuple[Any, Any]]:
+        if "watch/providers" in self._requete:
+            return [(source_id, self._plateformes.get(source_id, [])) for source_id in self._ids]
         return [(pivot, pivot - 1000) for pivot in self._pivots]
 
 
@@ -320,6 +332,8 @@ async def lancer(
     recherche: FauxRecherche | None = None,
     cartes: FauxCartes | None = None,
     statuts: dict[str, list[int]] | None = None,
+    conn: FauxConn | None = None,
+    **options: Any,
 ) -> tuple[list[Suggestion], str | None]:
     moteur = Moteur(
         recherche or FauxRecherche(),  # type: ignore[arg-type]
@@ -327,9 +341,10 @@ async def lancer(
         graphe,  # type: ignore[arg-type]
     )
     return await moteur.pour(
-        FauxConn(),  # type: ignore[arg-type]
+        conn or FauxConn(),  # type: ignore[arg-type]
         UNIVERS["series"],
         pivots_par_statut=statuts or {"aime": [1001], "aime_pas": [], "a_voir": []},
+        **options,
     )
 
 
@@ -516,13 +531,7 @@ async def test_sans_genres_ecarte() -> None:
     toucher les scores de ce qui reste."""
     graphe = FauxGraphe(proches=[proche(2001, 0.4), proche(2002, 0.6)])
     cartes = FauxCartes(genres_par_id={1001: ["Animation"], 1002: ["Drame"]})
-    moteur = Moteur(FauxRecherche(), cartes, graphe)  # type: ignore[arg-type]
-    retenues, _ = await moteur.pour(
-        FauxConn(),  # type: ignore[arg-type]
-        UNIVERS["series"],
-        pivots_par_statut={"aime": [1001]},
-        sans_genres=["animation"],
-    )
+    retenues, _ = await lancer(graphe, cartes=cartes, sans_genres=["animation"])
     assert [s.oeuvre_id for s in retenues] == [2002]
     assert retenues[0].genres == ["Drame"]
 
@@ -590,3 +599,35 @@ async def test_le_profil_corrobore_avec_la_communaute() -> None:
     candidat.verser("profil", 0.5)
     candidat.verser("voisins", 0.4)
     assert candidat.corrobore
+
+
+async def test_sur_plateformes_ne_garde_que_le_regardable() -> None:
+    """« Sur Netflix » : seuls les candidats disponibles sur une plateforme
+    choisie restent — et chaque suggestion porte ses plateformes, la matière
+    des puces du front."""
+    graphe = FauxGraphe(proches=[proche(2001, 0.4), proche(2002, 0.6)])
+    conn = FauxConn(plateformes={"1001": ["Netflix"], "1002": ["Canal+"]})
+    retenues, _ = await lancer(graphe, conn=conn, sur_plateformes=["netflix"])
+    assert [s.oeuvre_id for s in retenues] == [2001]
+    assert retenues[0].plateformes == ["Netflix"]
+
+
+async def test_sans_plateforme_choisie_tout_reste_et_tout_est_nomme() -> None:
+    """Sans filtre, rien ne sort — mais les plateformes sont attachées quand
+    l'univers en porte : le front construit ses puces avec."""
+    graphe = FauxGraphe(proches=[proche(2001, 0.4)])
+    conn = FauxConn(plateformes={"1001": ["Netflix", "Canal+"]})
+    retenues, _ = await lancer(graphe, conn=conn)
+    # Triées par le repli d'enseignes — l'ordre d'arrivée ne veut rien dire.
+    assert retenues[0].plateformes == ["Canal+", "Netflix"]
+
+
+def test_replier_enseignes() -> None:
+    """Les offres commerciales se replient sur leur enseigne : « Netflix
+    Standard with Ads » est du Netflix, pas une plateforme de plus."""
+    assert replier_enseignes(
+        ["Netflix", "Netflix Standard with Ads", "Canal+ Séries", "Canal+", "Molotov TV"]
+    ) == ["Canal+", "Molotov TV", "Netflix"]
+    # Sans enseigne mère présente, la variante reste telle quelle : on ne
+    # devine pas une plateforme qui n'est pas dans la donnée.
+    assert replier_enseignes(["Netflix Standard with Ads"]) == ["Netflix Standard with Ads"]
