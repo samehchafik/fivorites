@@ -153,6 +153,21 @@ Cinq gestes, chacun mesurable :
    univers dans le navigateur. C'est un filtre de présentation : il ne touche
    ni les graines ni les scores.
 
+**Et le correctif qui conditionne tout le reste, trouvé sur un cas réel**
+(« La Brea, Brooklyn Nine-Nine, Muertos S.L., Lucifer » rendait un mur de
+séries inconnues) : **98,5 % des empreintes du graphe ne sont pas des
+mesures**. 114 720 empreintes de séries sur 116 434 (519 938 sur 522 203
+côté films) sont marquées `interne` — des stéréotypes déduits des
+métadonnées, massivement dupliqués, votes médians de 1. « La Brea » portait
+le même vecteur exact que des milliers d'œuvres obscures : ses voisins « à
+distance nulle » étaient n'importe quoi. Le vectoriel — voisins de graines
+ET profil — ne raisonne plus que sur les empreintes `juge` (mesurées :
+1 714 séries, 2 265 films), par un balayage calculé plutôt que par l'index
+k-NN, qui rendait ses plus proches parmi les clones avant tout filtre. Une
+graine `interne` n'en lance pas : elle nourrit la communauté et les
+affinités. Sur le même cas réel, les suggestions deviennent Psych (corroboré
+par 27 voisins), iZombie, Ted Lasso, The Orville, Lupin, Warehouse 13.
+
 Au passage, une boucle corrigée : une pile de trois cartes ou moins
 redemandait des suggestions, recevait les mêmes, et redemandait — des
 centaines de requêtes par minute, mesurées à l'écran. Le droit de recharger
@@ -304,6 +319,12 @@ ils tiennent.
 
 ## Ce qui reste devant
 
+* **Deux gestes d'exploitation pour le moteur** : un index Neo4j
+  `CREATE INDEX ... FOR (n:FivOeuvre) ON (n.univers, n.empreinteSource)`
+  réduirait le balayage des juges (~2 s aujourd'hui, mesuré depuis le poste) ;
+  et le vrai chantier est de RATTRAPER les empreintes `interne` — mesurer de
+  vraies empreintes pour les œuvres récentes, sans quoi le vectoriel ne voit
+  que 1,5 % du catalogue.
 * **Neo4j en local** : le poste n'a pas encore de Neo4j vendorisé dans ce
   module — les suggestions se testent contre le serveur ou après `make -C
   admin bootstrap-neo4j` ; le moteur, lui, est couvert par des tests

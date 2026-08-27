@@ -196,9 +196,6 @@ SUGGESTIONS_MAX = 24
 # rendrait rare par construction.
 CANDIDATS_PAR_SOURCE = 60
 
-# Le nombre de voisins vectoriels demandés PAR graine.
-CANDIDATS_VECTEUR = 40
-
 # Au-delà, deux empreintes ne se ressemblent plus assez pour être proposées :
 # ~2,4 fois le MAE du système (0,84) — la limite entre « proche » et
 # « vaguement dans le même quadrant ». L'apport décroît linéairement jusque-là
@@ -252,47 +249,62 @@ ORDER BY (1.0 * voisins / taille) / (1.0 * citations / $membres) DESC, voisins D
 LIMIT $limite
 """
 
-# Les voisins d'ŒUVRE par empreinte : pour chaque graine, ses plus proches
-# dans l'espace des six axes. Le score de Neo4j vaut 1/(1+d²) — la distance en
-# points de note se retrouve par sqrt(1/score − 1), et c'est sur elle qu'on
-# raisonne : un score sans unité ne dirait rien à personne.
+# Les voisins d'ŒUVRE par empreinte — sur les seules empreintes MESURÉES.
 #
-# La requête rend UNE LIGNE PAR COUPLE (graine, candidat), là où elle prenait
-# avant le `max` par candidat. C'est ce qui permet de pondérer par la graine :
-# être proche d'une œuvre qu'on a vue et aimée ne vaut pas être proche d'une
-# œuvre qu'on veut voir. Le volume reste borné — douze graines par quarante
-# candidats.
+# Mesuré sur la production le 27 août 2026, à partir de quatre graines
+# réelles : l'index vectoriel contient 116 434 empreintes de séries, dont
+# 114 720 marquées `interne` — des stéréotypes déduits des métadonnées, PAS
+# des mesures, massivement dupliqués (votes médians : 1). « La Brea » portait
+# le même vecteur exact que des milliers d'œuvres obscures : ses « voisins »
+# à distance nulle étaient n'importe quoi, et les suggestions un mur de
+# séries inconnues. Seules les 1 714 empreintes `juge` (2 265 côté films)
+# sont des mesures.
+#
+# D'où cette forme : plus d'index k-NN — qui rendrait ses k plus proches
+# parmi les clones avant tout filtre — mais un balayage CALCULÉ des juges,
+# collectés une fois puis comparés à chaque graine (12 graines × ~2 000
+# candidats, trivial). Une graine `interne` ne lance rien : son vecteur est
+# un stéréotype, pas un goût. À distance égale — les empreintes mesurées
+# sont quantifiées, les ex æquo sont la règle — l'œuvre la plus votée passe
+# devant : entre deux voisines aussi proches, la plus connue est la
+# suggestion la plus sûre.
 _CY_PROCHES = """
+MATCH (node:FivOeuvre {univers: $univers})
+WHERE node.empreinteSource = 'juge' AND node.empreinte IS NOT NULL
+  AND NOT node.oeuvreId IN $exclues
+WITH collect(node) AS candidats
 UNWIND $graines AS graine
 MATCH (s:FivOeuvre {oeuvreId: graine})
-WHERE s.empreinte IS NOT NULL
-CALL db.index.vector.queryNodes('fivEmpreinteVoisins', $candidats, s.empreinte)
-YIELD node, score
-WHERE node.univers = $univers
-  AND NOT node.oeuvreId IN $exclues
-  AND node.oeuvreId <> s.oeuvreId
+WHERE s.empreinteSource = 'juge' AND s.empreinte IS NOT NULL
+UNWIND candidats AS node
+WITH graine, s, node, vector.similarity.euclidean(s.empreinte, node.empreinte) AS score
+WHERE node.oeuvreId <> s.oeuvreId
 RETURN graine, node.oeuvreId AS oeuvreId, node.idTmdb AS idTmdb, node.titre AS titre,
        node.annee AS annee, node.affiche AS affiche, node.univers AS univers, score
-ORDER BY score DESC
+ORDER BY score DESC, node.votes DESC
 LIMIT $limite
 """
 
-
-# Les empreintes d'une liste d'œuvres — la matière du profil.
+# Les empreintes d'une liste d'œuvres — la matière du profil. MESURÉES
+# seulement : un profil bâti sur des stéréotypes `interne` pointerait vers le
+# stéréotype, pas vers le goût.
 _CY_EMPREINTES = """
-MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $pivots AND s.empreinte IS NOT NULL
+MATCH (s:FivOeuvre)
+WHERE s.oeuvreId IN $pivots AND s.empreinte IS NOT NULL
+  AND s.empreinteSource = 'juge'
 RETURN s.oeuvreId AS oeuvreId, s.empreinte AS empreinte
 """
 
-# Les voisins du PROFIL : une seule interrogation de l'index vectoriel, sur
-# le vecteur du visiteur plutôt que sur chaque graine.
+# Les voisins du PROFIL : le même balayage des empreintes mesurées, sur le
+# vecteur du visiteur plutôt que sur chaque graine.
 _CY_PROFIL = """
-CALL db.index.vector.queryNodes('fivEmpreinteVoisins', $candidats, $profil)
-YIELD node, score
-WHERE node.univers = $univers AND NOT node.oeuvreId IN $exclues
+MATCH (node:FivOeuvre {univers: $univers})
+WHERE node.empreinteSource = 'juge' AND node.empreinte IS NOT NULL
+  AND NOT node.oeuvreId IN $exclues
+WITH node, vector.similarity.euclidean($profil, node.empreinte) AS score
 RETURN node.oeuvreId AS oeuvreId, node.idTmdb AS idTmdb, node.titre AS titre,
        node.annee AS annee, node.affiche AS affiche, node.univers AS univers, score
-ORDER BY score DESC
+ORDER BY score DESC, node.votes DESC
 LIMIT $limite
 """
 
@@ -686,7 +698,6 @@ class SourceEmpreinte:
         lignes = await self._graphe.executer(
             _CY_PROCHES,
             graines=list(poids),
-            candidats=CANDIDATS_VECTEUR,
             univers=univers.interne,
             exclues=exclues,
             limite=CANDIDATS_PAR_SOURCE * 3,
@@ -771,7 +782,6 @@ class SourceProfil:
         lignes = await self._graphe.executer(
             _CY_PROFIL,
             profil=profil,
-            candidats=CANDIDATS_PAR_SOURCE,
             univers=univers.interne,
             exclues=exclues,
             limite=CANDIDATS_PAR_SOURCE,

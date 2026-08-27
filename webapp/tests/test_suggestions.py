@@ -186,7 +186,7 @@ class FauxGraphe:
         if "$profil" in cypher:
             self.profil_demande = parametres["profil"]
             return self._profil_proches
-        if "queryNodes" in cypher:
+        if "UNWIND $graines" in cypher:
             return self._proches
         if "count(m)" in cypher:
             # Le total des membres, dénominateur du taux général.
@@ -443,7 +443,7 @@ async def test_les_exclusions_couvrent_tous_les_statuts() -> None:
     l'envie est une suggestion déjà acceptée."""
     graphe = FauxGraphe(proches=[proche(2001, 0.2)])
     await lancer(graphe, statuts={"aime": [1001], "aime_pas": [1002], "a_voir": [1003]})
-    envoyees = [vue for vue in graphe.vues if "queryNodes" in vue["cypher"]][0]
+    envoyees = [vue for vue in graphe.vues if "UNWIND $graines" in vue["cypher"]][0]
     assert envoyees["exclues"] == [1001, 1002, 1003]
 
 
