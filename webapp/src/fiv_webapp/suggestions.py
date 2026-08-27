@@ -191,6 +191,13 @@ SURREPRESENTATION_REPERE = 4.0
 # La liste rendue au composant : une page de cartes, pas un catalogue.
 SUGGESTIONS_MAX = 24
 
+# Le plafond du vivier hydraté quand un filtre est actif. Sans filtre, trois
+# pages suffisent ; avec, il faut le POOL ENTIER — filtrer après une coupe de
+# tête faisait fondre la liste (mesuré : « sur Netflix » rendait huit cartes
+# alors que la matière existait plus bas dans le classement). Plafonné pour
+# borner les deux requêtes SQL d'hydratation.
+VIVIER_FILTRE_MAX = 240
+
 # Les candidats demandés à chaque source avant fusion. Large : c'est le
 # recouvrement entre sources qui fait la corroboration, et un pool étroit le
 # rendrait rare par construction.
@@ -993,11 +1000,15 @@ class Moteur:
             # changeraient de place d'un appel à l'autre.
             key=lambda candidat: (-candidat.score, -(candidat.annee or 0), candidat.oeuvre_id),
         )
-        # L'hydratation des GENRES sur la tête de liste, avant la coupe : le
-        # front en fait ses puces d'exclusion, et le filtre « sans » se joue
-        # ici — élargi à trois pages pour que masquer un genre ne rende pas
-        # une liste courte.
-        tete = retenus[: limite * 3]
+        # L'hydratation des GENRES et des PLATEFORMES, avant la coupe : le
+        # front en fait ses puces, et les filtres se jouent ici. Trois pages
+        # en temps normal ; le vivier ENTIER dès qu'un filtre est actif —
+        # filtrer une tête de liste la faisait fondre, alors que le
+        # classement en avait encore sous la coupe.
+        if sans_genres or sur_plateformes:
+            tete = retenus[:VIVIER_FILTRE_MAX]
+        else:
+            tete = retenus[: limite * 3]
         genres_connus = await self._genres_de(conn, univers, tete)
         for candidat in tete:
             cle = candidat.id_tmdb if candidat.id_tmdb is not None else candidat.oeuvre_id

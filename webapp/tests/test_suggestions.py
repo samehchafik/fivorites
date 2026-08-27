@@ -631,3 +631,18 @@ def test_replier_enseignes() -> None:
     # Sans enseigne mère présente, la variante reste telle quelle : on ne
     # devine pas une plateforme qui n'est pas dans la donnée.
     assert replier_enseignes(["Netflix Standard with Ads"]) == ["Netflix Standard with Ads"]
+
+
+async def test_le_filtre_balaie_tout_le_vivier() -> None:
+    """Filtrer ne coupe pas d'abord : « sur Netflix » doit aller chercher les
+    candidats au-delà de la tête de liste — c'est ce qui faisait fondre la
+    liste filtrée alors que la matière existait plus bas au classement."""
+    # Quatre candidats classés par proximité ; seul le DERNIER est sur
+    # Netflix, et la limite vaut 1 : une coupe de tête avant filtre (1 × 3)
+    # l'aurait perdu.
+    graphe = FauxGraphe(
+        proches=[proche(2001, 0.2), proche(2002, 0.3), proche(2003, 0.4), proche(2004, 0.5)]
+    )
+    conn = FauxConn(plateformes={"1004": ["Netflix"]})
+    retenues, _ = await lancer(graphe, conn=conn, sur_plateformes=["Netflix"], limite=1)
+    assert [s.oeuvre_id for s in retenues] == [2004]
