@@ -173,8 +173,13 @@ les réalisateurs d'ÉPISODES des comédies NBC reliaient Brooklyn Nine-Nine à
 toutes leurs consœurs de plateau — une liste molle. La règle : un acteur ne
 compte que dans les TROIS premiers du générique, au départ comme à
 l'arrivée (`r.ordre < 3` — pas de figurant, et on ne mène pas à un
-figurant) ; les créateurs comptent toujours ; les réalisateurs d'épisodes ne
-comptent plus. Le signal sature avec le nombre de personnes
+figurant) ; les créateurs comptent toujours ; un réalisateur de FILM compte
+toujours — il signe l'œuvre (Inception mène à Interstellar par Nolan) — et
+un réalisateur de SÉRIE seulement s'il en a dirigé au moins un tiers :
+l'indice d'importance par la PART, pas par le volume, qui aurait sélectionné
+les routiers (le plus prolifique de la base dirige 6 % de chaque comédie
+NBC) ; la part sélectionne les auteurs (Mike Flanagan, 10/10 sur Hill
+House). Le signal sature avec le nombre de personnes
 partagées (une seule est faible — un second rôle prolifique relie tout à
 tout ; sept est un quasi-jumelage d'équipe), les noms partent dans
 l'explication (« Avec Melissa Fumero »), et la source compte comme du

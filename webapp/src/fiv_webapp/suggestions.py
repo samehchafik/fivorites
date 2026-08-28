@@ -320,32 +320,51 @@ ORDER BY score DESC, node.votes DESC
 LIMIT $limite
 """
 
-# Ce que les gens des graines ont fait d'autre — TÊTES D'AFFICHE et
-# CRÉATEURS seulement, des deux côtés.
+# Ce que les gens des graines ont fait d'autre — TÊTES D'AFFICHE, CRÉATEURS,
+# et RÉALISATEURS quand ils signent l'œuvre.
 #
 # La première version traversait tous les rôles, et rendait une liste molle,
 # constatée à l'usage : les réalisateurs d'ÉPISODES des comédies NBC
-# (Tristram Shapeero, Linda Mendoza…) reliaient Brooklyn Nine-Nine à toutes
-# leurs consœurs de plateau — Kimmy Schmidt, Community, Suits — et
-# écrasaient le reste. La règle demandée, et mesurée meilleure : un acteur ne
-# compte que dans les TROIS premiers du générique (`r.ordre < 3`), au départ
-# comme à l'arrivée — pas de figurant, et on ne mène pas à un figurant. Les
-# créateurs (FIV_A_CREE) comptent toujours : ils signent l'œuvre, ils sont
-# deux ou trois au plus. Les réalisateurs d'épisodes ne comptent plus.
+# reliaient Brooklyn Nine-Nine à toutes leurs consœurs de plateau et
+# écrasaient le reste. Les règles, chacune mesurée sur la production :
 #
-# Sur la liste réelle de sept graines : Game of Thrones entre par Benioff &
-# Weiss (créateurs du Problème à 3 corps), Arcane par Kevin Alejandro
-# (Lucifer), The Terror par Alexander Woo — et les comédies de plateau
-# disparaissent.
+# * **un acteur** ne compte que dans les TROIS premiers du générique
+#   (`r.ordre < 3`), au départ comme à l'arrivée — pas de figurant, et on ne
+#   mène pas à un figurant ;
+# * **un créateur** compte toujours : il signe l'œuvre, ils sont deux ou
+#   trois au plus ;
+# * **un réalisateur de FILM** compte toujours — un film a un réalisateur,
+#   il le signe (Inception mène à Interstellar et Batman Begins par Nolan) ;
+# * **un réalisateur de SÉRIE** ne compte que s'il en a dirigé AU MOINS UN
+#   TIERS — l'indice d'importance demandé, mais par la PART et non par le
+#   volume : le volume aurait sélectionné les routiers (Tristram Shapeero,
+#   le plus prolifique de la base, dirige 6 % de chaque comédie NBC), la
+#   part sélectionne les auteurs (Mike Flanagan : 10 épisodes sur 10 de
+#   Hill House ; Laura Caballero passe, les routiers de Brooklyn
+#   Nine-Nine plafonnent à 8 %). Le total d'épisodes d'une série s'approche
+#   par ceux de sa tête d'affiche (`ordre = 0`) — le nœud ne le porte pas ;
+#   inconnu, le réalisateur ne compte pas : le doute rouvrirait le bruit.
 _CY_GENS = """
 MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $graines
+WITH s, coalesce(
+    [(a:FivPersonne)-[j:FIV_JOUE_DANS]->(s) WHERE j.ordre = 0 | j.episodes][0], 0
+) AS episodes_s
 MATCH (p:FivPersonne)-[r1]->(s)
 WHERE (type(r1) = 'FIV_JOUE_DANS' AND coalesce(r1.ordre, 99) < 3)
    OR type(r1) = 'FIV_A_CREE'
+   OR (type(r1) = 'FIV_A_REALISE' AND (
+         s.univers = 'movies'
+         OR (episodes_s > 0 AND coalesce(r1.episodes, 0) * 3 >= episodes_s)))
 MATCH (p)-[r2]->(reco:FivOeuvre)
-WHERE ((type(r2) = 'FIV_JOUE_DANS' AND coalesce(r2.ordre, 99) < 3)
-    OR type(r2) = 'FIV_A_CREE')
-  AND reco.univers = $univers AND NOT reco.oeuvreId IN $exclues
+WHERE reco.univers = $univers AND NOT reco.oeuvreId IN $exclues
+  AND ((type(r2) = 'FIV_JOUE_DANS' AND coalesce(r2.ordre, 99) < 3)
+    OR type(r2) = 'FIV_A_CREE'
+    OR (type(r2) = 'FIV_A_REALISE' AND (
+          reco.univers = 'movies'
+          OR (coalesce(r2.episodes, 0) * 3 >=
+              coalesce(
+                  [(a2:FivPersonne)-[j2:FIV_JOUE_DANS]->(reco) WHERE j2.ordre = 0
+                   | j2.episodes][0], 999999)))))
 WITH reco, count(DISTINCT p) AS gens, collect(DISTINCT p.nom) AS noms
 RETURN reco.oeuvreId AS oeuvreId, reco.idTmdb AS idTmdb, reco.titre AS titre,
        reco.annee AS annee, reco.affiche AS affiche, reco.univers AS univers,
