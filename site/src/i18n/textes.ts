@@ -412,6 +412,9 @@ export const TEXTES = {
   'video.fermer': { fr: 'Fermer le lecteur', en: 'Close the player', es: 'Cerrar el reproductor', ar: 'إغلاق المشغّل' },
 
   // --- Quelqu'un : portrait et filmographie -----------------------------
+  'statut.aime': { fr: 'Vu & aimé', en: 'Seen & loved', es: 'Visto y me gustó', ar: 'شاهدته وأحببته' },
+  'statut.a_voir': { fr: 'Dans ma liste', en: 'On my list', es: 'En mi lista', ar: 'في قائمتي' },
+  'statut.aime_pas': { fr: 'Pas pour moi', en: 'Not for me', es: 'No me gustó', ar: 'ليس لي' },
   'personne.inconnue': { fr: 'Quelqu’un', en: 'Someone', es: 'Alguien', ar: 'شخص' },
   'personne.agrandir': { fr: 'Agrandir le portrait', en: 'Enlarge the portrait', es: 'Ampliar el retrato', ar: 'تكبير الصورة' },
   'personne.compte': { fr: '{nombre} œuvres au catalogue', en: '{nombre} works in the catalogue', es: '{nombre} obras en el catálogo', ar: '{nombre} عملًا في الفهرس' },

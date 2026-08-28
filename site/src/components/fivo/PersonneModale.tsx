@@ -18,7 +18,15 @@ import { useEffect, useState } from 'react'
 import { chargerPersonne, urlAffiche } from './api'
 import { useTextes } from './textes'
 import type { CleTexte } from '../../i18n/textes'
-import type { FichePersonne, UniversSlug } from './types'
+import type { FichePersonne, Statut, UniversSlug } from './types'
+
+// La marque d'un statut : sa clé de texte et sa couleur (la classe reprend
+// le code couleur des trois gestes — on reconnaît sans lire).
+const STATUTS: Record<Statut, CleTexte> = {
+  aime: 'statut.aime',
+  a_voir: 'statut.a_voir',
+  aime_pas: 'statut.aime_pas',
+}
 
 // Le rôle arrive du graphe en code (voir `fiv_webapp.personnes.ROLES`).
 const ROLES: Record<string, CleTexte> = {
@@ -30,6 +38,7 @@ const ROLES: Record<string, CleTexte> = {
 
 export function PersonneModale({
   cle,
+  statuts = {},
   nom,
   photo,
   univers,
@@ -39,6 +48,10 @@ export function PersonneModale({
 }: {
   /** L'identité de la personne — `null` quand rien n'est ouvert. */
   cle: string | null
+  /** Les classements de la session, par pivot : la filmographie MARQUE ce
+   *  qu'on a déjà vu, voulu ou écarté — c'est souvent la question qu'on se
+   *  pose en la parcourant (« celle-là, je l'ai vue ? »). */
+  statuts?: Record<number, Statut>
   /** Le nom et la photo qu'on affichait déjà : ils s'affichent tout de suite,
    *  sans attendre la requête, et servent de repli si le serveur n'a que la
    *  liste (le repli par l'index ne rend pas les portraits). */
@@ -164,7 +177,16 @@ export function PersonneModale({
                         <span className="personne-affiche-vide" aria-hidden="true" />
                       )}
                       <span className="personne-oeuvre-texte">
-                        <strong dir="auto">{oeuvre.titre ?? t.dit('carte.sans_titre')}</strong>
+                        <strong dir="auto">
+                          {oeuvre.titre ?? t.dit('carte.sans_titre')}
+                          {statuts[oeuvre.oeuvreId] && (
+                            <span
+                              className={`personne-statut statut-${statuts[oeuvre.oeuvreId]}`}
+                            >
+                              {t.dit(STATUTS[statuts[oeuvre.oeuvreId]])}
+                            </span>
+                          )}
+                        </strong>
                         <span>
                           {[
                             oeuvre.annee?.toString(),

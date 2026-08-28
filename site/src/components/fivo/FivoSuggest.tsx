@@ -298,6 +298,7 @@ export default function FivoSuggest({
 
         <PersonneModale
           cle={personne?.cle ?? null}
+          statuts={statuts}
           nom={personne?.nom ?? null}
           photo={personne?.photo ?? null}
           univers={universFiche}

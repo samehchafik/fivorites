@@ -1956,3 +1956,31 @@
 .fivo-carte {
   position: relative;
 }
+
+/* La marque de classement dans une filmographie : « celle-là, je l'ai
+   vue ? » — la réponse est écrite, aux couleurs des trois gestes. */
+.personne-statut {
+  display: inline-block;
+  margin-inline-start: 0.45rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 1rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.personne-statut.statut-aime {
+  background: var(--pink, #fb3a95);
+  color: white;
+}
+
+.personne-statut.statut-a_voir {
+  background: var(--yes, #0b0);
+  color: white;
+}
+
+.personne-statut.statut-aime_pas {
+  background: var(--no, #e10000);
+  color: white;
+}
