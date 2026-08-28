@@ -210,6 +210,9 @@ export interface CastMember {
   character: string | null
   profilePath: string | null
   episodeCount: number | null
+  /** L'indice 0-10 de la personne, lu dans le graphe (`graphe indices`) :
+   *  son poids dans le catalogue. Absent si le graphe est muet. */
+  indice?: number | null
 }
 
 export interface WatchProvider {

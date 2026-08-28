@@ -1984,3 +1984,17 @@
   background: var(--no, #e10000);
   color: white;
 }
+
+/* L'indice d'une personne : son poids dans le catalogue, 0-10. Discret et
+   expliqué au survol — un chiffre nu inquiéterait plus qu'il n'informe. */
+.personne-indice {
+  display: inline-block;
+  margin-inline-start: 0.5rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 0.72rem;
+  font-weight: 600;
+  vertical-align: middle;
+  color: white;
+}

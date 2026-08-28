@@ -41,5 +41,9 @@ docker compose run --rm admin search sync || true
 # `|| true` pour la même raison : un Neo4j absent ou jamais projeté ne doit pas
 # faire échouer la collecte, dont rien ne dépend de lui.
 docker compose run --rm admin graphe sync || true
+# Les personnes que la synchronisation vient de créer n'ont pas d'indice
+# (0-10, la pondération de la source « gens » du site public) : le recalcul
+# est global mais rapide (~2 min sur le graphe entier) et idempotent.
+docker compose run --rm admin graphe indices || true
 
 echo "=== fin $(date -Is) ==="

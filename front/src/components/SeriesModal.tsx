@@ -561,6 +561,17 @@ export function SeriesModal({
                       <Stack gap={0} style={{ minWidth: 0 }}>
                         <Text size="sm" fw={600} lineClamp={1} dir="auto">
                           {member.name}
+                          {member.indice != null && (
+                            <Text
+                              span
+                              size="xs"
+                              c="dimmed"
+                              ml={6}
+                              title={`Indice ${member.indice}/10 — le poids de cette personne dans le catalogue`}
+                            >
+                              ★ {member.indice}
+                            </Text>
+                          )}
                         </Text>
                         <Text size="xs" c="dimmed" lineClamp={2} dir="auto">
                           {member.character ?? '—'}

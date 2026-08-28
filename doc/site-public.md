@@ -188,7 +188,11 @@ l'œuvre pondérée par sa place au générique — DiCaprio 10, Nolan 9, un
 second rôle établi 5, un figurant 0 ; les homonymes se départagent enfin
 (le faux « Christopher Nolan » vaut 0). La source des gens pondère chaque
 lien par cet indice (plancher au quart : les acteurs d'un cinéma local
-restent un vrai lien) et cite les noms connus d'abord. Le signal sature
+restent un vrai lien) et cite les noms connus d'abord. L'indice s'AFFICHE :
+badge « ★ 8/10 » dans le panneau d'une personne côté public, « ★ 8 » sur
+chaque visage de la distribution côté admin (lu du graphe par la route de la
+fiche, en plus jamais en condition). Et la passe nocturne le recalcule après
+`graphe sync` : une personne projetée cette nuit a son indice au matin. Le signal sature
 avec le nombre de personnes
 partagées (une seule est faible — un second rôle prolifique relie tout à
 tout ; sept est un quasi-jumelage d'équipe), les noms partent dans

@@ -172,6 +172,9 @@ export interface FichePersonne {
   cle: string
   nom: string | null
   photo: string | null
+  /** L'indice 0-10 : ce que la personne pèse dans le catalogue — DiCaprio
+   *  10, un second rôle établi 5, un figurant 0. Nul en repli par l'index. */
+  indice: number | null
   oeuvres: OeuvreDePersonne[]
   total: number
   page: number

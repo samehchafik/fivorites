@@ -24,7 +24,7 @@ from fiv_admin.catalog import (
     genres_disponibles,
     refresh_cards,
 )
-from fiv_admin.deps import Conn, CurrentUser, Search
+from fiv_admin.deps import Conn, CurrentUser, GrapheOpt, Search
 from fiv_admin.media import DEFAULT_MEDIA, MEDIA
 
 router = APIRouter()
@@ -180,6 +180,7 @@ async def genres(
 async def work(
     user: CurrentUser,
     conn: Conn,
+    graphe: GrapheOpt,
     work_id: int,
     lang: str = Query(default="fr-FR", max_length=16),
     media: str = Query(default=DEFAULT_MEDIA, max_length=16),
@@ -191,6 +192,22 @@ async def work(
             f"aucune fiche collectée pour {work_id} — l'œuvre est peut-être au "
             "catalogue sans avoir encore été téléchargée.",
         )
+    # L'indice 0-10 des personnes (`fiv-admin graphe indices`), lu dans le
+    # graphe par clés — le brut TMDB ne le connaît pas. Graphe absent ou
+    # muet : la fiche part sans, l'indice est un plus, pas une condition.
+    if graphe is not None and detail.get("cast"):
+        try:
+            cles = [f"tmdb:{m['id']}" for m in detail["cast"] if m.get("id") is not None]
+            lignes = await graphe.executer(
+                "MATCH (p:FivPersonne) WHERE p.cle IN $cles "
+                "RETURN p.cle AS cle, p.indice AS indice",
+                cles=cles,
+            )
+            indices = {ligne["cle"]: ligne["indice"] for ligne in lignes}
+            for membre in detail["cast"]:
+                membre["indice"] = indices.get(f"tmdb:{membre.get('id')}")
+        except Exception:  # noqa: BLE001 — le graphe est un plus, pas une condition
+            pass
     return detail
 
 

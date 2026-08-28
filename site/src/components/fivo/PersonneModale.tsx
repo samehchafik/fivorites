@@ -132,7 +132,17 @@ export function PersonneModale({
             <span className="personne-portrait personne-portrait-vide" aria-hidden="true" />
           )}
           <div>
-            <h2>{fiche?.nom ?? nom ?? t.dit('personne.inconnue')}</h2>
+            <h2>
+              {fiche?.nom ?? nom ?? t.dit('personne.inconnue')}
+              {fiche?.indice != null && (
+                <span
+                  className="personne-indice"
+                  title={t.dit('personne.indice', { indice: t.nombre(fiche.indice) })}
+                >
+                  ★ {t.nombre(fiche.indice)}/10
+                </span>
+              )}
+            </h2>
             {etat === 'servi' && (
               <p className="personne-compte">
                 {total > 0

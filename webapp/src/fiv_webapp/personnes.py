@@ -87,6 +87,10 @@ class FichePersonne:
     cle: str
     nom: str | None
     photo: str | None
+    # L'indice 0-10 de la personne (`fiv-admin graphe indices`) : ce qu'elle
+    # pèse dans le catalogue — nombre d'œuvres, leur popularité, sa place aux
+    # génériques. Nul en repli par l'index, qui ne connaît pas le graphe.
+    indice: int | None = None
     oeuvres: list[OeuvreDePersonne] = field(default_factory=list)
     total: int = 0
     page: int = 1
@@ -100,6 +104,7 @@ class FichePersonne:
             "cle": self.cle,
             "nom": self.nom,
             "photo": self.photo,
+            "indice": self.indice,
             "oeuvres": [oeuvre.publique() for oeuvre in self.oeuvres],
             "total": self.total,
             "page": self.page,
@@ -112,7 +117,7 @@ class FichePersonne:
 # sert la pagination et se compte par degré, sans traverser.
 _CY_PERSONNE = """
 MATCH (p:FivPersonne {cle: $cle})
-RETURN p.nom AS nom, p.photo AS photo,
+RETURN p.nom AS nom, p.photo AS photo, p.indice AS indice,
        count { (p)-[r]->(:FivOeuvre) WHERE type(r) IN $roles } AS total
 """
 
@@ -187,6 +192,7 @@ class Personnes:
             cle=cle,
             nom=entete.get("nom"),
             photo=entete.get("photo"),
+            indice=entete.get("indice"),
             total=int(entete.get("total") or 0),
             page=page,
             source="graphe",
