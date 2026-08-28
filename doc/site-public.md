@@ -175,7 +175,9 @@ compte que dans les TROIS premiers du générique, au départ comme à
 l'arrivée (`r.ordre < 3` — pas de figurant, et on ne mène pas à un
 figurant) ; les créateurs comptent toujours ; un réalisateur de FILM compte
 toujours — il signe l'œuvre (Inception mène à Interstellar par Nolan) — et
-un réalisateur de SÉRIE seulement s'il en a dirigé au moins un tiers :
+un réalisateur de SÉRIE seulement s'il en a dirigé au moins la moitié
+(le tiers laissait passer 3 épisodes sur 8 d'une mini-série à quatre
+réalisateurs — cas Minkie Spiro sur le Problème à 3 corps, signalé) :
 l'indice d'importance par la PART, pas par le volume, qui aurait sélectionné
 les routiers (le plus prolifique de la base dirige 6 % de chaque comédie
 NBC) ; la part sélectionne les auteurs (Mike Flanagan, 10/10 sur Hill

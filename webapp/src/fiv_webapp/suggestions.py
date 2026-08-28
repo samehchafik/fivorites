@@ -335,15 +335,18 @@ LIMIT $limite
 #   trois au plus ;
 # * **un réalisateur de FILM** compte toujours — un film a un réalisateur,
 #   il le signe (Inception mène à Interstellar et Batman Begins par Nolan) ;
-# * **un réalisateur de SÉRIE** ne compte que s'il en a dirigé AU MOINS UN
-#   TIERS — l'indice d'importance demandé, mais par la PART et non par le
-#   volume : le volume aurait sélectionné les routiers (Tristram Shapeero,
-#   le plus prolifique de la base, dirige 6 % de chaque comédie NBC), la
-#   part sélectionne les auteurs (Mike Flanagan : 10 épisodes sur 10 de
-#   Hill House ; Laura Caballero passe, les routiers de Brooklyn
-#   Nine-Nine plafonnent à 8 %). Le total d'épisodes d'une série s'approche
-#   par ceux de sa tête d'affiche (`ordre = 0`) — le nœud ne le porte pas ;
-#   inconnu, le réalisateur ne compte pas : le doute rouvrirait le bruit.
+# * **un réalisateur de SÉRIE** ne compte que s'il en a dirigé AU MOINS LA
+#   MOITIÉ — l'indice d'importance par la PART et non par le volume : le
+#   volume aurait sélectionné les routiers (Tristram Shapeero, le plus
+#   prolifique de la base, dirige 6 % de chaque comédie NBC), la part
+#   sélectionne les auteurs. La moitié et non le tiers, corrigé sur un cas
+#   réel : une mini-série de 8 épisodes à quatre réalisateurs donnait 3/8 à
+#   Minkie Spiro — au tiers elle « signait » Le Problème à 3 corps et
+#   inondait les suggestions ; à la moitié elle sort, quand Mike Flanagan
+#   (10/10 sur Hill House) et Laura Caballero (4 séries sur 4) restent. Le
+#   total d'épisodes s'approche par ceux de la tête d'affiche (`ordre = 0`)
+#   — le nœud ne le porte pas ; inconnu, le réalisateur ne compte pas : le
+#   doute rouvrirait le bruit.
 _CY_GENS = """
 MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $graines
 WITH s, coalesce(
@@ -354,14 +357,14 @@ WHERE (type(r1) = 'FIV_JOUE_DANS' AND coalesce(r1.ordre, 99) < 3)
    OR type(r1) = 'FIV_A_CREE'
    OR (type(r1) = 'FIV_A_REALISE' AND (
          s.univers = 'movies'
-         OR (episodes_s > 0 AND coalesce(r1.episodes, 0) * 3 >= episodes_s)))
+         OR (episodes_s > 0 AND coalesce(r1.episodes, 0) * 2 >= episodes_s)))
 MATCH (p)-[r2]->(reco:FivOeuvre)
 WHERE reco.univers = $univers AND NOT reco.oeuvreId IN $exclues
   AND ((type(r2) = 'FIV_JOUE_DANS' AND coalesce(r2.ordre, 99) < 3)
     OR type(r2) = 'FIV_A_CREE'
     OR (type(r2) = 'FIV_A_REALISE' AND (
           reco.univers = 'movies'
-          OR (coalesce(r2.episodes, 0) * 3 >=
+          OR (coalesce(r2.episodes, 0) * 2 >=
               coalesce(
                   [(a2:FivPersonne)-[j2:FIV_JOUE_DANS]->(reco) WHERE j2.ordre = 0
                    | j2.episodes][0], 999999)))))
