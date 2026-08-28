@@ -633,14 +633,59 @@ GENRES_CANONIQUES = {
 }
 
 
+# Les PONTS des genres de livres vers le canon. Wikidata (P136) parle une
+# taxonomie fine — « fiction dystopique », « roman de mœurs », « réalisme
+# magique » — précieuse ENTRE livres : elle est GARDÉE. Le pont AJOUTE le
+# genre canonique du cinéma, et c'est lui qui fait croiser les univers : le
+# livre « Le Problème à 3 corps » (science-fiction, Q24925) portera
+# tmdb:878 comme la série et comme les films du genre. Les QID sont ceux
+# observés dans la collecte P136 ; un QID inconnu passe sans pont — la
+# table s'étend au fil du rattrapage, elle ne devine pas.
+GENRES_PONTS = {
+    "wd:Q24925": (("tmdb:878", "Science-Fiction"),),  # science-fiction
+    "wd:Q944250": (("tmdb:878", "Science-Fiction"),),  # anticipation
+    "wd:Q15062348": (("tmdb:878", "Science-Fiction"),),  # fiction dystopique
+    "wd:Q1080374": (("tmdb:878", "Science-Fiction"), ("tmdb:14", "Fantastique")),
+    "wd:Q132311": (("tmdb:14", "Fantastique"),),  # fantasy
+    "wd:Q147516": (("tmdb:14", "Fantastique"),),  # réalisme magique
+    "wd:Q693": (("tmdb:14", "Fantastique"), ("tmdb:10751", "Familial")),  # fable
+    "wd:Q17991521": (("tmdb:14", "Fantastique"), ("tmdb:10751", "Familial")),  # conte
+    "wd:Q208505": (("tmdb:80", "Crime"),),  # roman policier / crime fiction
+    "wd:Q186424": (("tmdb:9648", "Mystère"), ("tmdb:80", "Crime")),  # detective fiction
+    "wd:Q182015": (("tmdb:53", "Thriller"),),  # thriller
+    "wd:Q858330": (("tmdb:10749", "Romance"),),  # roman d'amour
+    "wd:Q19765983": (("tmdb:10749", "Romance"),),  # fiction romantique
+    "wd:Q110540276": (("tmdb:35", "Comédie"),),  # fiction satirique
+    "wd:Q1196408": (("tmdb:36", "Histoire"),),  # fiction historique
+    "wd:Q111956902": (("tmdb:10752", "Guerre"),),  # fiction de guerre
+    "wd:Q56451354": (("tmdb:10751", "Familial"),),  # fiction pour enfants
+    "wd:Q11163999": (("tmdb:10751", "Familial"),),  # littérature jeunesse
+    "wd:Q20737414": (("tmdb:18", "Drame"),),  # fiction philosophique
+    "wd:Q538812": (("tmdb:18", "Drame"),),  # roman de mœurs
+    "wd:Q80930": (("tmdb:18", "Drame"),),  # tragédie
+    "wd:Q512207": (("tmdb:18", "Drame"),),  # roman à clef
+    "wd:Q101240581": (("tmdb:18", "Drame"),),  # fiction psychologique
+    "wd:Q1683266": (("tmdb:18", "Drame"),),  # littérature politique
+    "wd:Q2254211": (("tmdb:18", "Drame"),),  # fiction politique
+    "wd:Q109311786": (("tmdb:18", "Drame"),),  # roman lyrique
+}
+
+
 def canoniser_genres(genres: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Les genres d'une œuvre, traduits vers le vocabulaire canonique."""
+    """Les genres d'une œuvre, traduits vers le vocabulaire canonique.
+
+    Deux régimes : un genre COMPOSITE de la TV est REMPLACÉ par ses genres
+    canoniques ; un genre de LIVRE est GARDÉ et le pont ajoute le canonique
+    — la finesse de Wikidata sert entre livres, le canon sert entre univers.
+    """
     retenus: dict[str, dict[str, Any]] = {}
     for genre in genres:
         cle = genre.get("cle")
         eclates = GENRES_CANONIQUES.get(cle)
         if eclates is None:
             retenus.setdefault(cle, genre)
+            for cle_canonique, nom in GENRES_PONTS.get(cle, ()):
+                retenus.setdefault(cle_canonique, {"cle": cle_canonique, "nom": nom})
         else:
             for cle_canonique, nom in eclates:
                 retenus.setdefault(cle_canonique, {"cle": cle_canonique, "nom": nom})

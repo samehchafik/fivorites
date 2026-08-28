@@ -232,7 +232,14 @@ inter-univers : séries ↔ films par personnes, empreintes, communauté et
 désormais genres ; les LIVRES restent reliés par la communauté et
 l'empreinte seulement — leurs genres (P136) ne sont pas encore collectés
 (0/1058) et leurs auteurs vivent en clés wd: ; leur entrée dans le
-vocabulaire canonique se fera au rattrapage.
+vocabulaire canonique est PRÊTE : une table de ponts (P136 → canon) dans la
+projection — le genre fin de Wikidata (« fiction dystopique ») est GARDÉ
+pour la richesse entre livres, et le pont AJOUTE le genre canonique
+(tmdb:878) qui fait croiser les univers. Le jour du rattrapage crawler, le
+livre « Le Problème à 3 corps » (science-fiction, Q24925) portera tmdb:878
+comme la série et comme les films du genre — sans autre geste que
+`graphe sync`. Un QID inconnu passe sans pont : la table s'étend au fil des
+collectes, elle ne devine pas.
 
 **Et le correctif qui conditionne tout le reste, trouvé sur un cas réel**
 (« La Brea, Brooklyn Nine-Nine, Muertos S.L., Lucifer » rendait un mur de
