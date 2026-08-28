@@ -291,6 +291,14 @@ export function Suggestions({
 
     let abandonne = false
     setEtat('en-cours')
+    // Le contexte a changé : la liste courante est PÉRIMÉE — la vider tout
+    // de suite, plutôt que de laisser les suggestions d'un autre univers (ou
+    // d'avant le geste) sous les yeux pendant le rechargement.
+    if (!memeContexte) {
+      setItems([])
+      setTotal(0)
+      setEncore(false)
+    }
     chargerSuggestions(univers, {
       sans: masques,
       sur: surPlateformes,
@@ -437,6 +445,7 @@ export function Suggestions({
 
           {vue === 'pile' ? (
             <PileSuggestions
+              key={univers}
               suggestions={items}
               masques={masques}
               sur={surPlateformes}

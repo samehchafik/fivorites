@@ -122,6 +122,18 @@ export function Recherche({
     if (dejaVu && !suite) return
 
     const demandee = suite ? page + 1 : 1
+    // Un autre univers ou une autre langue : les cartes affichées sont d'un
+    // autre monde — les vider tout de suite. La frappe, elle, garde les
+    // cartes pendant le débounce : voir fondre la liste à chaque lettre
+    // serait pire.
+    if (
+      charge.current !== null &&
+      (charge.current.univers !== univers || charge.current.langue !== langue)
+    ) {
+      setCartes([])
+      setTotal(0)
+      setEncore(false)
+    }
     setEtat('en-cours')
     const controleur = new AbortController()
     const minuterie = setTimeout(async () => {

@@ -66,6 +66,10 @@ export function MaListe({
     if (charge.current?.version === versionSignaux && charge.current.langue === langue) return
     let abandonne = false
     setEtat('en-cours')
+    // Le rechargement n'arrive que si quelque chose a bougé : la liste
+    // affichée est périmée, on la vide plutôt que de la laisser sous les
+    // yeux pendant la requête.
+    setItems([])
     listerSignaux(langue)
       .then((reponse) => {
         if (abandonne) return
