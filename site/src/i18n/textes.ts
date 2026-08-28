@@ -452,6 +452,12 @@ export const TEXTES = {
   'liste.a_voir': { fr: 'À voir', en: 'Want to see', es: 'Por ver', ar: 'للمشاهدة' },
   'liste.aime': { fr: 'Vus & aimés', en: 'Seen & loved', es: 'Vistos y preferidos', ar: 'شاهدتها وأحببتها' },
   'liste.aime_pas': { fr: 'Pas pour moi', en: 'Not for me', es: 'No me gustan', ar: 'لا تعجبني' },
+  'liste.retirer': {
+    fr: 'Retirer {titre} de ma liste',
+    en: 'Remove {titre} from my list',
+    es: 'Quitar {titre} de mi lista',
+    ar: 'إزالة {titre} من قائمتي',
+  },
   'liste.vide': {
     fr: "Vous n'avez encore rien classé. Cherchez une œuvre, dites ce que vous en pensez — et elle apparaît ici.",
     en: 'You have not sorted anything yet. Search for a work, say what you think of it — and it lands here.',

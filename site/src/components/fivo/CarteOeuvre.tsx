@@ -23,6 +23,7 @@ export function CarteOeuvre({
   onOuvrir,
   onClasser,
   onDeclasser,
+  onRetirer,
 }: {
   titre: string | null
   annee: number | null
@@ -38,6 +39,9 @@ export function CarteOeuvre({
   /** Comment l'œuvre s'accède sur les plateformes filtrées — « Prime Video :
    *  via HBO Max · à la location ». Affichée quand un filtre est actif. */
   acces?: string
+  /** Le retrait EXPLICITE : la croix de « Ma liste ». Recliquer le statut
+   *  actif déclasse aussi, mais un geste de suppression doit se voir. */
+  onRetirer?: () => void
   /** La suggestion est corroborée : le contenu et la communauté tombent
    *  d'accord. C'est la plus solide, et son explication se détache. */
   fort?: boolean
@@ -66,6 +70,20 @@ export function CarteOeuvre({
         }
       }}
     >
+      {onRetirer && (
+        <button
+          type="button"
+          className="fivo-retirer"
+          title={t.dit('liste.retirer', { titre: titre ?? t.dit('carte.cette_oeuvre') })}
+          aria-label={t.dit('liste.retirer', { titre: titre ?? t.dit('carte.cette_oeuvre') })}
+          onClick={(evenement) => {
+            evenement.stopPropagation()
+            onRetirer()
+          }}
+        >
+          ✕
+        </button>
+      )}
       {image ? (
         <img className="fivo-affiche" src={image} alt="" loading="lazy" />
       ) : (

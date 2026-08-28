@@ -1928,3 +1928,31 @@
 .fivo-pile-texte .fivo-acces {
   color: rgba(255, 255, 255, 0.85);
 }
+
+/* La croix de retrait de « Ma liste » : posée sur la carte, discrète mais
+   franche — un geste de suppression ne se cherche pas. */
+.fivo-retirer {
+  position: absolute;
+  top: 0.35rem;
+  inset-inline-end: 0.35rem;
+  z-index: 2;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: white;
+  font-size: 0.8rem;
+  line-height: 1.6rem;
+  text-align: center;
+  cursor: pointer;
+}
+
+.fivo-retirer:hover {
+  background: var(--no, #e10000);
+}
+
+/* La carte devient le référent de la croix. */
+.fivo-carte {
+  position: relative;
+}

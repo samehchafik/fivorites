@@ -122,6 +122,7 @@ export function MaListe({
                     }
                     onClasser={(choisi) => onClasser(item.oeuvreId, item.univers, choisi)}
                     onDeclasser={() => onDeclasser(item.oeuvreId)}
+                    onRetirer={() => onDeclasser(item.oeuvreId)}
                   />
                 ))}
               </div>

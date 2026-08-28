@@ -168,7 +168,13 @@ traversait pas. C'est la source qui OUVRE sur le récent : les crédits
 arrivent avec la collecte, sans attendre ni notes ni membres. Une série de
 2025 sans empreinte mesurée ni citation (« Le Catalogue d'Amina ») était
 invisible des quatre autres sources ; par ses acteurs, elle mène à ses
-consœurs de 2022-2026. Le signal sature avec le nombre de personnes
+consœurs de 2022-2026. La source s'est resserrée après usage : elle traversait tous les rôles, et
+les réalisateurs d'ÉPISODES des comédies NBC reliaient Brooklyn Nine-Nine à
+toutes leurs consœurs de plateau — une liste molle. La règle : un acteur ne
+compte que dans les TROIS premiers du générique, au départ comme à
+l'arrivée (`r.ordre < 3` — pas de figurant, et on ne mène pas à un
+figurant) ; les créateurs comptent toujours ; les réalisateurs d'épisodes ne
+comptent plus. Le signal sature avec le nombre de personnes
 partagées (une seule est faible — un second rôle prolifique relie tout à
 tout ; sept est un quasi-jumelage d'équipe), les noms partent dans
 l'explication (« Avec Melissa Fumero »), et la source compte comme du

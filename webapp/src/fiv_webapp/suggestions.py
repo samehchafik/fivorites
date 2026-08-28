@@ -54,7 +54,6 @@ import psycopg
 from fiv_webapp.cartes import Cartes
 from fiv_webapp.fiche import KIND_TMDB, PAYS_DE_LANGUE, SOURCE
 from fiv_webapp.graphe import Graphe
-from fiv_webapp.personnes import ROLES as ROLES_PERSONNES
 from fiv_webapp.recherche import Recherche
 from fiv_webapp.univers import Univers
 
@@ -321,17 +320,31 @@ ORDER BY score DESC, node.votes DESC
 LIMIT $limite
 """
 
-# Ce que les gens des graines ont fait d'autre. `count(DISTINCT p)` :
-# c'est le NOMBRE de personnes partagées qui fait le signal, pas leur
-# célébrité — et les noms partent pour l'explication. Départage par les
-# votes : entre deux œuvres d'un même acteur, la plus connue est la
-# suggestion la plus sûre.
+# Ce que les gens des graines ont fait d'autre — TÊTES D'AFFICHE et
+# CRÉATEURS seulement, des deux côtés.
+#
+# La première version traversait tous les rôles, et rendait une liste molle,
+# constatée à l'usage : les réalisateurs d'ÉPISODES des comédies NBC
+# (Tristram Shapeero, Linda Mendoza…) reliaient Brooklyn Nine-Nine à toutes
+# leurs consœurs de plateau — Kimmy Schmidt, Community, Suits — et
+# écrasaient le reste. La règle demandée, et mesurée meilleure : un acteur ne
+# compte que dans les TROIS premiers du générique (`r.ordre < 3`), au départ
+# comme à l'arrivée — pas de figurant, et on ne mène pas à un figurant. Les
+# créateurs (FIV_A_CREE) comptent toujours : ils signent l'œuvre, ils sont
+# deux ou trois au plus. Les réalisateurs d'épisodes ne comptent plus.
+#
+# Sur la liste réelle de sept graines : Game of Thrones entre par Benioff &
+# Weiss (créateurs du Problème à 3 corps), Arcane par Kevin Alejandro
+# (Lucifer), The Terror par Alexander Woo — et les comédies de plateau
+# disparaissent.
 _CY_GENS = """
 MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $graines
 MATCH (p:FivPersonne)-[r1]->(s)
-WHERE type(r1) IN $roles
+WHERE (type(r1) = 'FIV_JOUE_DANS' AND coalesce(r1.ordre, 99) < 3)
+   OR type(r1) = 'FIV_A_CREE'
 MATCH (p)-[r2]->(reco:FivOeuvre)
-WHERE type(r2) IN $roles
+WHERE ((type(r2) = 'FIV_JOUE_DANS' AND coalesce(r2.ordre, 99) < 3)
+    OR type(r2) = 'FIV_A_CREE')
   AND reco.univers = $univers AND NOT reco.oeuvreId IN $exclues
 WITH reco, count(DISTINCT p) AS gens, collect(DISTINCT p.nom) AS noms
 RETURN reco.oeuvreId AS oeuvreId, reco.idTmdb AS idTmdb, reco.titre AS titre,
@@ -989,7 +1002,6 @@ class SourceGens:
         lignes = await self._graphe.executer(
             _CY_GENS,
             graines=[graine.oeuvre_id for graine in graines],
-            roles=list(ROLES_PERSONNES),
             univers=univers.interne,
             exclues=exclues,
             limite=CANDIDATS_PAR_SOURCE * ampleur,
