@@ -613,6 +613,40 @@ def _realisateur(membre: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+# --- L'homogénéisation des genres -------------------------------------------
+#
+# TMDB parle DEUX taxonomies : la TV a des genres composites (« Sci-Fi &
+# Fantasy », tmdb:10765) que le cinéma éclate (tmdb:878 + tmdb:14). Mesuré
+# sur la production : tmdb:10765 reliait 9 283 séries et ZÉRO film — aimer
+# des séries de science-fiction n'ouvrait sur aucun film du genre, et le
+# moteur de suggestions ne croisait les univers que par les personnes.
+#
+# Le graphe parle donc UN vocabulaire : à la projection, chaque genre
+# composite est traduit en ses genres canoniques — ceux du cinéma, la
+# taxonomie la plus fine. Les genres purement télévisuels (Reality, Talk,
+# Soap…) restent eux-mêmes : ils n'ont pas d'équivalent cinéma et n'ont pas
+# à en avoir. Les libellés sont ceux des nœuds film existants.
+GENRES_CANONIQUES = {
+    "tmdb:10765": (("tmdb:878", "Science-Fiction"), ("tmdb:14", "Fantastique")),
+    "tmdb:10759": (("tmdb:28", "Action"), ("tmdb:12", "Aventure")),
+    "tmdb:10768": (("tmdb:10752", "Guerre"),),
+}
+
+
+def canoniser_genres(genres: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Les genres d'une œuvre, traduits vers le vocabulaire canonique."""
+    retenus: dict[str, dict[str, Any]] = {}
+    for genre in genres:
+        cle = genre.get("cle")
+        eclates = GENRES_CANONIQUES.get(cle)
+        if eclates is None:
+            retenus.setdefault(cle, genre)
+        else:
+            for cle_canonique, nom in eclates:
+                retenus.setdefault(cle_canonique, {"cle": cle_canonique, "nom": nom})
+    return list(retenus.values())
+
+
 def construire_oeuvre(row: dict[str, Any], univers: str) -> dict[str, Any]:
     """Une ligne d'extraction → le paramètre d'un lot de projection.
 
@@ -676,7 +710,7 @@ def construire_oeuvre(row: dict[str, Any], univers: str) -> dict[str, Any]:
             # affirmerait une provenance pour un vecteur qui n'existe pas.
             "empreinteBareme": row.get("bareme") if empreinte else None,
         },
-        "genres": list(row.get("genres") or []),
+        "genres": canoniser_genres(list(row.get("genres") or [])),
         "distribution": distribution,
         "realisation": realisation[:REALISATEURS_MAX],
         "creation": creation,

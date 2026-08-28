@@ -165,12 +165,14 @@ class FauxGraphe:
         profil_proches: list[dict[str, Any]] | None = None,
         gens: list[dict[str, Any]] | None = None,
         genres: list[dict[str, Any]] | None = None,
+        genres_graines: list[dict[str, Any]] | None = None,
         membres: int = 1000,
     ) -> None:
         self._citations = citations or []
         self._proches = proches or []
         self._gens = gens or []
         self._genres = genres or []
+        self._genres_graines = genres_graines or []
         self._empreintes = empreintes or {}
         self._profil_proches = profil_proches or []
         self.membres = membres
@@ -190,8 +192,15 @@ class FauxGraphe:
         if "$profil" in cypher:
             self.profil_demande = parametres["profil"]
             return self._profil_proches
-        if "FivGenre" in cypher:
+        if "UNWIND $genres" in cypher:
             return self._genres
+        if "FivGenre" in cypher:
+            # Les genres des GRAINES : une graine « Drame » par défaut dès
+            # que des candidats sont préparés — la source s'arrête avant les
+            # candidats si les graines n'ont aucun genre.
+            return self._genres_graines or (
+                [{"cle": "tmdb:18", "nom": "Drame", "poids": 1}] if self._genres else []
+            )
         if "FivPersonne" in cypher:
             return self._gens
         if "UNWIND $graines" in cypher:
@@ -870,3 +879,19 @@ async def test_le_genre_corrobore_avec_la_communaute() -> None:
     candidat.verser("genre", 0.3)
     candidat.verser("voisins", 0.3)
     assert candidat.corrobore
+
+
+def test_etendre_genres_traduit_les_taxonomies() -> None:
+    """« Science-Fiction & Fantastique » côté série DÉSIGNE la
+    Science-Fiction et le Fantastique côté film — et réciproquement : un
+    film d'Action doit trouver les séries « Action & Adventure »."""
+    from fiv_webapp.suggestions import etendre_genres
+
+    etendus = etendre_genres(
+        [{"cle": "tmdb:10765", "nom": "Science-Fiction & Fantastique", "poids": 2}]
+    )
+    assert {e["cle"] for e in etendus} == {"tmdb:10765", "tmdb:878", "tmdb:14"}
+    assert all(e["poids"] == 2 for e in etendus)
+
+    inverse = etendre_genres([{"cle": "tmdb:28", "nom": "Action", "poids": 1}])
+    assert {e["cle"] for e in inverse} == {"tmdb:28", "tmdb:10759"}

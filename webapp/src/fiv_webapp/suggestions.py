@@ -128,6 +128,19 @@ GENS_REPERE = 4
 # (0,55) et loin des gens (0,65), il colore la liste et la corroboration le
 # hisse quand un autre savoir le confirme.
 APPORT_GENRE = 0.32
+
+# Les taxonomies TMDB diffèrent entre séries et films : la TV a des genres
+# COMPOSITES (« Science-Fiction & Fantastique », tmdb:10765) que le cinéma
+# éclate (tmdb:878 + tmdb:14). Mesuré sur la production : tmdb:10765 porte
+# 9 283 séries et ZÉRO film — sans cette table, aimer des séries SF
+# n'ouvrait sur aucun film SF, seuls les génériques (Drame, Comédie)
+# croisaient, et les gens faisaient tout le travail inter-univers. La table
+# est BIDIRECTIONNELLE : chaque clé étend la recherche vers ses équivalentes.
+EQUIVALENCES_GENRES = {
+    "tmdb:10765": ("tmdb:878", "tmdb:14"),  # SF & Fantastique ↔ SF, Fantastique
+    "tmdb:10759": ("tmdb:28", "tmdb:12"),  # Action & Adventure ↔ Action, Aventure
+    "tmdb:10768": ("tmdb:10752",),  # War & Politics ↔ Guerre
+}
 GENRES_PARTAGES_MIN = 2
 GENRES_VOTES_MIN = 200
 # La saturation des liens : au-delà, « quatorze liens » ne dit pas plus —
@@ -415,19 +428,24 @@ ORDER BY gens DESC, importance DESC, reco.votes DESC
 LIMIT $limite
 """
 
-# Les genres des graines, pesés par leur récurrence (un genre porté par
-# trois de vos œuvres pèse trois), puis UNE expansion par genre distinct —
-# et non par paire (graine, genre) : les genres se recouvrent d'une graine à
-# l'autre, et chaque expansion d'un moyeu coûte cher.
-_CY_GENRES = """
+# Les genres des graines, pesés par leur récurrence — un genre porté par
+# trois de vos œuvres pèse trois. L'expansion vers les candidats se fait en
+# DEUX temps, avec la traduction des taxonomies entre les deux : les clés
+# des graines s'étendent à leurs équivalentes (séries ↔ films) avant de
+# chercher les candidats.
+_CY_GENRES_GRAINES = """
 MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $graines
 MATCH (s)-[:FIV_A_POUR_GENRE]->(g:FivGenre)
-WITH g, count(*) AS poids
-MATCH (g)<-[:FIV_A_POUR_GENRE]-(reco:FivOeuvre)
+RETURN g.cle AS cle, coalesce(g.nom, g.cle) AS nom, count(*) AS poids
+"""
+
+_CY_GENRES_CANDIDATS = """
+UNWIND $genres AS gg
+MATCH (g:FivGenre {cle: gg.cle})<-[:FIV_A_POUR_GENRE]-(reco:FivOeuvre)
 WHERE reco.univers = $univers AND NOT reco.oeuvreId IN $exclues
   AND coalesce(reco.votes, 0) >= $votes_min
-WITH reco, sum(poids) AS liens, count(*) AS genres,
-     collect(coalesce(g.nom, g.cle)) AS noms
+WITH reco, sum(gg.poids) AS liens, count(DISTINCT gg.cle) AS genres,
+     collect(DISTINCT coalesce(g.nom, gg.nom)) AS noms
 WHERE genres >= $minimum
 RETURN reco.oeuvreId AS oeuvreId, reco.idTmdb AS idTmdb, reco.titre AS titre,
        reco.annee AS annee, reco.affiche AS affiche, reco.univers AS univers,
@@ -435,6 +453,26 @@ RETURN reco.oeuvreId AS oeuvreId, reco.idTmdb AS idTmdb, reco.titre AS titre,
 ORDER BY liens DESC, genres DESC, reco.votes DESC
 LIMIT $limite
 """
+
+
+def etendre_genres(genres: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Les genres des graines, étendus à leurs équivalents de l'autre
+    taxonomie — même poids, même nom d'affichage : « Science-Fiction &
+    Fantastique » côté série DÉSIGNE la Science-Fiction côté film."""
+    etendus: dict[str, dict[str, Any]] = {}
+    for genre in genres:
+        cles = [genre["cle"], *EQUIVALENCES_GENRES.get(genre["cle"], ())]
+        # Et le sens inverse : une graine film (tmdb:878) doit trouver les
+        # séries du composite (tmdb:10765).
+        for composite, eclates in EQUIVALENCES_GENRES.items():
+            if genre["cle"] in eclates:
+                cles.append(composite)
+        for cle in cles:
+            connu = etendus.get(cle)
+            if connu is None or genre["poids"] > connu["poids"]:
+                etendus[cle] = {"cle": cle, "nom": genre["nom"], "poids": genre["poids"]}
+    return list(etendus.values())
+
 
 # Les empreintes d'une liste d'œuvres — la matière du profil. MESURÉES
 # seulement : un profil bâti sur des stéréotypes `interne` pointerait vers le
@@ -1137,9 +1175,14 @@ class SourceGenres:
         candidats: dict[int, Candidat],
         ampleur: int = 1,
     ) -> None:
+        semences = await self._graphe.executer(
+            _CY_GENRES_GRAINES, graines=[graine.oeuvre_id for graine in graines]
+        )
+        if not semences:
+            return
         lignes = await self._graphe.executer(
-            _CY_GENRES,
-            graines=[graine.oeuvre_id for graine in graines],
+            _CY_GENRES_CANDIDATS,
+            genres=etendre_genres(semences),
             univers=univers.interne,
             exclues=exclues,
             minimum=GENRES_PARTAGES_MIN,

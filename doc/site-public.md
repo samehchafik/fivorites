@@ -217,6 +217,23 @@ source de plus (1,5-1,9 s mesuré). Sur « Le Problème à 3 corps » seul :
 The Terror, Game of Thrones, Severance, Bodies, FROM — genres et gens
 mêlés.
 
+**Les genres parlent UN vocabulaire** *(28 août 2026 — « mes séries ne
+donnent rien en films : seuls les acteurs matchent »)*. Les taxonomies TMDB
+diffèrent : la TV a des genres composites (« Science-Fiction &
+Fantastique », tmdb:10765 — 9 283 séries, ZÉRO film) que le cinéma éclate
+(tmdb:878 + tmdb:14). Trois niveaux d'homogénéisation : la PROJECTION
+traduit les composites en genres canoniques (ceux du cinéma, la taxonomie
+la plus fine — `canoniser_genres`, les genres purement télévisuels comme
+Reality restent eux-mêmes) ; une PASSE a homogénéisé le graphe de
+production (les œuvres des composites reliées aux canoniques, les
+composites retirés) ; et le moteur garde une table d'équivalence en filet
+pour les graphes pas encore homogénéisés. État des connexions
+inter-univers : séries ↔ films par personnes, empreintes, communauté et
+désormais genres ; les LIVRES restent reliés par la communauté et
+l'empreinte seulement — leurs genres (P136) ne sont pas encore collectés
+(0/1058) et leurs auteurs vivent en clés wd: ; leur entrée dans le
+vocabulaire canonique se fera au rattrapage.
+
 **Et le correctif qui conditionne tout le reste, trouvé sur un cas réel**
 (« La Brea, Brooklyn Nine-Nine, Muertos S.L., Lucifer » rendait un mur de
 séries inconnues) : **98,5 % des empreintes du graphe ne sont pas des
