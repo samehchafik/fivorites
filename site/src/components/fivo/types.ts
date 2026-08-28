@@ -201,7 +201,7 @@ export interface Suggestion {
    *  œuvre, `profil` les axes du visiteur, `gens` les acteurs et
    *  réalisateurs du graphe, `affinite` les genres et les gens de l'index.
    *  Les sources n'ont pas la même force, et l'explication les distingue. */
-  source: 'voisins' | 'proche' | 'profil' | 'gens' | 'affinite'
+  source: 'voisins' | 'proche' | 'profil' | 'gens' | 'genre' | 'affinite'
   voisins: number | null
   force: number | null
   distance: number | null

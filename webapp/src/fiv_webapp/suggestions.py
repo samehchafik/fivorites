@@ -44,6 +44,7 @@ Tout ce qui a déjà été classé reste exclu, quel que soit le statut.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import math
 from dataclasses import dataclass, field
@@ -102,6 +103,36 @@ APPORT_GENS = 0.65
 # La saturation du signal : partager UNE personne est faible (un second rôle
 # prolifique relie tout à tout), en partager sept est un quasi-jumelage.
 GENS_REPERE = 4
+
+# --- Les genres, par le graphe ---------------------------------------------
+#
+# La cinquième relation demandée : une œuvre est reliée à ses genres
+# (`FIV_A_POUR_GENRE` → `FivGenre`), et le moteur ne la traversait pas — la
+# source « affinités », censée couvrir les genres, dépend d'Elasticsearch et
+# se tait tant que l'index n'est pas reconstruit. Celle-ci ne dépend que du
+# graphe, et sert donc AUSSI le récent.
+#
+# Ses garde-fous, parce que les genres sont des moyeux (« Drame » relie
+# 51 803 séries) :
+#
+# * DEUX genres partagés au moins — un seul genre, c'est le catalogue entier
+#   du genre ;
+# * un plancher de votes sur le candidat — sans lui, l'expansion des moyeux
+#   coûte des secondes et remonte du bruit sans public ;
+# * le classement par LIENS décroissants : le nombre de paires
+#   (graine, genre) satisfaites — une œuvre qui partage les genres de
+#   plusieurs de vos œuvres monte, comme demandé.
+# 0,32 et pas plus : au premier réglage (0,45), le genre OCCUPAIT la liste —
+# 24 suggestions sur 24 par lui seul. Partager des genres est le signal le
+# plus large ; il doit ouvrir la table, pas la tenir. Sous les affinités
+# (0,55) et loin des gens (0,65), il colore la liste et la corroboration le
+# hisse quand un autre savoir le confirme.
+APPORT_GENRE = 0.32
+GENRES_PARTAGES_MIN = 2
+GENRES_VOTES_MIN = 200
+# La saturation des liens : au-delà, « quatorze liens » ne dit pas plus —
+# et les grands comptes viennent des genres les plus généraux.
+GENRES_LIENS_REPERE = 10
 
 # Le plancher de la pondération par l'indice : un lien par des inconnus garde
 # le quart de sa force — les acteurs d'un cinéma local peu voté (indice 2-3)
@@ -384,6 +415,27 @@ ORDER BY gens DESC, importance DESC, reco.votes DESC
 LIMIT $limite
 """
 
+# Les genres des graines, pesés par leur récurrence (un genre porté par
+# trois de vos œuvres pèse trois), puis UNE expansion par genre distinct —
+# et non par paire (graine, genre) : les genres se recouvrent d'une graine à
+# l'autre, et chaque expansion d'un moyeu coûte cher.
+_CY_GENRES = """
+MATCH (s:FivOeuvre) WHERE s.oeuvreId IN $graines
+MATCH (s)-[:FIV_A_POUR_GENRE]->(g:FivGenre)
+WITH g, count(*) AS poids
+MATCH (g)<-[:FIV_A_POUR_GENRE]-(reco:FivOeuvre)
+WHERE reco.univers = $univers AND NOT reco.oeuvreId IN $exclues
+  AND coalesce(reco.votes, 0) >= $votes_min
+WITH reco, sum(poids) AS liens, count(*) AS genres,
+     collect(coalesce(g.nom, g.cle)) AS noms
+WHERE genres >= $minimum
+RETURN reco.oeuvreId AS oeuvreId, reco.idTmdb AS idTmdb, reco.titre AS titre,
+       reco.annee AS annee, reco.affiche AS affiche, reco.univers AS univers,
+       liens, genres, noms[..4] AS noms
+ORDER BY liens DESC, genres DESC, reco.votes DESC
+LIMIT $limite
+"""
+
 # Les empreintes d'une liste d'œuvres — la matière du profil. MESURÉES
 # seulement : un profil bâti sur des stéréotypes `interne` pointerait vers le
 # stéréotype, pas vers le goût.
@@ -638,6 +690,7 @@ class Candidat:
             self.apports.get("proche", 0.0)
             + self.apports.get("profil", 0.0)
             + self.apports.get("gens", 0.0)
+            + self.apports.get("genre", 0.0)
             + self.apports.get("affinite", 0.0)
         )
         return contenu > 0.0 and self.apports.get("voisins", 0.0) > 0.0
@@ -1063,6 +1116,51 @@ class SourceGens:
             candidat.verser("gens", APPORT_GENS * confiance * poids_gens)
 
 
+class SourceGenres:
+    """Ce qui partage les GENRES des graines, par le graphe.
+
+    Le signal le plus large — partager un genre n'est pas partager un goût —
+    mais celui qui a toujours de la matière, récent compris : une œuvre
+    collectée a ses genres dès le premier jour. Il pèse moins que les gens
+    et que l'empreinte, et il l'explique en nommant les genres partagés.
+    """
+
+    def __init__(self, graphe: Graphe) -> None:
+        self._graphe = graphe
+
+    async def verser(
+        self,
+        univers: Univers,
+        *,
+        graines: list[Graine],
+        exclues: list[int],
+        candidats: dict[int, Candidat],
+        ampleur: int = 1,
+    ) -> None:
+        lignes = await self._graphe.executer(
+            _CY_GENRES,
+            graines=[graine.oeuvre_id for graine in graines],
+            univers=univers.interne,
+            exclues=exclues,
+            minimum=GENRES_PARTAGES_MIN,
+            votes_min=GENRES_VOTES_MIN,
+            limite=CANDIDATS_PAR_SOURCE * ampleur,
+        )
+        for ligne in lignes:
+            oeuvre_id = ligne["oeuvreId"]
+            candidat = candidats.setdefault(oeuvre_id, Candidat(oeuvre_id=oeuvre_id))
+            candidat.id_tmdb = candidat.id_tmdb or ligne.get("idTmdb")
+            candidat.titre = candidat.titre or ligne.get("titre")
+            candidat.annee = candidat.annee if candidat.annee is not None else ligne.get("annee")
+            candidat.affiche = candidat.affiche or ligne.get("affiche")
+            candidat.univers_interne = ligne.get("univers") or univers.interne
+            # Les genres partagés, nommés : c'est l'explication.
+            candidat.communs = candidat.communs or [nom for nom in ligne.get("noms") or [] if nom]
+            liens = int(ligne["liens"])
+            confiance = min(1.0, math.log(1 + liens) / math.log(1 + GENRES_LIENS_REPERE))
+            candidat.verser("genre", APPORT_GENRE * confiance)
+
+
 class SourceCommunaute:
     """Les membres qui citent les graines, et ce qu'ils citent d'autre.
 
@@ -1243,26 +1341,32 @@ class Moteur:
 
         candidats: dict[int, Candidat] = {}
         if self._graphe is not None:
-            empreinte = SourceEmpreinte(self._graphe)
-            await empreinte.verser(
-                univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
-            )
-            profil = SourceProfil(self._graphe)
-            await profil.verser(
-                univers,
-                graines=graines,
-                rejets=pivots_par_statut.get("aime_pas", []),
-                exclues=exclues,
-                candidats=candidats,
-                ampleur=ampleur,
-            )
-            gens = SourceGens(self._graphe)
-            await gens.verser(
-                univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
-            )
-            communaute = SourceCommunaute(self._graphe)
-            await communaute.verser(
-                univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
+            # Les cinq sources du graphe courent EN PARALLÈLE : chacune est
+            # une requête indépendante, et les attendre l'une après l'autre
+            # additionnait leurs latences. Elles versent dans le même
+            # dictionnaire — sans risque : l'événementiel n'entrelace qu'aux
+            # `await`, et chaque versement est synchrone.
+            await asyncio.gather(
+                SourceEmpreinte(self._graphe).verser(
+                    univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
+                ),
+                SourceProfil(self._graphe).verser(
+                    univers,
+                    graines=graines,
+                    rejets=pivots_par_statut.get("aime_pas", []),
+                    exclues=exclues,
+                    candidats=candidats,
+                    ampleur=ampleur,
+                ),
+                SourceGens(self._graphe).verser(
+                    univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
+                ),
+                SourceGenres(self._graphe).verser(
+                    univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
+                ),
+                SourceCommunaute(self._graphe).verser(
+                    univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur
+                ),
             )
         await self._affinites.verser(
             conn, univers, graines=graines, exclues=exclues, candidats=candidats, ampleur=ampleur

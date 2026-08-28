@@ -164,11 +164,13 @@ class FauxGraphe:
         empreintes: dict[int, list[float]] | None = None,
         profil_proches: list[dict[str, Any]] | None = None,
         gens: list[dict[str, Any]] | None = None,
+        genres: list[dict[str, Any]] | None = None,
         membres: int = 1000,
     ) -> None:
         self._citations = citations or []
         self._proches = proches or []
         self._gens = gens or []
+        self._genres = genres or []
         self._empreintes = empreintes or {}
         self._profil_proches = profil_proches or []
         self.membres = membres
@@ -188,6 +190,8 @@ class FauxGraphe:
         if "$profil" in cypher:
             self.profil_demande = parametres["profil"]
             return self._profil_proches
+        if "FivGenre" in cypher:
+            return self._genres
         if "FivPersonne" in cypher:
             return self._gens
         if "UNWIND $graines" in cypher:
@@ -827,3 +831,42 @@ async def test_les_gens_pesent_par_leur_indice() -> None:
     # Les proportions suivent la formule : plancher + pente × indice/10.
     attendu = (PLANCHER_IMPORTANCE + (1 - PLANCHER_IMPORTANCE) * 0.1) / 1.0
     assert par_id[2002] / par_id[2001] == pytest.approx(attendu, abs=0.01)
+
+
+async def test_les_genres_ouvrent_aussi() -> None:
+    """La relation genre du graphe entre enfin dans le moteur : une œuvre qui
+    partage les genres de plusieurs graines est candidate, expliquée par les
+    genres nommés — et sans dépendre d'Elasticsearch."""
+    graphe = FauxGraphe(
+        genres=[
+            {
+                "oeuvreId": 2001,
+                "idTmdb": 1001,
+                "titre": "Œuvre 2001",
+                "annee": ANNEE_COURANTE,
+                "affiche": None,
+                "univers": "series",
+                "liens": 8,
+                "genres": 3,
+                "noms": ["Mystère", "Science-Fiction & Fantastique", "Drame"],
+            }
+        ]
+    )
+    retenues, _ = await lancer(graphe)
+    assert [s.oeuvre_id for s in retenues] == [2001]
+    assert retenues[0].source == "genre"
+    assert retenues[0].communs[:2] == ["Mystère", "Science-Fiction & Fantastique"]
+    import math
+
+    from fiv_webapp.suggestions import APPORT_GENRE, GENRES_LIENS_REPERE
+
+    # L'apport suit la saturation en log des liens.
+    attendu = APPORT_GENRE * min(1.0, math.log(1 + 8) / math.log(1 + GENRES_LIENS_REPERE))
+    assert retenues[0].score == pytest.approx(attendu, abs=0.01)
+
+
+async def test_le_genre_corrobore_avec_la_communaute() -> None:
+    candidat = Candidat(oeuvre_id=1, annee=ANNEE_COURANTE)
+    candidat.verser("genre", 0.3)
+    candidat.verser("voisins", 0.3)
+    assert candidat.corrobore

@@ -197,6 +197,22 @@ CONTENU pour la corroboration. Mesuré sur les quatre graines réelles : The
 Good Place (7 personnes en commun, corroborée par la communauté), Parks and
 Recreation, Machos alfa — par le créateur de Muertos S.L.
 
+**La sixième source : les genres, par le graphe** *(28 août 2026 — « il
+faut qu'il ouvre sur toutes les relations », et les relations étaient bien
+en place : `FIV_A_POUR_GENRE` → `FivGenre`, jamais traversées ; la source
+« affinités » censée couvrir les genres dépend d'Elasticsearch, muet
+jusqu'au reindex)*. Une œuvre qui partage les genres de plusieurs graines
+est candidate, classée par LIENS décroissants — le nombre de paires
+(graine, genre) satisfaites — expliquée en nommant les genres. Trois
+garde-fous, les genres étant des moyeux (« Drame » relie 51 803 séries) :
+deux genres partagés minimum, un plancher de 200 votes, et un apport
+tempéré (0,32 — au premier réglage, 0,45, la source occupait 24 places sur
+24 : le genre ouvre la table, il ne la tient pas). Et les six sources du
+graphe courent désormais EN PARALLÈLE : le moteur est plus rapide avec la
+source de plus (1,5-1,9 s mesuré). Sur « Le Problème à 3 corps » seul :
+The Terror, Game of Thrones, Severance, Bodies, FROM — genres et gens
+mêlés.
+
 **Et le correctif qui conditionne tout le reste, trouvé sur un cas réel**
 (« La Brea, Brooklyn Nine-Nine, Muertos S.L., Lucifer » rendait un mur de
 séries inconnues) : **98,5 % des empreintes du graphe ne sont pas des
