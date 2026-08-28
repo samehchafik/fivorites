@@ -30,7 +30,8 @@ from fiv_webapp.deps import (
     SignauxDep,
     UniversDep,
 )
-from fiv_webapp.suggestions import Moteur
+from fiv_webapp.recherche import langue_servie
+from fiv_webapp.suggestions import SUGGESTIONS_MAX, Moteur
 
 router = APIRouter()
 
@@ -54,13 +55,31 @@ async def suggestions(
     # La langue : elle décide du PAYS dont on lit la disponibilité — être
     # « sur Netflix » n'a de sens que quelque part.
     langue: Annotated[str | None, Query(max_length=10)] = None,
+    # La page — le vivier classé se parcourt, une fenêtre à la fois.
+    page: Annotated[int, Query(ge=1, le=20)] = 1,
 ) -> dict[str, Any]:
     if session_id is None:
-        return {"items": [], "raison": "aucune_session", "graine": 0}
+        return {
+            "items": [],
+            "raison": "aucune_session",
+            "graine": 0,
+            "total": 0,
+            "encore": False,
+            "page": page,
+        }
 
     pivots = await signaux.pivots(conn, session_id)
     moteur = Moteur(recherche, cartes, graphe)
-    retenues, raison = await moteur.pour(conn, univers, pivots_par_statut=pivots, sans_genres=sans)
+    depuis = (page - 1) * SUGGESTIONS_MAX
+    retenues, raison, total = await moteur.pour(
+        conn,
+        univers,
+        pivots_par_statut=pivots,
+        depuis=depuis,
+        sans_genres=sans,
+        sur_plateformes=sur,
+        langue=langue_servie(langue),
+    )
     return {
         "items": [suggestion.publique(univers.slug) for suggestion in retenues],
         "raison": raison,
@@ -68,4 +87,7 @@ async def suggestions(
         # c'est ce que le moteur a eu pour travailler, et ce que le front dit
         # au visiteur quand la liste est courte.
         "graine": len(moteur.graines(pivots)),
+        "total": total,
+        "encore": depuis + len(retenues) < total,
+        "page": page,
     }

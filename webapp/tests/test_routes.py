@@ -29,6 +29,7 @@ from fiv_webapp.deps import (
     obtenir_fiches,
     obtenir_recherche,
     obtenir_signaux,
+    session_optionnelle,
 )
 from fiv_webapp.fiche import Fiche
 from fiv_webapp.recherche import Facette, PageIds
@@ -194,14 +195,6 @@ class TestFiche:
         assert reponse.status_code == 400
 
 
-class TestSuggestions:
-    def test_sans_session(self, client: TestClient) -> None:
-        """Pas de cookie : une liste vide et sa raison, jamais une erreur."""
-        reponse = client.get("/api/public/suggestions", params={"univers": "series"})
-        assert reponse.status_code == 200
-        assert reponse.json()["raison"] == "aucune_session"
-
-
 class TestSante:
     def test_health(self, client: TestClient) -> None:
         assert client.get("/api/public/health").json() == {"status": "ok"}
@@ -224,3 +217,37 @@ class TestMaListe:
 
     def test_statut_inconnu_refuse(self, client: TestClient) -> None:
         assert client.get("/api/public/signaux?statut=peut-etre").status_code == 400
+
+
+class TestSuggestions:
+    """La route /suggestions — le CONTRAT entre la route et le moteur.
+
+    Ces tests existent à cause d'un 500 en production : le moteur s'était mis
+    à rendre trois valeurs, la route en dépaquetait deux — et rien ne
+    l'attrapait, parce que les tests du moteur l'appellent en direct et
+    qu'aucun test n'appelait la route. Le dépaquetage est un contrat, et un
+    contrat se teste là où il se noue.
+    """
+
+    def test_sans_session_la_reponse_est_complete(self, client: TestClient) -> None:
+        reponse = client.get("/api/public/suggestions?univers=series")
+        assert reponse.status_code == 200
+        corps = reponse.json()
+        assert corps["raison"] == "aucune_session"
+        assert corps["total"] == 0 and corps["encore"] is False and corps["page"] == 1
+
+    def test_avec_session_la_route_depaquette_le_moteur(self, client: TestClient) -> None:
+        """Le chemin qui a cassé : session valide → la route appelle le moteur
+        réel et dépaquette sa réponse. Graines vides → aucun_aime, mais le
+        DÉPAQUETAGE est exercé — c'est lui qui a rendu un 500."""
+        client.app.dependency_overrides[session_optionnelle] = lambda: "session-de-test"
+        try:
+            reponse = client.get(
+                "/api/public/suggestions?univers=series&sans=Animation&sur=Netflix&langue=fr&page=2"
+            )
+            assert reponse.status_code == 200
+            corps = reponse.json()
+            assert corps["raison"] == "aucun_aime"
+            assert corps["page"] == 2
+        finally:
+            client.app.dependency_overrides.pop(session_optionnelle, None)
