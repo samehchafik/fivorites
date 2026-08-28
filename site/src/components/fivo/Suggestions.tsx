@@ -87,6 +87,12 @@ function acces(suggestion: Suggestion, sur: string[], t: Textes): string | undef
   return morceaux.join(' — ') || undefined
 }
 
+// La notoriété communautaire, ajoutée à l'explication quand elle est
+// substantielle : « …Fantastique, Science-Fiction — dans les fives de
+// 13 777 membres ». Un fait, pas un score — et il répond à la question
+// qu'on se pose devant une carte : « les autres l'aiment aussi ? »
+const CITES_MONTRABLES = 50
+
 function expliquer(suggestion: Suggestion, t: Textes): string {
   const voisins = suggestion.voisins ?? 0
   if (suggestion.corrobore) {
@@ -128,6 +134,16 @@ function expliquer(suggestion: Suggestion, t: Textes): string {
     return t.dit('raison.communs', { communs: suggestion.communs.slice(0, 3).join(', ') })
   }
   return t.dit('raison.defaut')
+}
+
+function expliquerAvecCites(suggestion: Suggestion, t: Textes): string {
+  const base = expliquer(suggestion, t)
+  // Pas de doublon quand la communauté est déjà LA raison affichée.
+  if (suggestion.source === 'voisins' || suggestion.corrobore) return base
+  if ((suggestion.cites ?? 0) >= CITES_MONTRABLES) {
+    return base + t.dit('raison.cites', { nombre: t.nombre(suggestion.cites!) })
+  }
+  return base
 }
 
 export function Suggestions({
@@ -450,7 +466,7 @@ export function Suggestions({
               masques={masques}
               sur={surPlateformes}
               type={t.dit(`type.${univers}`)}
-              explication={(suggestion) => expliquer(suggestion, t)}
+              explication={(suggestion) => expliquerAvecCites(suggestion, t)}
               acces={(suggestion) => acces(suggestion, surPlateformes, t)}
               onClasser={(oeuvreId, statut) => {
                 // Le geste de la pile est absorbé : il ne doit pas rejouer la
@@ -481,7 +497,7 @@ export function Suggestions({
                   annee={suggestion.annee}
                   type={t.dit(`type.${univers}`)}
                   affiche={suggestion.affiche}
-                  explication={expliquer(suggestion, t)}
+                  explication={expliquerAvecCites(suggestion, t)}
                   acces={acces(suggestion, surPlateformes, t)}
                   fort={suggestion.corrobore}
                   statutActuel={statuts[suggestion.oeuvreId] ?? null}

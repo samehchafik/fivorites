@@ -192,6 +192,9 @@ class FauxGraphe:
         if "$profil" in cypher:
             self.profil_demande = parametres["profil"]
             return self._profil_proches
+        if "AS cites" in cypher:
+            # La notoriété communautaire des candidats : néant par défaut.
+            return []
         if "UNWIND $genres" in cypher:
             return self._genres
         if "FivGenre" in cypher:

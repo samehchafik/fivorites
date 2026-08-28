@@ -211,6 +211,10 @@ export interface Suggestion {
   /** Combien de vos œuvres classées cette suggestion avoisine : au-delà de
    *  une, c'est l'œuvre vers laquelle votre profil converge. */
   convergences: number | null
+  /** Combien de MEMBRES ont l'œuvre dans leurs fives — une information de
+   *  carte (« 13 777 membres »), jamais un score : la popularité brute ne
+   *  classe pas, elle rassure. */
+  cites: number | null
   /** Les gens partagés avec vos œuvres — combien, et qui : « Avec Melissa
    *  Fumero » vaut mieux qu'un score. */
   gens: number | null

@@ -329,6 +329,12 @@ export const TEXTES = {
     es: 'Afinar las sugerencias por género',
     ar: 'تحسين الاقتراحات حسب التصنيف',
   },
+  'raison.cites': {
+    fr: ' — dans les fives de {nombre} membres',
+    en: ' — in {nombre} members’ five favourites',
+    es: ' — en los cinco favoritos de {nombre} miembros',
+    ar: ' — في قوائم {nombre} من الأعضاء',
+  },
   'raison.defaut': {
     fr: 'Proche de ce que vous avez aimé',
     en: 'Close to what you loved',

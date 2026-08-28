@@ -474,6 +474,17 @@ def etendre_genres(genres: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(etendus.values())
 
 
+# La notoriété communautaire des candidats de tête : combien de membres ont
+# l'œuvre dans leurs fives, TOUT COURT. Un décompte de degré, pas une
+# traversée — et une INFORMATION, jamais un score : compter la popularité
+# brute au classement est le bug historique (« Grey's Anatomy première sur
+# une graine Lucifer »). La carte, elle, a le droit de dire « 13 777
+# membres l'ont dans leurs fives » — c'est un fait, et il rassure.
+_CY_CITES = """
+MATCH (o:FivOeuvre) WHERE o.oeuvreId IN $pivots
+RETURN o.oeuvreId AS oeuvreId, count { (o)<-[:FIV_CITE]-() } AS cites
+"""
+
 # Les empreintes d'une liste d'œuvres — la matière du profil. MESURÉES
 # seulement : un profil bâti sur des stéréotypes `interne` pointerait vers le
 # stéréotype, pas vers le goût.
@@ -693,6 +704,9 @@ class Candidat:
     # Combien de fois plus souvent les voisins citent cette œuvre que la base
     # entière. C'est ce qui distingue un signal d'une popularité.
     surrepresentation: float | None = None
+    # Combien de membres ont l'œuvre dans leurs fives — une information de
+    # carte, jamais un score.
+    cites: int | None = None
     # Les gens partagés avec les graines — combien, et qui : l'explication
     # « Avec Melissa Fumero » vaut mieux qu'un score.
     gens: int | None = None
@@ -788,6 +802,7 @@ class Suggestion:
     communs: list[str] = field(default_factory=list)
     surrepresentation: float | None = None
     convergences: int | None = None
+    cites: int | None = None
     gens: int | None = None
     avec: list[str] = field(default_factory=list)
     genres: list[str] = field(default_factory=list)
@@ -819,6 +834,7 @@ class Suggestion:
             communs=candidat.communs,
             surrepresentation=candidat.surrepresentation,
             convergences=candidat.convergences,
+            cites=candidat.cites,
             gens=candidat.gens,
             avec=candidat.avec,
             genres=candidat.genres,
@@ -842,6 +858,7 @@ class Suggestion:
             "communs": self.communs,
             "surrepresentation": self.surrepresentation,
             "convergences": self.convergences,
+            "cites": self.cites,
             "gens": self.gens,
             "avec": self.avec,
             "genres": self.genres,
@@ -1440,6 +1457,17 @@ class Moteur:
         # Les plateformes, pour les univers qui en ont (un livre ne se
         # regarde pas sur Netflix) : attachées à tous les candidats de tête —
         # le front en fait ses puces — et filtre quand on en a choisi.
+        if self._graphe is not None and tete:
+            lignes_cites = await self._graphe.executer(
+                _CY_CITES, pivots=[candidat.oeuvre_id for candidat in tete]
+            )
+            cites_par_pivot = {
+                ligne["oeuvreId"]: int(ligne["cites"])
+                for ligne in lignes_cites
+                if ligne.get("cites") is not None
+            }
+            for candidat in tete:
+                candidat.cites = cites_par_pivot.get(candidat.oeuvre_id)
         if univers.dimension("plateformes") is not None:
             trouvees = await self._plateformes_de(conn, univers, tete, langue=langue)
             for candidat in tete:
