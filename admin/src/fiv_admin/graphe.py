@@ -458,6 +458,38 @@ _EXTRACTION = sql.SQL(
 )
 
 
+# --- L'indice des personnes -------------------------------------------------
+#
+# Un entier de 0 à 10 posé sur chaque `FivPersonne` : ce que la personne pèse
+# dans le catalogue. La somme, sur ses œuvres, de la popularité de l'œuvre
+# (log des votes) pondérée par la place — tête d'affiche pleine, rang du
+# générique décroissant (1/(1+ordre)), réalisation presque pleine, création
+# pleine — puis une échelle log calée sur la production : Leonardo DiCaprio
+# vaut 10, Christopher Nolan 9, un second rôle établi 5-6, un acteur local 3,
+# un figurant 0. Deux usages : pondérer la source « gens » du site public, et
+# départager les homonymes — le vrai Christopher Nolan vaut 9, ses deux
+# homonymes 0 et 1.
+#
+# À relancer après une projection : les personnes nouvelles n'ont pas
+# d'indice, et `MERGE` ne recalcule rien.
+INDICE_PERSONNES_CYPHER = """
+MATCH (p:FivPersonne)
+CALL (p) {
+  MATCH (p)-[r]->(o:FivOeuvre)
+  WITH CASE type(r)
+         WHEN 'FIV_JOUE_DANS' THEN 1.0 / (1 + coalesce(r.ordre, 10))
+         WHEN 'FIV_A_REALISE' THEN 0.9
+         ELSE 1.0
+       END AS poids,
+       log10(1 + coalesce(o.votes, 0)) AS pop
+  WITH sum(poids * pop) AS brut
+  SET p.indice = toInteger(round(
+      CASE WHEN brut <= 0 THEN 0
+           ELSE 10.0 * log10(1 + brut) / log10(121.0) END))
+} IN TRANSACTIONS OF 20000 ROWS
+"""
+
+
 def requete_extraction(media: Media) -> sql.Composed:
     """La requête d'extraction d'un univers, prête à exécuter."""
     # Import local : `catalog` pourrait un jour importer ce module, et le

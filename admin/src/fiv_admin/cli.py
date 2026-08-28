@@ -1533,6 +1533,29 @@ def graphe_projeter(
     _run(run())
 
 
+@graphe_app.command("indices")
+def graphe_indices() -> None:
+    """Recalcule l'indice 0-10 de chaque personne du graphe.
+
+    À lancer après `graphe projeter` : les personnes nouvellement projetées
+    n'ont pas d'indice. Une seule requête par lots, quelques minutes sur le
+    catalogue entier.
+    """
+    import time
+
+    from fiv_admin.graphe import INDICE_PERSONNES_CYPHER
+
+    async def run() -> None:
+        graphe = _graphe_ou_sortir()
+        async with graphe:
+            typer.echo("calcul de l'indice des personnes…")
+            debut = time.monotonic()
+            await graphe.executer(INDICE_PERSONNES_CYPHER)
+            typer.echo(f"  fini ({time.monotonic() - debut:.0f} s)")
+
+    _run(run())
+
+
 @graphe_app.command("projeter-membres")
 def graphe_projeter_membres(
     lot: Annotated[int, typer.Option("--lot", min=50, max=5000, help="Membres par envoi.")] = 500,

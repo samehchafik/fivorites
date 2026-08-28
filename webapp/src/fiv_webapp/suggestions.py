@@ -103,6 +103,12 @@ APPORT_GENS = 0.65
 # prolifique relie tout à tout), en partager sept est un quasi-jumelage.
 GENS_REPERE = 4
 
+# Le plancher de la pondération par l'indice : un lien par des inconnus garde
+# le quart de sa force — les acteurs d'un cinéma local peu voté (indice 2-3)
+# restent un vrai lien, ils pèsent simplement moins qu'une tête d'affiche
+# mondiale (indice 9-10, pleine force).
+PLANCHER_IMPORTANCE = 0.25
+
 # --- La convergence : les voisins que PLUSIEURS graines désignent ----------
 #
 # `verser()` garde le meilleur apport d'une source — deux graines vaguement
@@ -368,11 +374,13 @@ WHERE reco.univers = $univers AND NOT reco.oeuvreId IN $exclues
               coalesce(
                   [(a2:FivPersonne)-[j2:FIV_JOUE_DANS]->(reco) WHERE j2.ordre = 0
                    | j2.episodes][0], 999999)))))
-WITH reco, count(DISTINCT p) AS gens, collect(DISTINCT p.nom) AS noms
+WITH reco, p ORDER BY coalesce(p.indice, 0) DESC
+WITH reco, count(DISTINCT p) AS gens, collect(DISTINCT p.nom) AS noms,
+     avg(coalesce(p.indice, 0)) AS importance
 RETURN reco.oeuvreId AS oeuvreId, reco.idTmdb AS idTmdb, reco.titre AS titre,
        reco.annee AS annee, reco.affiche AS affiche, reco.univers AS univers,
-       gens, noms[..4] AS noms
-ORDER BY gens DESC, reco.votes DESC
+       gens, noms[..4] AS noms, importance
+ORDER BY gens DESC, importance DESC, reco.votes DESC
 LIMIT $limite
 """
 
@@ -1038,12 +1046,21 @@ class SourceGens:
             candidat.univers_interne = ligne.get("univers") or univers.interne
             gens = int(ligne["gens"])
             candidat.gens = max(candidat.gens or 0, gens)
+            # Les noms arrivent triés par indice décroissant : l'explication
+            # cite d'abord ceux qu'on connaît.
             candidat.avec = candidat.avec or [nom for nom in ligne.get("noms") or [] if nom]
             # Le signal sature : partager une personne est faible — un second
             # rôle prolifique relie tout à tout — en partager sept est un
             # quasi-jumelage d'équipe.
             confiance = min(1.0, math.log(1 + gens) / math.log(1 + GENS_REPERE))
-            candidat.verser("gens", APPORT_GENS * confiance)
+            # Et il se PONDÈRE par l'indice des personnes partagées (0-10,
+            # posé sur les nœuds par `fiv-admin graphe indices`) : un lien
+            # par Leonardo DiCaprio dit plus qu'un lien par un inconnu — sans
+            # jamais tomber à zéro, les acteurs d'un cinéma local peu voté
+            # restent un vrai lien (le cas « Amina »).
+            importance = float(ligne.get("importance") or 0.0)
+            poids_gens = PLANCHER_IMPORTANCE + (1.0 - PLANCHER_IMPORTANCE) * importance / 10.0
+            candidat.verser("gens", APPORT_GENS * confiance * poids_gens)
 
 
 class SourceCommunaute:

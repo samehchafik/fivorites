@@ -181,7 +181,15 @@ réalisateurs — cas Minkie Spiro sur le Problème à 3 corps, signalé) :
 l'indice d'importance par la PART, pas par le volume, qui aurait sélectionné
 les routiers (le plus prolifique de la base dirige 6 % de chaque comédie
 NBC) ; la part sélectionne les auteurs (Mike Flanagan, 10/10 sur Hill
-House). Le signal sature avec le nombre de personnes
+House). Chaque personne du graphe porte désormais un INDICE 0-10 (`p.indice`,
+recalculé par `fiv-admin graphe indices` — posé sur les 2,4 M de personnes
+le 28 août 2026, 96 s) : la somme, sur ses œuvres, de la popularité de
+l'œuvre pondérée par sa place au générique — DiCaprio 10, Nolan 9, un
+second rôle établi 5, un figurant 0 ; les homonymes se départagent enfin
+(le faux « Christopher Nolan » vaut 0). La source des gens pondère chaque
+lien par cet indice (plancher au quart : les acteurs d'un cinéma local
+restent un vrai lien) et cite les noms connus d'abord. Le signal sature
+avec le nombre de personnes
 partagées (une seule est faible — un second rôle prolifique relie tout à
 tout ; sept est un quasi-jumelage d'équipe), les noms partent dans
 l'explication (« Avec Melissa Fumero »), et la source compte comme du

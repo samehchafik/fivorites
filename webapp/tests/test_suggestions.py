@@ -720,7 +720,9 @@ async def test_la_location_seule_ne_fait_pas_matcher() -> None:
 # ---------------------------------------------------------------------------
 
 
-def par_les_gens(oeuvre_id: int, gens: int, noms: list[str]) -> dict[str, Any]:
+def par_les_gens(
+    oeuvre_id: int, gens: int, noms: list[str], importance: float = 10.0
+) -> dict[str, Any]:
     return {
         "oeuvreId": oeuvre_id,
         "idTmdb": oeuvre_id - 1000,
@@ -730,6 +732,7 @@ def par_les_gens(oeuvre_id: int, gens: int, noms: list[str]) -> dict[str, Any]:
         "univers": "series",
         "gens": gens,
         "noms": noms,
+        "importance": importance,
     }
 
 
@@ -804,3 +807,23 @@ async def test_la_pagination_decoupe_le_vivier() -> None:
         depuis=9,
     )
     assert apres == [] and raison3 is None
+
+
+async def test_les_gens_pesent_par_leur_indice() -> None:
+    """Un lien par une tête d'affiche mondiale (indice 10) pèse plus qu'un
+    lien par des inconnus (indice 1) — sans que ce dernier tombe à zéro :
+    les acteurs d'un cinéma local restent un vrai lien."""
+    graphe = FauxGraphe(
+        gens=[
+            par_les_gens(2001, 2, ["Star"], importance=10.0),
+            par_les_gens(2002, 2, ["Inconnu"], importance=1.0),
+        ]
+    )
+    retenues, _ = await lancer(graphe)
+    par_id = {s.oeuvre_id: s.score for s in retenues}
+    assert par_id[2001] > par_id[2002] > 0
+    from fiv_webapp.suggestions import PLANCHER_IMPORTANCE
+
+    # Les proportions suivent la formule : plancher + pente × indice/10.
+    attendu = (PLANCHER_IMPORTANCE + (1 - PLANCHER_IMPORTANCE) * 0.1) / 1.0
+    assert par_id[2002] / par_id[2001] == pytest.approx(attendu, abs=0.01)
