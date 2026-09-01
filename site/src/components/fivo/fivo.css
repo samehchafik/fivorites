@@ -2128,6 +2128,30 @@
   color: rgba(255, 255, 255, 0.9);
 }
 
+/* L'accueil anonyme : un seul bouton, bien en évidence. */
+.fives-accueil {
+  text-align: center;
+  padding: 1.2rem 0 0.6rem;
+}
+
+.fives-commencer {
+  margin-top: 0.6rem;
+  font-size: 1rem;
+  padding: 0.7rem 1.4rem;
+}
+
+/* La sortie du parcours anonyme : garder le five (= se connecter). */
+.fives-garder {
+  margin-top: 0.9rem;
+  text-align: center;
+}
+
+.fives-garder-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
 .fives-cases {
   list-style: none;
   margin: 0;
