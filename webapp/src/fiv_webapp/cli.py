@@ -75,10 +75,17 @@ def courriel_test(
         typer.echo("SMTP_HOST est vide : aucun courriel ne peut partir.")
         typer.echo("Le service écrirait le code au journal — démonstration :")
     code = generer_code()
-    _run(courriel.envoyer_code(adresse, "Test", code, "fr"))
-    if courriel.configure:
+    envoye = _run(courriel.envoyer_code(adresse, "Test", code, "fr"))
+    if envoye:
         typer.echo(f"envoyé à {adresse} (code de démonstration : {code})")
-        typer.echo("si rien n'arrive : vérifier le dossier spam, puis les identifiants SMTP.")
+        typer.echo("si rien n'arrive dans la boîte : vérifier le dossier spam.")
+    elif courriel.configure:
+        typer.echo("ÉCHEC — l'erreur exacte est au-dessus. Les causes classiques :")
+        typer.echo("  535 Authentication failed → SMTP_USER doit souvent être l'ADRESSE")
+        typer.echo("  complète (no-reply@domaine.fr), et SMTP_PASSWORD le mot de passe de")
+        typer.echo("  cette boîte. Gmail exige un « mot de passe d'application ».")
+        typer.echo("  Connexion refusée → SMTP_HOST/SMTP_PORT (587 = STARTTLS).")
+        raise typer.Exit(1)
 
 
 @app.command()

@@ -72,12 +72,14 @@ class Courriel:
     def configure(self) -> bool:
         return bool(self._hote)
 
-    async def envoyer_code(self, email: str, pseudo: str, code: str, langue: str = "fr") -> None:
+    async def envoyer_code(self, email: str, pseudo: str, code: str, langue: str = "fr") -> bool:
         """Envoie le code — ou l'écrit au journal quand rien n'est configuré.
 
         Ne lève jamais vers la route : un SMTP en panne ne doit pas rendre
         l'inscription impossible à diagnostiquer — l'erreur va au journal, et
-        « renvoyer le code » reste le geste de l'utilisateur.
+        « renvoyer le code » reste le geste de l'utilisateur. Le booléen
+        rendu dit si l'envoi a RÉELLEMENT eu lieu : la route l'ignore, la
+        commande de test s'en sert pour ne pas annoncer « envoyé » à tort.
         """
         langue = langue if langue in _SUJETS else "fr"
         if not self.configure:
@@ -87,7 +89,7 @@ class Courriel:
                 email,
                 code,
             )
-            return
+            return False
         message = EmailMessage()
         message["From"] = self._expediteur
         message["To"] = email
@@ -97,6 +99,8 @@ class Courriel:
             await asyncio.to_thread(self._expedier, message)
         except Exception:  # noqa: BLE001 — le journal dit tout, la route reste calme
             log.exception("envoi du code à %s impossible", email)
+            return False
+        return True
 
     def _expedier(self, message: EmailMessage) -> None:
         with smtplib.SMTP(self._hote, self._port, timeout=15) as smtp:
