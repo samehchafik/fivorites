@@ -71,7 +71,14 @@ def courriel_test(
         mot_de_passe=settings.smtp_password,
         expediteur=settings.smtp_from,
     )
-    if not courriel.configure:
+    if courriel.configure:
+        # L'hôte et l'utilisateur ne sont pas des secrets — le mot de passe, si :
+        # il n'apparaît JAMAIS, seule sa présence est constatée.
+        typer.echo(f"hôte : {settings.smtp_host}:{settings.smtp_port} (STARTTLS)")
+        typer.echo(f"utilisateur : {settings.smtp_user or '(aucun — pas de login)'}")
+        typer.echo(f"expéditeur : {settings.smtp_from or settings.smtp_user}")
+        typer.echo(f"mot de passe : {'renseigné' if settings.smtp_password else 'VIDE'}")
+    else:
         typer.echo("SMTP_HOST est vide : aucun courriel ne peut partir.")
         typer.echo("Le service écrirait le code au journal — démonstration :")
     code = generer_code()
@@ -81,6 +88,9 @@ def courriel_test(
         typer.echo("si rien n'arrive dans la boîte : vérifier le dossier spam.")
     elif courriel.configure:
         typer.echo("ÉCHEC — l'erreur exacte est au-dessus. Les causes classiques :")
+        if settings.smtp_user and "@" not in settings.smtp_user:
+            typer.echo(f"  ⚠ SMTP_USER=« {settings.smtp_user} » ne contient pas de @ —")
+            typer.echo("    la plupart des serveurs veulent l'adresse complète.")
         typer.echo("  535 Authentication failed → SMTP_USER doit souvent être l'ADRESSE")
         typer.echo("  complète (no-reply@domaine.fr), et SMTP_PASSWORD le mot de passe de")
         typer.echo("  cette boîte. Gmail exige un « mot de passe d'application ».")
