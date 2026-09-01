@@ -47,6 +47,40 @@ def db_migrate() -> None:
         typer.echo("rien à appliquer")
 
 
+@app.command("courriel-test")
+def courriel_test(
+    adresse: Annotated[str, typer.Argument(help="L'adresse qui doit recevoir le test.")],
+) -> None:
+    """Envoie un courriel de test par le MÊME chemin que le code d'inscription.
+
+    C'est le contrôle du SMTP configuré : si ce test arrive, les codes de
+    vérification arriveront. Sans SMTP_HOST, la commande le dit et montre ce
+    que le service ferait — écrire le code au journal.
+    """
+    import logging
+
+    from fiv_webapp.comptes import generer_code
+    from fiv_webapp.courriel import Courriel
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    settings = get_settings()
+    courriel = Courriel(
+        settings.smtp_host,
+        port=settings.smtp_port,
+        utilisateur=settings.smtp_user,
+        mot_de_passe=settings.smtp_password,
+        expediteur=settings.smtp_from,
+    )
+    if not courriel.configure:
+        typer.echo("SMTP_HOST est vide : aucun courriel ne peut partir.")
+        typer.echo("Le service écrirait le code au journal — démonstration :")
+    code = generer_code()
+    _run(courriel.envoyer_code(adresse, "Test", code, "fr"))
+    if courriel.configure:
+        typer.echo(f"envoyé à {adresse} (code de démonstration : {code})")
+        typer.echo("si rien n'arrive : vérifier le dossier spam, puis les identifiants SMTP.")
+
+
 @app.command()
 def serve(
     host: Annotated[str | None, typer.Option("--host")] = None,
