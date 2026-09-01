@@ -415,6 +415,38 @@ une ligne qui glisse, et un placeholder court — le long se coupait
 sur « un auteu », et les exemples ont déménagé dans le message d'accueil, où
 ils tiennent.
 
+## Les comptes et les fives
+
+*Ajouté le 31 août 2026.*
+
+Le site a ses comptes, et son geste fondateur : **les fives** — vos cinq
+meilleures œuvres par univers, cinq grandes cases numérotées, « accessible à
+presque un bébé » : toucher une case, chercher dans la case, toucher une
+œuvre. C'est tout.
+
+Le fil du compte, tel que la modale le déroule : ouvrir les fives sans
+compte répond 401 `connexion_requise` → la modale s'ouvre (connexion, ou
+inscription : pseudo, email, mot de passe, fille/garçon facultatif) → un
+code à six chiffres part par email (15 minutes, 5 essais) → le donner
+VÉRIFIE et CONNECTE dans le même geste → la modale se ferme et l'écran est
+resté exactement où on l'avait laissé — tout est dans la même page.
+
+Trois choix de fond :
+
+* **la session anonyme se rattache au compte** à la connexion (la colonne
+  prévue dès la migration 001) : tout ce qu'on avait classé avant de
+  s'inscrire devient sien, rien ne se perd ;
+* **poser un five pose aussi le signal « vu et aimé »** : les fives
+  nourrissent le moteur par le chemin que tout le reste emprunte déjà —
+  et un jour leur propre projection en FIV_CITE ranimera la communauté ;
+* **scrypt** pour les mots de passe (bibliothèque standard), réponses
+  d'échec indistinctes, codes comparés en temps constant.
+
+L'envoi d'email passe par SMTP (`SMTP_HOST`… dans `.env`, transmis par le
+compose) ; sans configuration, le code part dans les journaux du service —
+testable, pas ouvrable au public. La migration : `docker compose run --rm
+webapp db migrate` (002_comptes).
+
 ## Ce qui reste devant
 
 * **Le rattrapage des empreintes reste LE chantier du moteur.** L'index
@@ -432,6 +464,9 @@ ils tiennent.
   module — les suggestions se testent contre le serveur ou après `make -C
   admin bootstrap-neo4j` ; le moteur, lui, est couvert par des tests
   unitaires sur faux graphe.
+* **Projeter les fives des nouveaux comptes en FIV_CITE** : c'est le geste
+  qui ranimera la communauté — les fives de la V2 rejoignant celles de la
+  V1 dans le graphe, la source communautaire cessera d'être figée en 2019.
 * **Les comptes membres** : rattacher les sessions anonymes à `membre.*`
   (import V1), et l'app React « connectée » complète.
 * **BD et musiques** : entreront par `webapp/src/fiv_webapp/univers.py` et

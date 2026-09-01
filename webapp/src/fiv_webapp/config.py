@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     # http://localhost, vrai dès qu'il y a un TLS devant.
     cookie_secure: bool = False
 
+    # SMTP, pour le code de vérification d'email. Vide : le code part dans
+    # le journal du service — le poste de dev n'envoie pas de vrais mails,
+    # et une prod sans SMTP le dit à chaque tentative.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+
     host: str = "127.0.0.1"
     # 8183 : l'admin occupe 8182, et les deux services tournent côte à côte
     # sur le même poste comme sur le même serveur.

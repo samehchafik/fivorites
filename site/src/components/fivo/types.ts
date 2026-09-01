@@ -239,3 +239,23 @@ export interface Suggestion {
  *  onglets, `type.series` au singulier de la carte — les confondre donnerait
  *  « 1954 · Livres »). */
 export const UNIVERS: readonly UniversSlug[] = ['series', 'films', 'livres'] as const
+
+/** Le compte du visiteur, tel que `GET /compte` le rend. */
+export interface Compte {
+  id: string
+  pseudo: string
+  email: string
+  genre: string | null
+  verifie: boolean
+}
+
+/** Un five : une œuvre à un rang (1-5) d'un univers. */
+export interface Five {
+  rang: number
+  oeuvreId: number
+  /** La clé de vignette — nulle si la projection ne connaît pas l'œuvre. */
+  id: number | null
+  titre: string | null
+  affiche: string | null
+  annee: number | null
+}

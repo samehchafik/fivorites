@@ -14,7 +14,9 @@
 import { MantineProvider, Tabs, UnstyledButton } from '@mantine/core'
 import { useEffect, useState } from 'react'
 
-import { listerSignaux, poserSignal, retirerSignal } from './api'
+import { deconnecter, listerSignaux, obtenirCompte, poserSignal, retirerSignal } from './api'
+import { CompteModale } from './CompteModale'
+import { Fives } from './Fives'
 import { FicheModale } from './FicheModale'
 import { Loupe } from './Loupe'
 import { MaListe } from './MaListe'
@@ -31,15 +33,19 @@ import {
 } from './langue'
 import { FournisseurTextes } from './textes'
 import { textes } from '../../i18n/textes'
-import { UNIVERS, type Statut, type UniversSlug } from './types'
+import { UNIVERS, type Compte, type Statut, type UniversSlug } from './types'
 import { theme_fivo } from './theme'
 import '@mantine/core/styles.css'
 import './fivo.css'
 
-type Onglet = 'recherche' | 'suggestions' | 'liste'
+type Onglet = 'recherche' | 'suggestions' | 'fives' | 'liste'
 
-const ONGLETS: Array<{ cle: Onglet; titre: 'onglet.recherche' | 'onglet.suggestions' | 'onglet.liste' }> = [
+const ONGLETS: Array<{
+  cle: Onglet
+  titre: 'onglet.recherche' | 'onglet.suggestions' | 'fives.onglet' | 'onglet.liste'
+}> = [
   { cle: 'recherche', titre: 'onglet.recherche' },
+  { cle: 'fives', titre: 'fives.onglet' },
   { cle: 'suggestions', titre: 'onglet.suggestions' },
   { cle: 'liste', titre: 'onglet.liste' },
 ]
@@ -76,6 +82,17 @@ export default function FivoSuggest({
     photo: string | null
   } | null>(null)
   const [loupe, setLoupe] = useState<{ image: string; legende: string } | null>(null)
+  // Le compte connecté (null sans), et la modale qui permet de le devenir.
+  const [compte, setCompte] = useState<Compte | null>(null)
+  const [modaleCompte, setModaleCompte] = useState(false)
+
+  useEffect(() => {
+    obtenirCompte()
+      .then(({ compte: retenu }) => setCompte(retenu))
+      .catch(() => {
+        // Pas de session, API muette : on reste anonyme, les fives le diront.
+      })
+  }, [])
 
   useEffect(() => {
     listerSignaux()
@@ -250,6 +267,21 @@ export default function FivoSuggest({
             </div>
             <div
               role="tabpanel"
+              aria-label={t.dit('fives.onglet')}
+              hidden={onglet !== 'fives'}
+              className={onglet === 'fives' ? undefined : 'fivo-panneau-cache'}
+            >
+              <Fives
+                univers={univers}
+                langue={langue}
+                compte={compte}
+                actif={onglet === 'fives'}
+                onConnexionRequise={() => setModaleCompte(true)}
+                onOuvrir={ouvrir}
+              />
+            </div>
+            <div
+              role="tabpanel"
               aria-label={t.dit('onglet.suggestions')}
               hidden={onglet !== 'suggestions'}
               className={onglet === 'suggestions' ? undefined : 'fivo-panneau-cache'}
@@ -311,6 +343,19 @@ export default function FivoSuggest({
             ouvrir_ailleurs(identifiant, oeuvreId, universOeuvre)
           }}
           onAgrandir={agrandir}
+        />
+
+        <CompteModale
+          ouverte={modaleCompte}
+          langue={langue}
+          onFermer={() => setModaleCompte(false)}
+          onConnecte={(retenu) => {
+            // Connecté : la modale se ferme, et l'écran est resté où il
+            // était — les fives reprennent leur chargement toutes seules
+            // (le compte fait partie de leur contexte).
+            setCompte(retenu)
+            setModaleCompte(false)
+          }}
         />
 
         <Loupe

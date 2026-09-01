@@ -19,6 +19,8 @@ import psycopg
 from fastapi import Depends, HTTPException, Request, Response, status
 
 from fiv_webapp.cartes import Cartes
+from fiv_webapp.comptes import Compte, Comptes
+from fiv_webapp.courriel import Courriel
 from fiv_webapp.fiche import Fiches
 from fiv_webapp.graphe import Graphe
 from fiv_webapp.jeton import JetonSession
@@ -115,6 +117,32 @@ async def session_garantie(request: Request, response: Response, conn: Conn) -> 
 
 
 SessionOptionnelle = Annotated[str | None, Depends(session_optionnelle)]
+
+
+def obtenir_comptes(request: Request) -> Comptes:
+    return request.app.state.comptes
+
+
+def obtenir_courriel(request: Request) -> Courriel:
+    return request.app.state.courriel
+
+
+ComptesDep = Annotated[Comptes, Depends(obtenir_comptes)]
+CourrielDep = Annotated[Courriel, Depends(obtenir_courriel)]
+
+
+async def compte_optionnel(
+    request: Request, conn: Conn, session_id: SessionOptionnelle
+) -> Compte | None:
+    """Le compte rattaché à la session, s'il y en a un — jamais une erreur :
+    tout le site marche sans compte, seuls les fives en exigent un."""
+    if session_id is None:
+        return None
+    comptes: Comptes = request.app.state.comptes
+    return await comptes.pour_session(conn, session_id)
+
+
+CompteOptionnel = Annotated[Compte | None, Depends(compte_optionnel)]
 SessionGarantie = Annotated[str, Depends(session_garantie)]
 
 

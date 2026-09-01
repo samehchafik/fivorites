@@ -3,6 +3,8 @@
 // le service qui sert le site — le cookie de session reste propriétaire.
 
 import type {
+  Compte,
+  Five,
   Carte,
   Episode,
   Fiche,
@@ -180,4 +182,62 @@ export function chargerSuggestions(
 export function urlAffiche(affiche: string | null, taille = 'w185'): string | null {
   if (!affiche) return null
   return affiche.startsWith('http') ? affiche : `https://image.tmdb.org/t/p/${taille}${affiche}`
+}
+
+// --- Le compte et les fives -------------------------------------------------
+
+export function obtenirCompte(): Promise<{ compte: Compte | null }> {
+  return requete('/compte')
+}
+
+export function inscrire(donnees: {
+  pseudo: string
+  email: string
+  motDePasse: string
+  genre?: string | null
+  langue?: string
+}): Promise<{ envoye: boolean; email: string }> {
+  return requete('/compte/inscrire', { method: 'POST', body: JSON.stringify(donnees) })
+}
+
+export function verifierCode(email: string, code: string): Promise<{ compte: Compte }> {
+  return requete('/compte/verifier', { method: 'POST', body: JSON.stringify({ email, code }) })
+}
+
+export function connecter(
+  email: string,
+  motDePasse: string,
+  langue?: string,
+): Promise<{ compte?: Compte; verificationRequise?: boolean; email?: string }> {
+  return requete('/compte/connecter', {
+    method: 'POST',
+    body: JSON.stringify({ email, motDePasse, langue }),
+  })
+}
+
+export function renvoyerCode(email: string, langue?: string): Promise<{ envoye: boolean }> {
+  return requete('/compte/renvoyer', { method: 'POST', body: JSON.stringify({ email, langue }) })
+}
+
+export function deconnecter(): Promise<{ deconnecte: boolean }> {
+  return requete('/compte/deconnecter', { method: 'POST' })
+}
+
+export function chargerFives(univers: UniversSlug): Promise<{ items: Five[]; rangs: number[] }> {
+  return requete(`/fives?univers=${univers}`)
+}
+
+export function poserFive(
+  univers: UniversSlug,
+  rang: number,
+  oeuvreId: number,
+): Promise<{ pose: boolean }> {
+  return requete('/fives', {
+    method: 'POST',
+    body: JSON.stringify({ univers, rang, oeuvreId }),
+  })
+}
+
+export function retirerFive(univers: UniversSlug, rang: number): Promise<{ retire: boolean }> {
+  return requete(`/fives/${univers}/${rang}`, { method: 'DELETE' })
 }

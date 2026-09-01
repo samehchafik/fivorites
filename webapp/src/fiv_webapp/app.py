@@ -26,13 +26,15 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from fiv_webapp.cartes import Cartes
+from fiv_webapp.comptes import Comptes
 from fiv_webapp.config import Settings, get_settings
+from fiv_webapp.courriel import Courriel
 from fiv_webapp.db import build_pool
 from fiv_webapp.fiche import Fiches
 from fiv_webapp.graphe import Graphe
 from fiv_webapp.jeton import JetonSession
 from fiv_webapp.recherche import Recherche
-from fiv_webapp.routes import fiche, personnes, recherche, signaux, suggestions
+from fiv_webapp.routes import comptes, fiche, fives, personnes, recherche, signaux, suggestions
 from fiv_webapp.signaux import Signaux
 
 log = logging.getLogger(__name__)
@@ -116,6 +118,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.jeton = JetonSession(secret, ttl_seconds=settings.session_ttl_days * 86400)
     app.state.cartes = Cartes()
+    app.state.comptes = Comptes()
+    app.state.courriel = Courriel(
+        settings.smtp_host,
+        port=settings.smtp_port,
+        utilisateur=settings.smtp_user,
+        mot_de_passe=settings.smtp_password,
+        expediteur=settings.smtp_from,
+    )
     app.state.fiches = Fiches()
     app.state.signaux = Signaux()
 
@@ -134,6 +144,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(recherche.router, prefix="/api/public", tags=["recherche"])
     app.include_router(fiche.router, prefix="/api/public", tags=["fiche"])
     app.include_router(personnes.router, prefix="/api/public", tags=["personnes"])
+    app.include_router(comptes.router, prefix="/api/public", tags=["comptes"])
+    app.include_router(fives.router, prefix="/api/public", tags=["fives"])
     app.include_router(signaux.router, prefix="/api/public", tags=["signaux"])
     app.include_router(suggestions.router, prefix="/api/public", tags=["suggestions"])
 

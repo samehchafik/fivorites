@@ -1998,3 +1998,283 @@
   vertical-align: middle;
   color: white;
 }
+
+/* --- Le compte : la modale et ses trois écrans --------------------------- */
+
+.compte-modale {
+  background: linear-gradient(var(--fivorites2, #700031), var(--fivorites1, #fa0036));
+  color: white;
+}
+
+.compte-corps {
+  padding: 0;
+}
+
+.compte {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1.4rem 1.4rem 1.6rem;
+}
+
+.compte h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  text-align: center;
+}
+
+.compte-pourquoi {
+  margin: 0;
+  font-size: 0.85rem;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.compte-champ {
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  border: 0;
+  border-radius: 0.6rem;
+  font-family: inherit;
+  font-size: 1rem;
+  background: white;
+  color: var(--gray-darkest, #1a1a1a);
+}
+
+.compte-code {
+  text-align: center;
+  font-size: 1.6rem;
+  letter-spacing: 0.5em;
+}
+
+.compte-genre {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.compte-genre-choix {
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 1rem;
+  padding: 0.25rem 0.9rem;
+  background: transparent;
+  color: white;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.compte-genre-choix.actif {
+  background: white;
+  color: var(--fivorites2, #700031);
+  font-weight: 600;
+}
+
+.compte-bouton {
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-radius: 2rem;
+  background: white;
+  color: var(--fivorites2, #700031);
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.compte-bouton:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.compte-lien {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.compte-erreur {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+  color: #ffd7d7;
+}
+
+.compte-info {
+  margin: 0;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* --- Les fives : cinq grandes cases -------------------------------------- */
+
+.fives-titre {
+  margin: 0 0 0.15rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: white;
+}
+
+.fives-consigne {
+  margin: 0 0 0.8rem;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.fives-cases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.7rem;
+}
+
+.fives-case {
+  position: relative;
+  min-height: 230px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+}
+
+.fives-rang {
+  position: absolute;
+  top: 0.4rem;
+  inset-inline-start: 0.4rem;
+  z-index: 2;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  background: white;
+  color: var(--fivorites2, #700031);
+  font-weight: 800;
+  font-size: 1rem;
+  line-height: 1.7rem;
+  text-align: center;
+}
+
+/* La case vide : un grand +, un mot. Toute la case est le bouton. */
+.fives-vide {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  border: 2px dashed rgba(255, 255, 255, 0.5);
+  border-radius: 8px;
+  background: transparent;
+  color: white;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fives-vide:hover {
+  border-color: white;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.fives-plus {
+  font-size: 2.6rem;
+  line-height: 1;
+  font-weight: 300;
+}
+
+/* La case pleine : l'affiche et le titre — cliquer ouvre la fiche. */
+.fives-oeuvre {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  padding: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: transparent;
+  color: white;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: center;
+}
+
+.fives-oeuvre img,
+.fives-affiche-vide {
+  width: 100%;
+  height: 185px;
+  object-fit: cover;
+  display: block;
+  background:
+    url('/images/star-white.svg') no-repeat 50% 40% / 40%,
+    linear-gradient(0deg, var(--fivorites1, #fa0036), var(--fivorites2, #700031));
+}
+
+.fives-oeuvre strong {
+  padding: 0.35rem 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* La case en recherche : le champ et cinq résultats, dans la case élargie. */
+.fives-case-ouverte {
+  grid-column: 1 / -1;
+  min-height: 0;
+  padding: 0.8rem 0.8rem 0.6rem;
+  gap: 0.5rem;
+}
+
+.fives-case-ouverte .fives-rang {
+  position: static;
+  flex-shrink: 0;
+  margin-bottom: 0.2rem;
+}
+
+.fives-resultats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.fives-resultats button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--gray-darkest, #1a1a1a);
+  font-family: inherit;
+  font-size: 0.9rem;
+  text-align: start;
+  cursor: pointer;
+}
+
+.fives-resultats button:hover {
+  background: white;
+}
+
+.fives-resultats img {
+  width: 34px;
+  height: 50px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
