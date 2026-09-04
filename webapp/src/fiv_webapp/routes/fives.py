@@ -47,9 +47,10 @@ class Creation(BaseModel):
 
 
 class Retouche(BaseModel):
-    """Renommer, ou promouvoir en « TOP 5 de ma vie ». `titre: ""` efface le
-    nom (retour au générique) ; `vie` n'accepte que true — on ne destitue
-    pas un roi, on en couronne un autre."""
+    """Renommer, couronner ou décoronner. `titre: ""` efface le nom (retour
+    au générique) ; `vie: true` en fait « le TOP 5 de ma vie » (l'ancien est
+    décoronné), `vie: false` rend le palmarès ordinaire — aucun couronné est
+    un état permis."""
 
     titre: str | None = Field(default=None, max_length=80)
     vie: bool | None = None
@@ -107,7 +108,9 @@ async def retoucher(
         titre = corps.titre.strip() or None
         if not await comptes.renommer_palmares(conn, retenu.id, str(palmares_id), titre):
             raise _introuvable()
-    if corps.vie and not await comptes.promouvoir_palmares(conn, retenu.id, str(palmares_id)):
+    if corps.vie is not None and not await comptes.definir_vie(
+        conn, retenu.id, str(palmares_id), corps.vie
+    ):
         raise _introuvable()
     return {"retouche": True}
 

@@ -315,13 +315,20 @@ export function Fives({
     }
   }
 
-  const promouvoir = async (palmaresId: string) => {
+  const basculerVie = async (bascule: Palmares) => {
     if (compte === null) {
-      majLocale(palmares.map((palm) => ({ ...palm, vie: palm.id === palmaresId })))
+      majLocale(
+        bascule.vie
+          ? // Décocher : ce palmarès redevient ordinaire, aucun couronné —
+            // c'est un état permis.
+            palmares.map((palm) => (palm.id === bascule.id ? { ...palm, vie: false } : palm))
+          : // Cocher : la couronne est exclusive, l'ancien la rend.
+            palmares.map((palm) => ({ ...palm, vie: palm.id === bascule.id })),
+      )
       return
     }
     try {
-      await retoucherPalmares(palmaresId, { vie: true })
+      await retoucherPalmares(bascule.id, { vie: !bascule.vie })
       await recharger()
     } catch (exception) {
       if (exception instanceof ApiErreur && exception.status === 401) onConnexionRequise()
@@ -423,17 +430,12 @@ export function Fives({
                 </h4>
               )}
               <span className="fives-palmares-gestes">
-                {/* La case « TOP 5 de ma vie » est sur CHAQUE palmarès — même
-                    quand il n'y en a qu'un, on voit où ça se joue. Cochée et
-                    figée sur le couronné : la couronne se prend en cochant un
-                    autre, elle ne s'abandonne pas. */}
+                {/* La case « TOP 5 de ma vie » est sur CHAQUE palmarès, et
+                    elle est LIBRE : cocher couronne (l'ancien couronné se
+                    décoche tout seul), décocher rend le palmarès ordinaire —
+                    aucun couronné du tout est permis. */}
                 <label className="fives-vie-choix" title={t.dit('fives.promouvoir')}>
-                  <input
-                    type="checkbox"
-                    checked={palm.vie}
-                    disabled={palm.vie}
-                    onChange={() => promouvoir(palm.id)}
-                  />
+                  <input type="checkbox" checked={palm.vie} onChange={() => basculerVie(palm)} />
                   ★ {t.dit('liste.top5')}
                 </label>
                 <button
@@ -443,15 +445,13 @@ export function Fives({
                 >
                   {t.dit('fives.renommer')}
                 </button>
-                {!palm.vie && (
-                  <button
-                    type="button"
-                    className="compte-lien"
-                    onClick={() => supprimer(palm.id)}
-                  >
-                    {t.dit('fives.supprimer')}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="compte-lien"
+                  onClick={() => supprimer(palm.id)}
+                >
+                  {t.dit('fives.supprimer')}
+                </button>
               </span>
             </header>
             <ol className="fives-cases">

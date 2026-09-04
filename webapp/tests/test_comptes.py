@@ -155,11 +155,13 @@ class FauxeBase:
             palm = self.palmares.get(pid)
             if palm and palm["compte"] == cid:
                 self._resultat = [(palm["univers"],)]
-        elif r.startswith("update visiteur.palmares set vie = false"):
+        elif r.startswith("update visiteur.palmares set vie = false where compte_id"):
             cid, univers = parametres
             for palm in self.palmares.values():
                 if palm["compte"] == cid and palm["univers"] == univers:
                     palm["vie"] = False
+        elif r.startswith("update visiteur.palmares set vie = false where id"):
+            self.palmares[parametres[0]]["vie"] = False
         elif r.startswith("update visiteur.palmares set vie = true"):
             self.palmares[parametres[0]]["vie"] = True
         elif r.startswith("update visiteur.palmares set titre"):
@@ -357,6 +359,17 @@ class TestCycleComplet:
         assert (
             client.patch(f"/api/public/fives/{second['id']}", json={"vie": True}).status_code == 200
         )
+        # Décocher est permis : plus aucun couronné, et c'est un état sain.
+        assert (
+            client.patch(f"/api/public/fives/{second['id']}", json={"vie": False}).status_code
+            == 200
+        )
+        assert [
+            p["vie"] for p in client.get("/api/public/fives?univers=series").json()["items"]
+        ] == [False, False]
+        # Re-couronner pour la suite du test.
+        client.patch(f"/api/public/fives/{second['id']}", json={"vie": True})
+
         # L'ordre reste celui de création : la couronne bouge, pas les rangs.
         liste = client.get("/api/public/fives?univers=series").json()["items"]
         assert [p["vie"] for p in liste] == [False, True]

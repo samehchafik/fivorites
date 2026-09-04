@@ -407,23 +407,30 @@ class Comptes:
             ligne = await cur.fetchone()
         return ligne[0] if ligne else None
 
-    async def promouvoir_palmares(
-        self, conn: psycopg.AsyncConnection, compte_id: str, palmares_id: str
+    async def definir_vie(
+        self, conn: psycopg.AsyncConnection, compte_id: str, palmares_id: str, vie: bool
     ) -> bool:
-        """En fait « le TOP 5 de ma vie » de son univers — l'ancien roi
-        redevient un palmarès ordinaire."""
+        """Couronne (vie=True — l'ancien couronné de l'univers est décoronné
+        au passage) ou décoronne (vie=False). Aucun couronné du tout est un
+        état LÉGITIME : un TOP 5 « peut » être celui de ma vie, rien ne
+        l'impose."""
         univers = await self._univers_du_palmares(conn, compte_id, palmares_id)
         if univers is None:
             return False
         async with conn.cursor() as cur:
-            await cur.execute(
-                "update visiteur.palmares set vie = false"
-                " where compte_id = %s and univers = %s and vie",
-                (compte_id, univers),
-            )
-            await cur.execute(
-                "update visiteur.palmares set vie = true where id = %s", (palmares_id,)
-            )
+            if vie:
+                await cur.execute(
+                    "update visiteur.palmares set vie = false"
+                    " where compte_id = %s and univers = %s and vie",
+                    (compte_id, univers),
+                )
+                await cur.execute(
+                    "update visiteur.palmares set vie = true where id = %s", (palmares_id,)
+                )
+            else:
+                await cur.execute(
+                    "update visiteur.palmares set vie = false where id = %s", (palmares_id,)
+                )
         return True
 
     async def renommer_palmares(
