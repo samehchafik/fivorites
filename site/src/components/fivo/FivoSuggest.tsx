@@ -305,12 +305,15 @@ export default function FivoSuggest({
             >
               <MaListe
                 langue={langue}
+                univers={univers}
+                compte={compte}
                 statuts={statuts}
                 versionSignaux={versionSignaux}
                 actif={onglet === 'liste'}
                 onOuvrir={ouvrir_ailleurs}
                 onClasser={classer}
                 onDeclasser={declasser}
+                onVoirFives={() => setOnglet('fives')}
               />
             </div>
           </div>

@@ -1644,6 +1644,16 @@
   color: rgba(255, 255, 255, 0.75);
 }
 
+/* « Le TOP 5 de ma vie » en tête de Ma liste : le palmarès en lecture
+   seule, et le lien « Modifier » qui mène à l'onglet Mes fives. */
+.fivo-top5-modifier {
+  margin-inline-start: auto;
+  font-size: 0.78rem;
+  font-weight: 400;
+  text-transform: none;
+  cursor: pointer;
+}
+
 /* Chaque section porte la couleur de son geste — le même code que les trois
    boutons, pour qu'on retrouve « j'aime pas » à sa couleur sans lire. */
 .fivo-section-a_voir h4 {

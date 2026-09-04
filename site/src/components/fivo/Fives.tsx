@@ -24,7 +24,7 @@ const RANGS = [1, 2, 3, 4, 5]
 // vers la boîte mail pour le code de vérification, même si l'onglet se ferme.
 const cleBrouillon = (univers: UniversSlug) => `fivo.brouillon.${univers}`
 
-function lireBrouillon(univers: UniversSlug): Five[] {
+export function lireBrouillon(univers: UniversSlug): Five[] {
   try {
     const brut = localStorage.getItem(cleBrouillon(univers))
     const lu: unknown = brut ? JSON.parse(brut) : []

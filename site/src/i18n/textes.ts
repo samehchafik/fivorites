@@ -605,8 +605,26 @@ export const TEXTES = {
     es: 'Tus fives no responden: inténtalo en un momento.',
     ar: 'قوائمك لا تستجيب — أعد المحاولة بعد لحظات.',
   },
-  'liste.a_voir': { fr: 'À voir', en: 'Want to see', es: 'Por ver', ar: 'للمشاهدة' },
-  'liste.aime': { fr: 'Vus & aimés', en: 'Seen & loved', es: 'Vistos y preferidos', ar: 'شاهدتها وأحببتها' },
+  'liste.top5': {
+    fr: 'Le TOP 5 de ma vie',
+    en: 'The TOP 5 of my life',
+    es: 'El TOP 5 de mi vida',
+    ar: 'أفضل 5 في حياتي',
+  },
+  'liste.top5_vide': {
+    fr: 'Votre TOP 5 est encore vide.',
+    en: 'Your TOP 5 is still empty.',
+    es: 'Tu TOP 5 sigue vacío.',
+    ar: 'ما زالت قائمتك الخمسية فارغة.',
+  },
+  'liste.top5_modifier': { fr: 'Modifier', en: 'Edit', es: 'Editar', ar: 'تعديل' },
+  'liste.a_voir': { fr: 'Je veux voir', en: 'Want to see', es: 'Quiero ver', ar: 'أريد أن أشاهد' },
+  'liste.aime': {
+    fr: "J'ai vu et j'ai aimé",
+    en: 'Seen and loved',
+    es: 'He visto y me ha gustado',
+    ar: 'شاهدتها وأحببتها',
+  },
   'liste.aime_pas': { fr: 'Pas pour moi', en: 'Not for me', es: 'No me gustan', ar: 'لا تعجبني' },
   'liste.retirer': {
     fr: 'Retirer {titre} de ma liste',
