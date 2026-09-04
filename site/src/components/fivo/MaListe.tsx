@@ -18,9 +18,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import { chargerPalmares, listerSignaux, urlAffiche } from './api'
+import { chargerPalmares, listerSignaux } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
-import { lirePalmaresLocaux } from './Fives'
+import { BandeFives, lirePalmaresLocaux } from './Fives'
 import { useTextes } from './textes'
 import type { CleTexte } from '../../i18n/textes'
 import {
@@ -177,33 +177,12 @@ export function MaListe({
           {palm.oeuvres.length === 0 ? (
             <p className="fivo-message fivo-message-discret">{t.dit('liste.top5_vide')}</p>
           ) : (
-            <ol className="fives-cases">
-              {palm.oeuvres.map((five) => {
-                const affiche = urlAffiche(five.affiche, 'w92')
-                return (
-                  <li key={five.rang} className="fives-case fives-case-pleine">
-                    <span className="fives-rang" aria-hidden="true">
-                      {five.rang}
-                    </span>
-                    <button
-                      type="button"
-                      className="fives-oeuvre"
-                      onClick={() =>
-                        five.id !== null && onOuvrir(five.id, five.oeuvreId, univers)
-                      }
-                      title={five.titre ?? undefined}
-                    >
-                      {affiche ? (
-                        <img src={affiche} alt="" loading="lazy" />
-                      ) : (
-                        <span className="fives-affiche-vide" aria-hidden="true" />
-                      )}
-                      <strong dir="auto">{five.titre ?? t.dit('carte.sans_titre')}</strong>
-                    </button>
-                  </li>
-                )
-              })}
-            </ol>
+            <BandeFives
+              oeuvres={palm.oeuvres}
+              onOuvrir={(identifiant, oeuvreId) =>
+                oeuvreId !== null && onOuvrir(identifiant, oeuvreId, univers)
+              }
+            />
           )}
         </section>
       ))}

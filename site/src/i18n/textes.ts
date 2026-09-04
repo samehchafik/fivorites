@@ -609,6 +609,8 @@ export const TEXTES = {
     ar: 'اجعلها أفضل 5 في حياتي',
   },
   'fives.renommer': { fr: 'Renommer', en: 'Rename', es: 'Renombrar', ar: 'إعادة تسمية' },
+  'fives.changer': { fr: 'Changer', en: 'Change', es: 'Cambiar', ar: 'تغيير' },
+  'fives.terminer': { fr: 'Terminé', en: 'Done', es: 'Listo', ar: 'تم' },
   'fives.supprimer': { fr: 'Supprimer', en: 'Delete', es: 'Eliminar', ar: 'حذف' },
   'fives.confirmer_suppression': {
     fr: 'Supprimer ce TOP 5 et ses œuvres ?',

@@ -84,6 +84,46 @@ export function ecrirePalmaresLocaux(univers: UniversSlug, palmares: Palmares[])
 
 const idLocal = () => `brouillon-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
 
+/** La bande d'affiches : un five en lecture — la présentation par défaut,
+ *  la même pour ses propres TOP 5, ceux de la communauté et « Ma liste ». */
+export function BandeFives({
+  oeuvres,
+  onOuvrir,
+}: {
+  oeuvres: Five[]
+  onOuvrir: (identifiant: number, oeuvreId: number | null) => void
+}) {
+  const t = useTextes()
+  return (
+    <ul className="fives-bande">
+      {oeuvres.map((oeuvre) => {
+        const affiche = urlAffiche(oeuvre.affiche, 'w92')
+        return (
+          <li key={oeuvre.rang}>
+            <button
+              type="button"
+              onClick={() => oeuvre.id !== null && onOuvrir(oeuvre.id, oeuvre.oeuvreId)}
+              title={oeuvre.titre ?? undefined}
+            >
+              <span className="fives-bande-vignette">
+                <span className="fives-bande-rang" aria-hidden="true">
+                  {oeuvre.rang}
+                </span>
+                {affiche ? (
+                  <img src={affiche} alt="" loading="lazy" />
+                ) : (
+                  <span className="fives-affiche-vide" aria-hidden="true" />
+                )}
+              </span>
+              <span dir="auto">{oeuvre.titre ?? t.dit('carte.sans_titre')}</span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 export function Fives({
   univers,
   langue,
@@ -111,6 +151,10 @@ export function Fives({
   const [frappe, setFrappe] = useState('')
   const [resultats, setResultats] = useState<Carte[]>([])
   const [renomme, setRenomme] = useState<{ palmaresId: string; texte: string } | null>(null)
+  // Le plateau en cours d'édition (« Changer ») — par défaut, un TOP 5
+  // rempli se lit en bande d'affiches, comme ceux des internautes. Un
+  // plateau vide s'édite d'office : il n'y a rien d'autre à en montrer.
+  const [edition, setEdition] = useState<string | null>(null)
   const [communaute, setCommunaute] = useState<FiveCommunaute[]>([])
   const charge = useRef<{ univers: UniversSlug; compte: string | null } | null>(null)
   const vitrine = useRef<UniversSlug | null>(null)
@@ -120,6 +164,7 @@ export function Fives({
     setFrappe('')
     setResultats([])
     setRenomme(null)
+    setEdition(null)
   }
 
   const recharger = async () => {
@@ -402,6 +447,7 @@ export function Fives({
       {palmares.map((palm) => {
         const parRang = new Map(palm.oeuvres.map((oeuvre) => [oeuvre.rang, oeuvre]))
         const titre = palm.titre ?? (palm.vie ? t.dit('liste.top5') : t.dit('fives.sans_titre'))
+        const enEdition = edition === palm.id || palm.oeuvres.length === 0
         return (
           <section key={palm.id} className="fives-palmares">
             <header className="fives-palmares-tete">
@@ -438,6 +484,19 @@ export function Fives({
                   <input type="checkbox" checked={palm.vie} onChange={() => basculerVie(palm)} />
                   ★ {t.dit('liste.top5')}
                 </label>
+                {palm.oeuvres.length > 0 && (
+                  <button
+                    type="button"
+                    className="compte-lien fives-changer"
+                    onClick={() => {
+                      setOuvert(null)
+                      setFrappe('')
+                      setEdition(enEdition ? null : palm.id)
+                    }}
+                  >
+                    {enEdition ? t.dit('fives.terminer') : t.dit('fives.changer')}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="compte-lien"
@@ -454,6 +513,8 @@ export function Fives({
                 </button>
               </span>
             </header>
+            {!enEdition && <BandeFives oeuvres={palm.oeuvres} onOuvrir={onOuvrir} />}
+            {enEdition && (
             <ol className="fives-cases">
               {RANGS.map((rang) => {
                 const five = parRang.get(rang)
@@ -560,6 +621,7 @@ export function Fives({
                 )
               })}
             </ol>
+            )}
           </section>
         )
       })}
@@ -589,29 +651,7 @@ export function Fives({
                   <strong dir="auto">{five.pseudo ?? t.dit('fives.communaute_membre')}</strong>
                   {five.titre && <span dir="auto">« {five.titre} »</span>}
                 </p>
-                <ul className="fives-communaute-oeuvres">
-                  {five.oeuvres.map((oeuvre) => {
-                    const affiche = urlAffiche(oeuvre.affiche, 'w92')
-                    return (
-                      <li key={oeuvre.rang}>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            oeuvre.id !== null && onOuvrir(oeuvre.id, oeuvre.oeuvreId)
-                          }
-                          title={oeuvre.titre ?? undefined}
-                        >
-                          {affiche ? (
-                            <img src={affiche} alt="" loading="lazy" />
-                          ) : (
-                            <span className="fives-affiche-vide" aria-hidden="true" />
-                          )}
-                          <span dir="auto">{oeuvre.titre ?? t.dit('carte.sans_titre')}</span>
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
+                <BandeFives oeuvres={five.oeuvres} onOuvrir={onOuvrir} />
               </li>
             ))}
           </ul>
