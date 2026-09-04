@@ -476,14 +476,6 @@ export function Fives({
                 </h4>
               )}
               <span className="fives-palmares-gestes">
-                {/* La case « TOP 5 de ma vie » est sur CHAQUE palmarès, et
-                    elle est LIBRE : cocher couronne (l'ancien couronné se
-                    décoche tout seul), décocher rend le palmarès ordinaire —
-                    aucun couronné du tout est permis. */}
-                <label className="fives-vie-choix" title={t.dit('fives.promouvoir')}>
-                  <input type="checkbox" checked={palm.vie} onChange={() => basculerVie(palm)} />
-                  ★ {t.dit('liste.top5')}
-                </label>
                 {palm.oeuvres.length > 0 && (
                   <button
                     type="button"
@@ -622,6 +614,17 @@ export function Fives({
               })}
             </ol>
             )}
+            {/* La case « TOP 5 de ma vie » vit SOUS le plateau — sur mobile,
+                l'en-tête reste une ligne : le titre et ses gestes. Elle est
+                LIBRE : cocher couronne (l'ancien couronné se décoche tout
+                seul), décocher rend le palmarès ordinaire — aucun couronné
+                du tout est permis. */}
+            <p className="fives-vie-ligne">
+              <label className="fives-vie-choix" title={t.dit('fives.promouvoir')}>
+                <input type="checkbox" checked={palm.vie} onChange={() => basculerVie(palm)} />
+                ★ {t.dit('liste.top5')}
+              </label>
+            </p>
           </section>
         )
       })}

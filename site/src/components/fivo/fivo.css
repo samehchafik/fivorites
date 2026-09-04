@@ -2177,7 +2177,9 @@
 .fives-palmares-gestes {
   margin-inline-start: auto;
   display: flex;
-  gap: 0.7rem;
+  align-items: baseline;
+  gap: 0.9rem;
+  flex-wrap: wrap;
 }
 
 .fives-palmares-gestes .compte-lien {
@@ -2185,8 +2187,13 @@
   cursor: pointer;
 }
 
-/* La case « TOP 5 de ma vie » : cochée et dorée sur le couronné, cochable
-   sur les autres pour lui prendre la couronne. */
+/* La case « TOP 5 de ma vie », en pied de palmarès : cochée et dorée sur
+   le couronné, cochable sur les autres pour lui prendre la couronne,
+   décochable pour n'en couronner aucun. */
+.fives-vie-ligne {
+  margin: 0.5rem 0 0;
+}
+
 .fives-vie-choix {
   display: inline-flex;
   align-items: center;
