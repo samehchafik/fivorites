@@ -23,6 +23,7 @@ import {
   type Langue,
 } from '../i18n/langues'
 import { traduire } from '../i18n/textes'
+import CompteEntete from './CompteEntete'
 
 interface Props {
   langue: Langue
@@ -83,5 +84,8 @@ const univers = [
         }
       </nav>
     </details>
+    {/* Le compte, tout à droite — l'icône du carnet du designer. `client:load` :
+        l'état connecté doit se voir dès l'arrivée, pas après un scroll. */}
+    <CompteEntete client:load langue={langue} />
   </div>
 </header>

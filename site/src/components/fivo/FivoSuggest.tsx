@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react'
 
 import { deconnecter, listerSignaux, obtenirCompte, poserSignal, retirerSignal } from './api'
 import { CompteModale } from './CompteModale'
+import { annoncerCompte, surCompte, surDemandeConnexion } from './compteBus'
 import { Fives } from './Fives'
 import { FicheModale } from './FicheModale'
 import { Loupe } from './Loupe'
@@ -92,6 +93,15 @@ export default function FivoSuggest({
       .catch(() => {
         // Pas de session, API muette : on reste anonyme, les fives le diront.
       })
+    // L'en-tête a son propre îlot : ses connexions, déconnexions et
+    // changements de profil arrivent par le bus — et sa silhouette
+    // « déconnecté » demande à CE module d'ouvrir la modale.
+    const finCompte = surCompte(setCompte)
+    const finConnexion = surDemandeConnexion(() => setModaleCompte(true))
+    return () => {
+      finCompte()
+      finConnexion()
+    }
   }, [])
 
   useEffect(() => {
@@ -357,6 +367,7 @@ export default function FivoSuggest({
             // était — les fives reprennent leur chargement toutes seules
             // (le compte fait partie de leur contexte).
             setCompte(retenu)
+            annoncerCompte(retenu)
             setModaleCompte(false)
           }}
         />

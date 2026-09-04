@@ -149,3 +149,29 @@ async def deconnecter(
 @router.get("/compte")
 async def compte(compte: CompteOptionnel) -> dict[str, Any]:
     return {"compte": compte.publique() if compte else None}
+
+
+class Profil(BaseModel):
+    """Ce que le menu du compte peut changer — tout est facultatif, seul ce
+    qui est fourni bouge. `avatar: ""` efface la pastille."""
+
+    pseudo: str | None = Field(default=None, min_length=2, max_length=40)
+    avatar: str | None = Field(default=None, max_length=8)
+    genre: str | None = Field(default=None, pattern="^(fille|garcon)$")
+
+
+@router.patch("/compte")
+async def modifier(
+    conn: Conn, comptes: ComptesDep, compte: CompteOptionnel, corps: Profil
+) -> dict[str, Any]:
+    retenu = compte
+    if retenu is None or not retenu.verifie:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, {"raison": "connexion_requise"})
+    a_jour = await comptes.modifier(
+        conn,
+        retenu,
+        pseudo=corps.pseudo.strip() if corps.pseudo else None,
+        avatar=corps.avatar,
+        genre=corps.genre,
+    )
+    return {"compte": a_jour.publique()}

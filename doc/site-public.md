@@ -447,6 +447,24 @@ compose) ; sans configuration, le code part dans les journaux du service —
 testable, pas ouvrable au public. La migration : `docker compose run --rm
 webapp db migrate` (002_comptes).
 
+*Revu le 1er septembre 2026, sur les croquis du designer et les retours de
+Sameh.* Le parcours s'est inversé : **plus de barrière à l'entrée** — le
+plateau s'ouvre au bouton « Commence ton premier five », se compose en
+local (brouillon en localStorage, il survit au détour par la boîte mail),
+et la connexion n'arrive qu'au moment de GARDER (bouton, ou d'elle-même à
+la cinquième case) ; le brouillon est alors versé au compte rang par rang.
+Et il y a désormais **deux palmarès par univers** — « Le TOP 5 de ma vie »
+et « Le TOP du moment », la colonne `liste` ('vie'/'moment', migration
+003_fives_listes) reprenant les periode `life`/`moment` de la V1. Sous les
+siens, **les fives de la communauté** (`GET /fives/communaute`) : des
+listes de membres V1 tirées au sort, ANONYMES par construction — l'import a
+levé `masque` sur tous les membres, leur pseudo ne sort pas, seul le titre
+qu'ils avaient donné à leur five est montré. Le compte a gagné un
+**avatar** (une pastille emoji, `PATCH /compte`) et un **menu dans
+l'en-tête** : un îlot React séparé (`CompteEntete`, sans Mantine), tenu
+d'accord avec le module par deux CustomEvent sur `window`
+(`fivo:compte`, `fivo:ouvrir-connexion` — voir `compteBus.ts`).
+
 ## Ce qui reste devant
 
 * **Le rattrapage des empreintes reste LE chantier du moteur.** L'index

@@ -66,9 +66,10 @@ export function MaListe({
   const t = useTextes()
   const [items, setItems] = useState<Signal[]>([])
   const [etat, setEtat] = useState<'en-cours' | 'servi' | 'erreur'>('en-cours')
-  // Le TOP 5 de l'univers courant — la première section de la maquette. Il
-  // se recharge à chaque ouverture de l'onglet : il a pu changer à côté.
+  // Les palmarès de l'univers courant — la première section de la maquette.
+  // Rechargés à chaque ouverture de l'onglet : ils ont pu changer à côté.
   const [topFives, setTopFives] = useState<Five[]>([])
+  const [topMoment, setTopMoment] = useState<Five[]>([])
   // Ce que la liste affichée reflète déjà — même règle que dans les deux
   // autres onglets : caché, le panneau ne recharge rien ; visible, il ne
   // recharge que si quelque chose a bougé.
@@ -101,18 +102,27 @@ export function MaListe({
   useEffect(() => {
     if (!actif) return
     if (compte === null) {
-      // Sans compte, le TOP 5 est le brouillon local — lecture instantanée.
-      setTopFives(lireBrouillon(univers))
+      // Sans compte, les palmarès sont les brouillons locaux — lecture
+      // instantanée.
+      setTopFives(lireBrouillon(univers, 'vie'))
+      setTopMoment(lireBrouillon(univers, 'moment'))
       return
     }
     let abandonne = false
-    chargerFives(univers)
+    chargerFives(univers, 'vie')
       .then((reponse) => {
         if (!abandonne) setTopFives(reponse.items)
       })
       .catch(() => {
         // Un TOP 5 illisible ne casse pas la liste : la section se montre vide.
         if (!abandonne) setTopFives([])
+      })
+    chargerFives(univers, 'moment')
+      .then((reponse) => {
+        if (!abandonne) setTopMoment(reponse.items)
+      })
+      .catch(() => {
+        if (!abandonne) setTopMoment([])
       })
     return () => {
       abandonne = true
@@ -173,10 +183,49 @@ export function MaListe({
     </section>
   )
 
+  // « Le TOP du moment » — seulement s'il existe : contrairement au TOP 5
+  // de la vie, il n'est pas un passage obligé.
+  const sectionMoment = topMoment.length > 0 && (
+    <section className="fivo-section-liste fivo-section-top5">
+      <h4>
+        {t.dit('fives.moment')}
+        <button type="button" className="compte-lien fivo-top5-modifier" onClick={onVoirFives}>
+          {t.dit('liste.top5_modifier')}
+        </button>
+      </h4>
+      <ol className="fives-cases">
+        {topMoment.map((five) => {
+          const affiche = urlAffiche(five.affiche, 'w92')
+          return (
+            <li key={five.rang} className="fives-case fives-case-pleine">
+              <span className="fives-rang" aria-hidden="true">
+                {five.rang}
+              </span>
+              <button
+                type="button"
+                className="fives-oeuvre"
+                onClick={() => five.id !== null && onOuvrir(five.id, five.oeuvreId, univers)}
+                title={five.titre ?? undefined}
+              >
+                {affiche ? (
+                  <img src={affiche} alt="" loading="lazy" />
+                ) : (
+                  <span className="fives-affiche-vide" aria-hidden="true" />
+                )}
+                <strong dir="auto">{five.titre ?? t.dit('carte.sans_titre')}</strong>
+              </button>
+            </li>
+          )
+        })}
+      </ol>
+    </section>
+  )
+
   if (etat === 'servi' && items.length === 0) {
     return (
       <div className="fivo-mes-listes">
         {sectionTop5}
+        {sectionMoment}
         <p className="fivo-message">{t.dit('liste.vide')}</p>
       </div>
     )
@@ -186,6 +235,7 @@ export function MaListe({
     <div className="fivo-mes-listes">
       <p className="fivo-message fivo-message-discret">{t.dit('liste.tous_univers')}</p>
       {sectionTop5}
+      {sectionMoment}
       {SECTIONS.map(({ statut, titre }) => {
         const dedans = items.filter((item) => item.statut === statut)
         return (

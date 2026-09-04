@@ -32,6 +32,8 @@ _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 16384, 8, 1
 CODE_VALIDITE_MINUTES = 15
 CODE_TENTATIVES_MAX = 5
 FIVES_RANGS = (1, 2, 3, 4, 5)
+# Les deux palmarès — le vocabulaire de la V1 (periode life/moment), en français.
+FIVES_LISTES = ("vie", "moment")
 
 
 def hacher(mot_de_passe: str) -> str:
@@ -74,6 +76,7 @@ class Compte:
     email: str
     genre: str | None
     verifie: bool
+    avatar: str | None = None
 
     def publique(self) -> dict[str, Any]:
         return {
@@ -82,6 +85,7 @@ class Compte:
             "email": self.email,
             "genre": self.genre,
             "verifie": self.verifie,
+            "avatar": self.avatar,
         }
 
 
@@ -181,7 +185,12 @@ class Comptes:
                 "delete from visiteur.verification where compte_id = %s", (compte.id,)
             )
         return Compte(
-            id=compte.id, pseudo=compte.pseudo, email=compte.email, genre=compte.genre, verifie=True
+            id=compte.id,
+            pseudo=compte.pseudo,
+            email=compte.email,
+            genre=compte.genre,
+            verifie=True,
+            avatar=compte.avatar,
         )
 
     # --- connexion ----------------------------------------------------------
@@ -194,7 +203,7 @@ class Comptes:
         email = email.strip().lower()
         async with conn.cursor() as cur:
             await cur.execute(
-                "select id, pseudo, genre, email_verifie_le, mot_de_passe"
+                "select id, pseudo, genre, email_verifie_le, mot_de_passe, avatar"
                 " from visiteur.compte where email = %s",
                 (email,),
             )
@@ -204,7 +213,7 @@ class Comptes:
             # passe » prennent le même temps.
             verifier_mot_de_passe(mot_de_passe, hacher("leurre"))
             return None
-        compte_id, pseudo, genre, verifie_le, hache = ligne
+        compte_id, pseudo, genre, verifie_le, hache, avatar = ligne
         if not verifier_mot_de_passe(mot_de_passe, hache):
             return None
         return Compte(
@@ -213,6 +222,7 @@ class Comptes:
             email=email,
             genre=genre,
             verifie=verifie_le is not None,
+            avatar=avatar,
         )
 
     async def rattacher_session(
@@ -235,7 +245,7 @@ class Comptes:
         """Le compte rattaché à cette session, s'il y en a un."""
         async with conn.cursor() as cur:
             await cur.execute(
-                "select c.id, c.pseudo, c.email, c.genre, c.email_verifie_le"
+                "select c.id, c.pseudo, c.email, c.genre, c.email_verifie_le, c.avatar"
                 " from visiteur.session s join visiteur.compte c on c.id = s.compte_id"
                 " where s.id = %s",
                 (session_id,),
@@ -243,40 +253,85 @@ class Comptes:
             ligne = await cur.fetchone()
         if ligne is None:
             return None
-        compte_id, pseudo, email, genre, verifie_le = ligne
+        compte_id, pseudo, email, genre, verifie_le, avatar = ligne
         return Compte(
             id=str(compte_id),
             pseudo=pseudo,
             email=email,
             genre=genre,
             verifie=verifie_le is not None,
+            avatar=avatar,
         )
 
     async def _par_email(self, conn: psycopg.AsyncConnection, email: str) -> Compte | None:
         async with conn.cursor() as cur:
             await cur.execute(
-                "select id, pseudo, genre, email_verifie_le from visiteur.compte where email = %s",
+                "select id, pseudo, genre, email_verifie_le, avatar"
+                " from visiteur.compte where email = %s",
                 (email.strip().lower(),),
             )
             ligne = await cur.fetchone()
         if ligne is None:
             return None
-        compte_id, pseudo, genre, verifie_le = ligne
+        compte_id, pseudo, genre, verifie_le, avatar = ligne
         return Compte(
             id=str(compte_id),
             pseudo=pseudo,
             email=email.strip().lower(),
             genre=genre,
             verifie=verifie_le is not None,
+            avatar=avatar,
+        )
+
+    # --- le profil ----------------------------------------------------------
+
+    async def modifier(
+        self,
+        conn: psycopg.AsyncConnection,
+        compte: Compte,
+        *,
+        pseudo: str | None = None,
+        avatar: str | None = None,
+        genre: str | None = None,
+    ) -> Compte:
+        """Change ce qui est fourni, rend le compte à jour. `avatar=''`
+        efface la pastille (retour à l'initiale du pseudo)."""
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update visiteur.compte
+                   set pseudo = coalesce(%s, pseudo),
+                       avatar = case when %s::text is null then avatar
+                                     when %s = '' then null
+                                     else %s end,
+                       genre  = coalesce(%s, genre)
+                 where id = %s
+                 returning pseudo, avatar, genre
+                """,
+                (pseudo, avatar, avatar, avatar, genre, compte.id),
+            )
+            ligne = await cur.fetchone()
+        pseudo_neuf, avatar_neuf, genre_neuf = ligne
+        return Compte(
+            id=compte.id,
+            pseudo=pseudo_neuf,
+            email=compte.email,
+            genre=genre_neuf,
+            verifie=compte.verifie,
+            avatar=avatar_neuf,
         )
 
     # --- les fives ----------------------------------------------------------
 
     async def fives(
-        self, conn: psycopg.AsyncConnection, compte_id: str, univers_interne: str
+        self,
+        conn: psycopg.AsyncConnection,
+        compte_id: str,
+        univers_interne: str,
+        liste: str = "vie",
     ) -> list[dict[str, Any]]:
-        """Les cinq rangs de l'univers, hydratés pour l'affichage — les rangs
-        vides n'apparaissent pas, le front dessine les cases manquantes."""
+        """Les cinq rangs du palmarès demandé, hydratés pour l'affichage —
+        les rangs vides n'apparaissent pas, le front dessine les manquants."""
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -292,10 +347,10 @@ class Comptes:
                 left join admin.tv_card tv    on f.univers = 'series' and tv.id = o.id_tmdb
                 left join admin.movie_card mv on f.univers = 'movies' and mv.id = o.id_tmdb
                 left join admin.livre_card lv on f.univers = 'livres' and lv.id = o.id
-                where f.compte_id = %s and f.univers = %s
+                where f.compte_id = %s and f.univers = %s and f.liste = %s
                 order by f.rang
                 """,
-                (compte_id, univers_interne),
+                (compte_id, univers_interne, liste),
             )
             lignes = await cur.fetchall()
         return [
@@ -316,23 +371,25 @@ class Comptes:
         compte_id: str,
         *,
         univers_interne: str,
+        liste: str = "vie",
         rang: int,
         oeuvre_id: int,
     ) -> None:
-        """Pose l'œuvre au rang — et la retire d'abord de son ancien rang si
-        elle y était : déplacer un five est un geste, pas une erreur."""
+        """Pose l'œuvre au rang — et la retire d'abord de son ancien rang du
+        même palmarès si elle y était : déplacer un five est un geste, pas
+        une erreur. (Elle peut en revanche vivre dans les DEUX palmarès.)"""
         async with conn.cursor() as cur:
             await cur.execute(
                 "delete from visiteur.five"
-                " where compte_id = %s and univers = %s and oeuvre_id = %s",
-                (compte_id, univers_interne, oeuvre_id),
+                " where compte_id = %s and univers = %s and liste = %s and oeuvre_id = %s",
+                (compte_id, univers_interne, liste, oeuvre_id),
             )
             await cur.execute(
-                "insert into visiteur.five (compte_id, univers, rang, oeuvre_id)"
-                " values (%s, %s, %s, %s)"
-                " on conflict (compte_id, univers, rang) do update"
+                "insert into visiteur.five (compte_id, univers, liste, rang, oeuvre_id)"
+                " values (%s, %s, %s, %s, %s)"
+                " on conflict (compte_id, univers, liste, rang) do update"
                 "   set oeuvre_id = excluded.oeuvre_id, creation = now()",
-                (compte_id, univers_interne, rang, oeuvre_id),
+                (compte_id, univers_interne, liste, rang, oeuvre_id),
             )
 
     async def retirer_five(
@@ -341,10 +398,102 @@ class Comptes:
         compte_id: str,
         *,
         univers_interne: str,
+        liste: str = "vie",
         rang: int,
     ) -> None:
         async with conn.cursor() as cur:
             await cur.execute(
-                "delete from visiteur.five where compte_id = %s and univers = %s and rang = %s",
-                (compte_id, univers_interne, rang),
+                "delete from visiteur.five"
+                " where compte_id = %s and univers = %s and liste = %s and rang = %s",
+                (compte_id, univers_interne, liste, rang),
             )
+
+    # --- les fives de la communauté -----------------------------------------
+
+    async def fives_communaute(
+        self, conn: psycopg.AsyncConnection, univers_interne: str, *, limite: int = 4
+    ) -> list[dict[str, Any]]:
+        """Des fives de membres de la V1, tirés au sort — pour montrer, sous
+        les siens, ce que la communauté a posé.
+
+        **Anonymes par construction** : l'import V1 a masqué tous les membres
+        (colonne `masque`), leur pseudo ne sort donc jamais tant que ce
+        drapeau est levé — seul le TITRE que le membre avait donné à son five
+        est montré, c'est une œuvre publique. Le tirage est aléatoire : la
+        communauté est figée depuis 2019, un ordre fixe montrerait toujours
+        les cinq mêmes listes.
+        """
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                with choisis as (
+                    select f.id, f.titre, f.periode, m.pseudo, m.masque
+                    from membre.five f
+                    join membre.membre m
+                      on m.id = f.membre_id and m.valide and not m.bani
+                    where f.valide and f.visibilite = 'public'
+                      and f.univers = %(univers)s
+                    order by random()
+                    limit %(limite)s
+                )
+                select c.id, c.titre, c.periode, c.pseudo, c.masque,
+                       p.rang, p.oeuvre_id,
+                       coalesce(tv.id, mv.id, lv.id),
+                       coalesce(tv.name, mv.name, lv.name, o.titre, p.titre_saisi),
+                       nullif(coalesce(tv.poster_path, mv.poster_path,
+                                       lv.poster_path), ''),
+                       coalesce(extract(year from tv.first_air_date)::int,
+                                extract(year from mv.first_air_date)::int,
+                                extract(year from lv.first_air_date)::int, o.annee)
+                from choisis c
+                join membre.five_position p on p.five_id = c.id
+                left join sourcing.oeuvre o on o.id = p.oeuvre_id
+                left join admin.tv_card tv
+                       on %(univers)s = 'series' and tv.id = o.id_tmdb
+                left join admin.movie_card mv
+                       on %(univers)s = 'movies' and mv.id = o.id_tmdb
+                left join admin.livre_card lv
+                       on %(univers)s = 'livres' and lv.id = o.id
+                order by c.id, p.rang
+                """,
+                {"univers": univers_interne, "limite": limite},
+            )
+            lignes = await cur.fetchall()
+        fives: dict[Any, dict[str, Any]] = {}
+        for ligne in lignes:
+            (
+                five_id,
+                titre,
+                periode,
+                pseudo,
+                masque,
+                rang,
+                oeuvre_id,
+                vignette,
+                nom,
+                affiche,
+                annee,
+            ) = ligne
+            five = fives.setdefault(
+                five_id,
+                {
+                    "titre": titre,
+                    "liste": "moment" if periode == "moment" else "vie",
+                    "pseudo": None if masque else pseudo,
+                    "oeuvres": [],
+                },
+            )
+            five["oeuvres"].append(
+                {
+                    "rang": rang,
+                    "oeuvreId": oeuvre_id,
+                    "id": vignette,
+                    "titre": nom,
+                    "affiche": affiche,
+                    "annee": annee,
+                }
+            )
+        # Un five dont aucune œuvre n'a de nom ne montre rien : écarté.
+        return [
+            five for five in fives.values() if any(oeuvre["titre"] for oeuvre in five["oeuvres"])
+        ]

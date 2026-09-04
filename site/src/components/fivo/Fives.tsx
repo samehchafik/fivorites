@@ -1,32 +1,46 @@
-// Les fives : vos cinq meilleures œuvres, par univers — LE geste du site.
+// Les fives : vos meilleures œuvres, par univers — LE geste du site.
 //
-// Le cahier des charges est « accessible à presque un bébé », et la maquette
-// du designer le prend au mot : CINQ RANGÉES numérotées de 1 à 5, façon
+// DEUX palmarès par univers, comme la V1 : « Le TOP 5 de ma vie » et « Le
+// TOP du moment ». Chacun est un plateau de CINQ RANGÉES numérotées, façon
 // palmarès — vignette + titre quand la rangée est remplie. Toucher une
 // rangée vide ouvre une recherche sur place ; toucher un résultat la
 // remplit. Toucher le ✕ d'une rangée pleine la vide. Rien à apprendre.
 //
-// Sans compte, PAS de barrière : « Commence ton premier five » ouvre le
-// plateau, et tout se compose en silence, en local — le serveur n'est pas
-// consulté. La connexion n'arrive qu'à la FIN, au moment de garder le five
-// (bouton « Garde ton five », ou automatiquement à la cinquième case) ; une
-// fois connecté, le brouillon est versé au compte, rang par rang.
+// Sans compte, PAS de barrière : « Commence ton premier five » ouvre les
+// plateaux, et tout se compose en silence, en local — le serveur n'est pas
+// consulté. La connexion n'arrive qu'à la FIN, au moment de garder (bouton
+// « Garde ton five », ou automatiquement à la cinquième case) ; une fois
+// connecté, chaque brouillon est versé au compte, rang par rang.
+//
+// Et sous les siens, les fives de la COMMUNAUTÉ : des listes de membres de
+// la V1, tirées au sort — anonymes, leur import les a masqués.
 
 import { useEffect, useRef, useState } from 'react'
 
-import { chargerFives, poserFive, rechercher, retirerFive, urlAffiche, ApiErreur } from './api'
+import {
+  chargerFives,
+  fivesCommunaute,
+  poserFive,
+  rechercher,
+  retirerFive,
+  urlAffiche,
+  ApiErreur,
+} from './api'
 import { useTextes } from './textes'
-import type { Carte, Compte, Five, UniversSlug } from './types'
+import type { Carte, Compte, Five, FiveCommunaute, ListeFive, UniversSlug } from './types'
 
 const RANGS = [1, 2, 3, 4, 5]
 
 // Le brouillon anonyme vit dans localStorage : il survit à l'aller-retour
-// vers la boîte mail pour le code de vérification, même si l'onglet se ferme.
-const cleBrouillon = (univers: UniversSlug) => `fivo.brouillon.${univers}`
+// vers la boîte mail pour le code de vérification, même si l'onglet se
+// ferme. La clé sans suffixe est celle d'avant les deux palmarès — elle
+// reste celle de la vie, les brouillons déjà posés ne se perdent pas.
+const cleBrouillon = (univers: UniversSlug, liste: ListeFive) =>
+  liste === 'vie' ? `fivo.brouillon.${univers}` : `fivo.brouillon.${univers}.${liste}`
 
-export function lireBrouillon(univers: UniversSlug): Five[] {
+export function lireBrouillon(univers: UniversSlug, liste: ListeFive = 'vie'): Five[] {
   try {
-    const brut = localStorage.getItem(cleBrouillon(univers))
+    const brut = localStorage.getItem(cleBrouillon(univers, liste))
     const lu: unknown = brut ? JSON.parse(brut) : []
     if (!Array.isArray(lu)) return []
     return (lu as Five[]).filter(
@@ -37,19 +51,21 @@ export function lireBrouillon(univers: UniversSlug): Five[] {
   }
 }
 
-function ecrireBrouillon(univers: UniversSlug, fives: Five[]) {
+function ecrireBrouillon(univers: UniversSlug, liste: ListeFive, fives: Five[]) {
   try {
-    if (fives.length === 0) localStorage.removeItem(cleBrouillon(univers))
-    else localStorage.setItem(cleBrouillon(univers), JSON.stringify(fives))
+    if (fives.length === 0) localStorage.removeItem(cleBrouillon(univers, liste))
+    else localStorage.setItem(cleBrouillon(univers, liste), JSON.stringify(fives))
   } catch {
     // Navigation privée : le brouillon ne survivra pas au rechargement — le
     // plateau, lui, continue de fonctionner en mémoire.
   }
 }
 
-export function Fives({
+/** Un plateau : les cinq rangées d'UN palmarès (vie ou moment). */
+function Palmares({
   univers,
   langue,
+  liste,
   compte,
   actif,
   onConnexionRequise,
@@ -57,12 +73,10 @@ export function Fives({
 }: {
   univers: UniversSlug
   langue: string
-  /** Le compte connu de l'îlot — null tant qu'on n'est pas connecté. */
+  liste: ListeFive
   compte: Compte | null
   actif: boolean
-  /** Le serveur exige un compte : l'îlot ouvre la modale. */
   onConnexionRequise: () => void
-  /** Ouvre la fiche d'une œuvre posée. */
   onOuvrir: (identifiant: number, oeuvreId: number | null) => void
 }) {
   const t = useTextes()
@@ -72,15 +86,12 @@ export function Fives({
   const [rangOuvert, setRangOuvert] = useState<number | null>(null)
   const [frappe, setFrappe] = useState('')
   const [resultats, setResultats] = useState<Carte[]>([])
-  // Le plateau anonyme reste derrière son bouton d'accueil tant que ce
-  // n'est pas cliqué — sauf si un brouillon existe déjà.
-  const [commence, setCommence] = useState(false)
   const charge = useRef<{ univers: UniversSlug; compte: string | null } | null>(null)
 
   const recharger = async () => {
     setEtat('en-cours')
     try {
-      const reponse = await chargerFives(univers)
+      const reponse = await chargerFives(univers, liste)
       setFives(reponse.items)
       setEtat('servi')
     } catch (exception) {
@@ -97,17 +108,17 @@ export function Fives({
   // c'est la promesse du parcours anonyme. Meilleur effort : un rang qui
   // échoue ne fait pas perdre les autres.
   const verserPuisRecharger = async () => {
-    const brouillon = lireBrouillon(univers)
+    const brouillon = lireBrouillon(univers, liste)
     if (brouillon.length > 0) {
       setEtat('en-cours')
       for (const five of brouillon) {
         try {
-          await poserFive(univers, five.rang, five.oeuvreId)
+          await poserFive(univers, liste, five.rang, five.oeuvreId)
         } catch {
           // Œuvre disparue ou rang refusé : les autres passent quand même.
         }
       }
-      ecrireBrouillon(univers, [])
+      ecrireBrouillon(univers, liste, [])
     }
     await recharger()
   }
@@ -120,11 +131,10 @@ export function Fives({
     setRangOuvert(null)
     setFrappe('')
     setFives([])
-    setCommence(false)
     if (identite === null) {
       // Personne de connecté : le plateau se compose en silence, en local —
       // pas un mot au serveur.
-      setFives(lireBrouillon(univers))
+      setFives(lireBrouillon(univers, liste))
       setEtat('servi')
     } else {
       void verserPuisRecharger()
@@ -173,7 +183,7 @@ export function Fives({
         (a, b) => a.rang - b.rang,
       )
       setFives(nouveaux)
-      ecrireBrouillon(univers, nouveaux)
+      ecrireBrouillon(univers, liste, nouveaux)
       setRangOuvert(null)
       setFrappe('')
       setResultats([])
@@ -183,7 +193,7 @@ export function Fives({
       return
     }
     try {
-      await poserFive(univers, rang, carte.oeuvreId)
+      await poserFive(univers, liste, rang, carte.oeuvreId)
       setRangOuvert(null)
       setFrappe('')
       setResultats([])
@@ -197,11 +207,11 @@ export function Fives({
     if (compte === null) {
       const nouveaux = fives.filter((five) => five.rang !== rang)
       setFives(nouveaux)
-      ecrireBrouillon(univers, nouveaux)
+      ecrireBrouillon(univers, liste, nouveaux)
       return
     }
     try {
-      await retirerFive(univers, rang)
+      await retirerFive(univers, liste, rang)
       await recharger()
     } catch (exception) {
       if (exception instanceof ApiErreur && exception.status === 401) onConnexionRequise()
@@ -210,7 +220,7 @@ export function Fives({
 
   if (etat === 'connexion') {
     return (
-      <div className="fives">
+      <div className="fives-palmares">
         <p className="fivo-message">{t.dit('compte.pourquoi')}</p>
         <button type="button" className="compte-bouton" onClick={onConnexionRequise}>
           {t.dit('compte.titre_connexion')}
@@ -222,31 +232,12 @@ export function Fives({
     return <p className="fivo-message fivo-erreur">{t.dit('fives.erreur')}</p>
   }
 
-  // L'accueil anonyme : pas de formulaire, pas de barrière — un seul bouton
-  // qui ouvre le plateau. (Un brouillon déjà entamé saute l'accueil.)
-  if (compte === null && fives.length === 0 && !commence && etat === 'servi') {
-    return (
-      <div className="fives fives-accueil">
-        <p className="fives-pitch">{t.dit(`fives.pitch.${univers}`)}</p>
-        <h4 className="fives-titre">{t.dit(`fives.titre.${univers}`)}</h4>
-        <button
-          type="button"
-          className="compte-bouton fives-commencer"
-          onClick={() => setCommence(true)}
-        >
-          {t.dit('fives.commencer')}
-        </button>
-      </div>
-    )
-  }
-
   const parRang = new Map(fives.map((five) => [five.rang, five]))
+  const titre = liste === 'vie' ? t.dit(`fives.titre.${univers}`) : t.dit('fives.moment')
 
   return (
-    <div className="fives">
-      <p className="fives-pitch">{t.dit(`fives.pitch.${univers}`)}</p>
-      <h4 className="fives-titre">{t.dit(`fives.titre.${univers}`)}</h4>
-      <p className="fives-consigne">{t.dit('fives.consigne')}</p>
+    <div className="fives-palmares">
+      <h4 className="fives-titre">{titre}</h4>
       <ol className="fives-cases">
         {RANGS.map((rang) => {
           const five = parRang.get(rang)
@@ -356,6 +347,133 @@ export function Fives({
           </button>
           <p className="fives-garder-note">{t.dit('fives.garder_note')}</p>
         </div>
+      )}
+    </div>
+  )
+}
+
+export function Fives({
+  univers,
+  langue,
+  compte,
+  actif,
+  onConnexionRequise,
+  onOuvrir,
+}: {
+  univers: UniversSlug
+  langue: string
+  /** Le compte connu de l'îlot — null tant qu'on n'est pas connecté. */
+  compte: Compte | null
+  actif: boolean
+  /** Le serveur exige un compte : l'îlot ouvre la modale. */
+  onConnexionRequise: () => void
+  /** Ouvre la fiche d'une œuvre posée. */
+  onOuvrir: (identifiant: number, oeuvreId: number | null) => void
+}) {
+  const t = useTextes()
+  // Le plateau anonyme reste derrière son bouton d'accueil tant que ce
+  // n'est pas cliqué — sauf si un brouillon existe déjà.
+  const [commence, setCommence] = useState(false)
+  const [communaute, setCommunaute] = useState<FiveCommunaute[]>([])
+  const vitrine = useRef<UniversSlug | null>(null)
+
+  useEffect(() => {
+    setCommence(false)
+  }, [univers])
+
+  useEffect(() => {
+    if (!actif || vitrine.current === univers) return
+    vitrine.current = univers
+    setCommunaute([])
+    fivesCommunaute(univers)
+      .then(({ items }) => setCommunaute(items))
+      .catch(() => {
+        // Une vitrine muette ne prive personne de ses propres fives.
+      })
+  }, [actif, univers])
+
+  const brouillons =
+    compte === null
+      ? lireBrouillon(univers, 'vie').length + lireBrouillon(univers, 'moment').length
+      : 0
+
+  if (compte === null && brouillons === 0 && !commence) {
+    // L'accueil anonyme : pas de formulaire, pas de barrière — un seul
+    // bouton qui ouvre les plateaux.
+    return (
+      <div className="fives fives-accueil">
+        <p className="fives-pitch">{t.dit(`fives.pitch.${univers}`)}</p>
+        <h4 className="fives-titre">{t.dit(`fives.titre.${univers}`)}</h4>
+        <button
+          type="button"
+          className="compte-bouton fives-commencer"
+          onClick={() => setCommence(true)}
+        >
+          {t.dit('fives.commencer')}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="fives">
+      <p className="fives-pitch">{t.dit(`fives.pitch.${univers}`)}</p>
+      <p className="fives-consigne">{t.dit('fives.consigne')}</p>
+      <Palmares
+        univers={univers}
+        langue={langue}
+        liste="vie"
+        compte={compte}
+        actif={actif}
+        onConnexionRequise={onConnexionRequise}
+        onOuvrir={onOuvrir}
+      />
+      <Palmares
+        univers={univers}
+        langue={langue}
+        liste="moment"
+        compte={compte}
+        actif={actif}
+        onConnexionRequise={onConnexionRequise}
+        onOuvrir={onOuvrir}
+      />
+      {communaute.length > 0 && (
+        <section className="fives-communaute">
+          <h4 className="fives-titre">{t.dit('fives.communaute')}</h4>
+          <ul className="fives-communaute-liste">
+            {communaute.map((five, indice) => (
+              <li key={indice}>
+                <p className="fives-communaute-qui">
+                  <strong dir="auto">{five.pseudo ?? t.dit('fives.communaute_membre')}</strong>
+                  {five.titre && <span dir="auto">« {five.titre} »</span>}
+                </p>
+                <ul className="fives-communaute-oeuvres">
+                  {five.oeuvres.map((oeuvre) => {
+                    const affiche = urlAffiche(oeuvre.affiche, 'w92')
+                    return (
+                      <li key={oeuvre.rang}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            oeuvre.id !== null && onOuvrir(oeuvre.id, oeuvre.oeuvreId)
+                          }
+                          title={oeuvre.titre ?? undefined}
+                        >
+                          {affiche ? (
+                            <img src={affiche} alt="" loading="lazy" />
+                          ) : (
+                            <span className="fives-affiche-vide" aria-hidden="true" />
+                          )}
+                          <span dir="auto">{oeuvre.titre ?? t.dit('carte.sans_titre')}</span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </div>
   )

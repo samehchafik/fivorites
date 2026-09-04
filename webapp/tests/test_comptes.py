@@ -77,6 +77,7 @@ class FauxeBase:
                 "hache": hache,
                 "genre": genre,
                 "verifie_le": None,
+                "avatar": None,
             }
             self._resultat = [(cid,)]
         elif r.startswith("insert into visiteur.verification"):
@@ -95,11 +96,27 @@ class FauxeBase:
         elif r.startswith("select id, pseudo, genre, email_verifie_le, mot_de_passe"):
             for cid, c in self.comptes.items():
                 if c["email"] == parametres[0]:
-                    self._resultat = [(cid, c["pseudo"], c["genre"], c["verifie_le"], c["hache"])]
-        elif r.startswith("select id, pseudo, genre, email_verifie_le from"):
+                    self._resultat = [
+                        (cid, c["pseudo"], c["genre"], c["verifie_le"], c["hache"], c["avatar"])
+                    ]
+        elif r.startswith("select id, pseudo, genre, email_verifie_le, avatar"):
             for cid, c in self.comptes.items():
                 if c["email"] == parametres[0]:
-                    self._resultat = [(cid, c["pseudo"], c["genre"], c["verifie_le"])]
+                    self._resultat = [(cid, c["pseudo"], c["genre"], c["verifie_le"], c["avatar"])]
+        elif (
+            r.startswith("update visiteur.compte set pseudo")
+            or r.startswith("update visiteur.compte set")
+            and "returning pseudo, avatar, genre" in r
+        ):
+            pseudo, av1, _av2, _av3, genre, cid = parametres
+            c = self.comptes[cid]
+            if pseudo is not None:
+                c["pseudo"] = pseudo
+            if av1 is not None:
+                c["avatar"] = None if av1 == "" else av1
+            if genre is not None:
+                c["genre"] = genre
+            self._resultat = [(c["pseudo"], c["avatar"], c["genre"])]
         elif r.startswith("update visiteur.session set compte_id = %s"):
             self.sessions[parametres[1]] = parametres[0]
         elif r.startswith("update visiteur.session set compte_id = null"):
@@ -108,28 +125,65 @@ class FauxeBase:
             cid = self.sessions.get(parametres[0])
             if cid and cid in self.comptes:
                 c = self.comptes[cid]
-                self._resultat = [(cid, c["pseudo"], c["email"], c["genre"], c["verifie_le"])]
+                self._resultat = [
+                    (cid, c["pseudo"], c["email"], c["genre"], c["verifie_le"], c["avatar"])
+                ]
         elif r.startswith(
-            "delete from visiteur.five where compte_id = %s and univers = %s and oeuvre_id"
+            "delete from visiteur.five where compte_id = %s and univers = %s"
+            " and liste = %s and oeuvre_id"
         ):
-            cid, univers, oeuvre = parametres
+            cid, univers, liste, oeuvre = parametres
             for cle in [
-                k for k, v in self.fives.items() if k[0] == cid and k[1] == univers and v == oeuvre
+                k
+                for k, v in self.fives.items()
+                if k[0] == cid and k[1] == univers and k[2] == liste and v == oeuvre
             ]:
                 del self.fives[cle]
         elif r.startswith("insert into visiteur.five"):
-            cid, univers, rang, oeuvre = parametres
-            self.fives[(cid, univers, rang)] = oeuvre
+            cid, univers, liste, rang, oeuvre = parametres
+            self.fives[(cid, univers, liste, rang)] = oeuvre
         elif r.startswith(
-            "delete from visiteur.five where compte_id = %s and univers = %s and rang"
+            "delete from visiteur.five where compte_id = %s and univers = %s"
+            " and liste = %s and rang"
         ):
-            self.fives.pop((parametres[0], parametres[1], parametres[2]), None)
+            self.fives.pop((parametres[0], parametres[1], parametres[2], parametres[3]), None)
+        elif "from membre.five f" in r:
+            # Les fives de la communauté : la vraie table n'existe pas ici —
+            # un five anonyme suffit à verrouiller la forme de la réponse.
+            self._resultat = [
+                (
+                    "five-v1",
+                    "Mes séries cultes",
+                    "life",
+                    "ancien",
+                    True,
+                    1,
+                    42,
+                    999,
+                    "Œuvre 42",
+                    None,
+                    2015,
+                ),
+                (
+                    "five-v1",
+                    "Mes séries cultes",
+                    "life",
+                    "ancien",
+                    True,
+                    2,
+                    43,
+                    998,
+                    "Œuvre 43",
+                    None,
+                    2016,
+                ),
+            ]
         elif "from visiteur.five f" in r:
-            cid, univers = parametres
+            cid, univers, liste = parametres
             self._resultat = [
                 (rang, oeuvre, oeuvre - 1000, f"Œuvre {oeuvre}", None, 2020)
-                for (c, u, rang), oeuvre in sorted(self.fives.items())
-                if c == cid and u == univers
+                for (c, u, li, rang), oeuvre in sorted(self.fives.items())
+                if c == cid and u == univers and li == liste
             ]
 
     async def fetchone(self):
@@ -223,9 +277,40 @@ class TestCycleComplet:
         r = client.get("/api/public/fives?univers=series")
         assert [f["rang"] for f in r.json()["items"]] == [1]
 
-        # Retirer, lister : vide.
-        assert client.delete("/api/public/fives/series/1").status_code == 200
+        # Le top du moment est un palmarès à part : y poser la même œuvre ne
+        # touche pas au TOP 5 de ma vie.
+        r = client.post(
+            "/api/public/fives",
+            json={"univers": "series", "liste": "moment", "rang": 2, "oeuvreId": 4280},
+        )
+        assert r.status_code == 200
+        assert [
+            f["rang"] for f in client.get("/api/public/fives?univers=series").json()["items"]
+        ] == [1]
+        moment = client.get("/api/public/fives?univers=series&liste=moment").json()
+        assert [f["rang"] for f in moment["items"]] == [2]
+        assert moment["liste"] == "moment"
+        # Une liste inconnue : 400, pas un palmarès fantôme.
+        assert client.get("/api/public/fives?univers=series&liste=annee").status_code == 400
+
+        # Le profil se modifie : avatar posé, pseudo gardé.
+        r = client.patch("/api/public/compte", json={"avatar": "🦊"})
+        assert r.status_code == 200
+        assert r.json()["compte"]["avatar"] == "🦊"
+        assert r.json()["compte"]["pseudo"] == "Amina"
+
+        # Les fives de la communauté : publics, anonymes (membres masqués).
+        r = client.get("/api/public/fives/communaute?univers=series")
+        assert r.status_code == 200
+        vitrine = r.json()["items"]
+        assert vitrine and vitrine[0]["pseudo"] is None
+        assert vitrine[0]["titre"] == "Mes séries cultes"
+        assert [o["rang"] for o in vitrine[0]["oeuvres"]] == [1, 2]
+
+        # Retirer, lister : vide — le moment, lui, ne bouge pas.
+        assert client.delete("/api/public/fives/series/vie/1").status_code == 200
         assert client.get("/api/public/fives?univers=series").json()["items"] == []
+        assert client.delete("/api/public/fives/series/moment/2").status_code == 200
 
     def test_connexion_apres_coup(self, monde) -> None:
         client, courriel, base, _ = monde

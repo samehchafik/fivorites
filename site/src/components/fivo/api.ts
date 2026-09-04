@@ -2,19 +2,7 @@
 // relaie /api vers le service webapp (astro.config.mjs), en production c'est
 // le service qui sert le site — le cookie de session reste propriétaire.
 
-import type {
-  Compte,
-  Five,
-  Carte,
-  Episode,
-  Fiche,
-  FichePersonne,
-  Filtres,
-  Signal,
-  Statut,
-  Suggestion,
-  UniversSlug,
-} from './types'
+import type { Carte, Compte, Episode, Fiche, FichePersonne, Filtres, Five, FiveCommunaute, ListeFive, Signal, Statut, Suggestion, UniversSlug } from './types'
 
 const BASE = '/api/public'
 
@@ -223,21 +211,41 @@ export function deconnecter(): Promise<{ deconnecte: boolean }> {
   return requete('/compte/deconnecter', { method: 'POST' })
 }
 
-export function chargerFives(univers: UniversSlug): Promise<{ items: Five[]; rangs: number[] }> {
-  return requete(`/fives?univers=${univers}`)
+export function chargerFives(
+  univers: UniversSlug,
+  liste: ListeFive = 'vie',
+): Promise<{ items: Five[]; rangs: number[] }> {
+  return requete(`/fives?univers=${univers}&liste=${liste}`)
 }
 
 export function poserFive(
   univers: UniversSlug,
+  liste: ListeFive,
   rang: number,
   oeuvreId: number,
 ): Promise<{ pose: boolean }> {
   return requete('/fives', {
     method: 'POST',
-    body: JSON.stringify({ univers, rang, oeuvreId }),
+    body: JSON.stringify({ univers, liste, rang, oeuvreId }),
   })
 }
 
-export function retirerFive(univers: UniversSlug, rang: number): Promise<{ retire: boolean }> {
-  return requete(`/fives/${univers}/${rang}`, { method: 'DELETE' })
+export function retirerFive(
+  univers: UniversSlug,
+  liste: ListeFive,
+  rang: number,
+): Promise<{ retire: boolean }> {
+  return requete(`/fives/${univers}/${liste}/${rang}`, { method: 'DELETE' })
+}
+
+export function fivesCommunaute(univers: UniversSlug): Promise<{ items: FiveCommunaute[] }> {
+  return requete(`/fives/communaute?univers=${univers}`)
+}
+
+export function modifierCompte(profil: {
+  pseudo?: string
+  avatar?: string
+  genre?: string
+}): Promise<{ compte: Compte }> {
+  return requete('/compte', { method: 'PATCH', body: JSON.stringify(profil) })
 }

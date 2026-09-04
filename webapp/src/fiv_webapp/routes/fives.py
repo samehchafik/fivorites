@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
-from fiv_webapp.comptes import FIVES_RANGS, Compte
+from fiv_webapp.comptes import FIVES_LISTES, FIVES_RANGS, Compte
 from fiv_webapp.deps import CompteOptionnel, ComptesDep, Conn, SessionGarantie, SignauxDep
 from fiv_webapp.univers import univers_ou_400
 
@@ -34,22 +34,45 @@ def _connecte(compte: Compte | None) -> Compte:
 
 class FiveRequete(BaseModel):
     univers: str
+    liste: str = "vie"
     rang: int = Field(ge=1, le=5)
     oeuvre_id: int = Field(alias="oeuvreId", gt=0)
 
     model_config = {"populate_by_name": True}
 
 
+def _liste_ou_400(liste: str) -> str:
+    if liste not in FIVES_LISTES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"liste invalide : {liste} (attendu : {', '.join(FIVES_LISTES)})",
+        )
+    return liste
+
+
 @router.get("/fives")
 async def lister(
-    conn: Conn, comptes: ComptesDep, compte: CompteOptionnel, univers: str
+    conn: Conn, comptes: ComptesDep, compte: CompteOptionnel, univers: str, liste: str = "vie"
 ) -> dict[str, Any]:
     media = univers_ou_400(univers)
+    palmares = _liste_ou_400(liste)
     retenu = _connecte(compte)
     return {
-        "items": await comptes.fives(conn, retenu.id, media.interne),
+        "items": await comptes.fives(conn, retenu.id, media.interne, palmares),
         "rangs": list(FIVES_RANGS),
+        "liste": palmares,
     }
+
+
+@router.get("/fives/communaute")
+async def communaute(
+    conn: Conn, comptes: ComptesDep, univers: str, limite: int = 4
+) -> dict[str, Any]:
+    """Des fives de la communauté V1, tirés au sort — publics, anonymes
+    (les membres importés sont masqués), et sans compte requis : c'est une
+    vitrine, pas un espace personnel."""
+    media = univers_ou_400(univers)
+    return {"items": await comptes.fives_communaute(conn, media.interne, limite=min(limite, 10))}
 
 
 @router.post("/fives")
@@ -67,6 +90,7 @@ async def poser(
         conn,
         retenu.id,
         univers_interne=media.interne,
+        liste=_liste_ou_400(corps.liste),
         rang=corps.rang,
         oeuvre_id=corps.oeuvre_id,
     )
@@ -83,13 +107,16 @@ async def poser(
     return {"pose": True, "rang": corps.rang}
 
 
-@router.delete("/fives/{univers}/{rang}")
+@router.delete("/fives/{univers}/{liste}/{rang}")
 async def retirer(
-    conn: Conn, comptes: ComptesDep, compte: CompteOptionnel, univers: str, rang: int
+    conn: Conn, comptes: ComptesDep, compte: CompteOptionnel, univers: str, liste: str, rang: int
 ) -> dict[str, Any]:
     media = univers_ou_400(univers)
+    palmares = _liste_ou_400(liste)
     retenu = _connecte(compte)
     if rang not in FIVES_RANGS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"rang invalide : {rang}")
-    await comptes.retirer_five(conn, retenu.id, univers_interne=media.interne, rang=rang)
+    await comptes.retirer_five(
+        conn, retenu.id, univers_interne=media.interne, liste=palmares, rang=rang
+    )
     return {"retire": True}
