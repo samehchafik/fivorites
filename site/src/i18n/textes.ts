@@ -523,9 +523,42 @@ export const TEXTES = {
 
   // --- Les fives ---------------------------------------------------------
   'fives.onglet': { fr: 'Mes fives', en: 'My fives', es: 'Mis fives', ar: 'قوائمي الخمسية' },
-  'fives.titre.series': { fr: 'Vos 5 meilleures séries', en: 'Your 5 best series', es: 'Tus 5 mejores series', ar: 'أفضل 5 مسلسلات لديك' },
-  'fives.titre.films': { fr: 'Vos 5 meilleurs films', en: 'Your 5 best movies', es: 'Tus 5 mejores películas', ar: 'أفضل 5 أفلام لديك' },
-  'fives.titre.livres': { fr: 'Vos 5 meilleurs livres', en: 'Your 5 best books', es: 'Tus 5 mejores libros', ar: 'أفضل 5 كتب لديك' },
+  'fives.titre.series': {
+    fr: 'Le TOP 5 des séries de votre vie',
+    en: 'The TOP 5 series of your life',
+    es: 'El TOP 5 de las series de tu vida',
+    ar: 'أفضل 5 مسلسلات في حياتك',
+  },
+  'fives.titre.films': {
+    fr: 'Le TOP 5 des films de votre vie',
+    en: 'The TOP 5 movies of your life',
+    es: 'El TOP 5 de las películas de tu vida',
+    ar: 'أفضل 5 أفلام في حياتك',
+  },
+  'fives.titre.livres': {
+    fr: 'Le TOP 5 des livres de votre vie',
+    en: 'The TOP 5 books of your life',
+    es: 'El TOP 5 de los libros de tu vida',
+    ar: 'أفضل 5 كتب في حياتك',
+  },
+  'fives.pitch.series': {
+    fr: 'Partagez le TOP 5 des séries de votre vie pour obtenir des suggestions personnalisées.',
+    en: 'Share the TOP 5 series of your life to get personalized suggestions.',
+    es: 'Comparte el TOP 5 de las series de tu vida para obtener sugerencias personalizadas.',
+    ar: 'شارك أفضل 5 مسلسلات في حياتك لتحصل على اقتراحات مخصّصة.',
+  },
+  'fives.pitch.films': {
+    fr: 'Partagez le TOP 5 des films de votre vie pour obtenir des suggestions personnalisées.',
+    en: 'Share the TOP 5 movies of your life to get personalized suggestions.',
+    es: 'Comparte el TOP 5 de las películas de tu vida para obtener sugerencias personalizadas.',
+    ar: 'شارك أفضل 5 أفلام في حياتك لتحصل على اقتراحات مخصّصة.',
+  },
+  'fives.pitch.livres': {
+    fr: 'Partagez le TOP 5 des livres de votre vie pour obtenir des suggestions personnalisées.',
+    en: 'Share the TOP 5 books of your life to get personalized suggestions.',
+    es: 'Comparte el TOP 5 de los libros de tu vida para obtener sugerencias personalizadas.',
+    ar: 'شارك أفضل 5 كتب في حياتك لتحصل على اقتراحات مخصّصة.',
+  },
   'fives.consigne': {
     fr: 'Touchez une case, cherchez, choisissez — c’est tout.',
     en: 'Tap a slot, search, pick — that’s it.',

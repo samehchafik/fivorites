@@ -110,12 +110,23 @@ export function CompteModale({
       centered
       radius={8}
       padding={0}
-      title={null}
+      // Le titre vit dans la barre d'en-tête, à gauche de la croix — pas
+      // dans le corps du message (retour du designer).
+      title={
+        <span lang={t.langue} dir={t.sens}>
+          {titres[ecran]}
+        </span>
+      }
       overlayProps={{ backgroundOpacity: 0.8, blur: 2 }}
-      classNames={{ content: 'compte-modale', body: 'compte-corps', close: 'fiche-fermer' }}
+      classNames={{
+        content: 'compte-modale',
+        body: 'compte-corps',
+        header: 'compte-tete',
+        title: 'compte-titre',
+        close: 'fiche-fermer',
+      }}
     >
       <div className="compte" lang={t.langue} dir={t.sens}>
-        <h2>{titres[ecran]}</h2>
         {ecran !== 'code' && <p className="compte-pourquoi">{t.dit('compte.pourquoi')}</p>}
 
         {ecran === 'inscription' && (

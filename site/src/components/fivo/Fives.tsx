@@ -1,10 +1,10 @@
 // Les fives : vos cinq meilleures œuvres, par univers — LE geste du site.
 //
-// Le cahier des charges est « accessible à presque un bébé », et la mise en
-// page le prend au mot : CINQ GRANDES CASES numérotées, rien d'autre.
-// Toucher une case vide ouvre une recherche dans la case même ; toucher un
-// résultat la remplit. Toucher le ✕ d'une case pleine la vide. Il n'y a
-// rien à apprendre.
+// Le cahier des charges est « accessible à presque un bébé », et la maquette
+// du designer le prend au mot : CINQ RANGÉES numérotées de 1 à 5, façon
+// palmarès — vignette + titre quand la rangée est remplie. Toucher une
+// rangée vide ouvre une recherche sur place ; toucher un résultat la
+// remplit. Toucher le ✕ d'une rangée pleine la vide. Rien à apprendre.
 //
 // Sans compte, PAS de barrière : « Commence ton premier five » ouvre le
 // plateau, et tout se compose en silence, en local — le serveur n'est pas
@@ -227,8 +227,8 @@ export function Fives({
   if (compte === null && fives.length === 0 && !commence && etat === 'servi') {
     return (
       <div className="fives fives-accueil">
+        <p className="fives-pitch">{t.dit(`fives.pitch.${univers}`)}</p>
         <h4 className="fives-titre">{t.dit(`fives.titre.${univers}`)}</h4>
-        <p className="fives-consigne">{t.dit('fives.consigne')}</p>
         <button
           type="button"
           className="compte-bouton fives-commencer"
@@ -244,12 +244,13 @@ export function Fives({
 
   return (
     <div className="fives">
+      <p className="fives-pitch">{t.dit(`fives.pitch.${univers}`)}</p>
       <h4 className="fives-titre">{t.dit(`fives.titre.${univers}`)}</h4>
       <p className="fives-consigne">{t.dit('fives.consigne')}</p>
       <ol className="fives-cases">
         {RANGS.map((rang) => {
           const five = parRang.get(rang)
-          const affiche = urlAffiche(five?.affiche ?? null, 'w342')
+          const affiche = urlAffiche(five?.affiche ?? null, 'w92')
           if (five) {
             return (
               <li key={rang} className="fives-case fives-case-pleine">

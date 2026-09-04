@@ -2010,17 +2010,24 @@
   padding: 0;
 }
 
+/* La barre d'en-tête : le titre à gauche, la croix à droite — le titre ne
+   descend jamais dans le corps du message. */
+.compte-tete {
+  background: transparent;
+  padding: 1rem 1.1rem 0;
+}
+
+.compte-titre {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: white;
+}
+
 .compte {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-  padding: 1.4rem 1.4rem 1.6rem;
-}
-
-.compte h2 {
-  margin: 0;
-  font-size: 1.25rem;
-  text-align: center;
+  padding: 0.9rem 1.4rem 1.6rem;
 }
 
 .compte-pourquoi {
@@ -2112,7 +2119,14 @@
   text-align: center;
 }
 
-/* --- Les fives : cinq grandes cases -------------------------------------- */
+/* --- Les fives : le TOP 5 de votre vie, en palmarès ---------------------- */
+
+.fives-pitch {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: white;
+}
 
 .fives-titre {
   margin: 0 0 0.15rem;
@@ -2152,29 +2166,29 @@
   color: rgba(255, 255, 255, 0.75);
 }
 
+/* La maquette du designer : un palmarès — cinq RANGÉES pleine largeur,
+   numérotées de 1 à 5, vignette + titre quand la rangée est remplie. */
 .fives-cases {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
 }
 
 .fives-case {
-  position: relative;
-  min-height: 230px;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 4.2rem;
+  padding: 0.4rem 0.55rem;
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.18);
-  display: flex;
-  flex-direction: column;
 }
 
 .fives-rang {
-  position: absolute;
-  top: 0.4rem;
-  inset-inline-start: 0.4rem;
-  z-index: 2;
+  flex-shrink: 0;
   width: 1.7rem;
   height: 1.7rem;
   border-radius: 50%;
@@ -2186,14 +2200,14 @@
   text-align: center;
 }
 
-/* La case vide : un grand +, un mot. Toute la case est le bouton. */
+/* La rangée vide : toute la rangée est le bouton — numéro, +, un mot. */
 .fives-vide {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 0.2rem;
+  gap: 0.7rem;
+  min-height: 3.4rem;
+  padding: 0.2rem 0.4rem;
   border: 2px dashed rgba(255, 255, 255, 0.5);
   border-radius: 8px;
   background: transparent;
@@ -2202,6 +2216,12 @@
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
+  text-align: start;
+}
+
+.fives-case:has(.fives-vide) {
+  background: transparent;
+  padding: 0;
 }
 
 .fives-vide:hover {
@@ -2210,58 +2230,66 @@
 }
 
 .fives-plus {
-  font-size: 2.6rem;
+  font-size: 1.6rem;
   line-height: 1;
   font-weight: 300;
 }
 
-/* La case pleine : l'affiche et le titre — cliquer ouvre la fiche. */
+/* La rangée pleine : vignette + titre — cliquer ouvre la fiche. */
 .fives-oeuvre {
   flex: 1;
+  min-width: 0;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
   border: 0;
   padding: 0;
-  border-radius: 8px;
-  overflow: hidden;
   background: transparent;
   color: white;
   font-family: inherit;
   cursor: pointer;
-  text-align: center;
+  text-align: start;
 }
 
 .fives-oeuvre img,
 .fives-affiche-vide {
-  width: 100%;
-  height: 185px;
+  width: 46px;
+  height: 64px;
+  flex-shrink: 0;
   object-fit: cover;
   display: block;
+  border-radius: 5px;
   background:
-    url('/images/star-white.svg') no-repeat 50% 40% / 40%,
+    url('/images/star-white.svg') no-repeat 50% 45% / 55%,
     linear-gradient(0deg, var(--fivorites1, #fa0036), var(--fivorites2, #700031));
 }
 
 .fives-oeuvre strong {
-  padding: 0.35rem 0.4rem;
-  font-size: 0.8rem;
-  line-height: 1.2;
+  min-width: 0;
+  font-size: 0.95rem;
+  line-height: 1.25;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-/* La case en recherche : le champ et cinq résultats, dans la case élargie. */
+/* Le ✕ d'une rangée : à sa place dans le flux, calé au bout. */
+.fives-case-pleine .fivo-retirer {
+  position: static;
+  flex-shrink: 0;
+}
+
+/* La rangée en recherche : le champ et cinq résultats, la rangée s'étire. */
 .fives-case-ouverte {
-  grid-column: 1 / -1;
+  flex-direction: column;
+  align-items: stretch;
   min-height: 0;
   padding: 0.8rem 0.8rem 0.6rem;
   gap: 0.5rem;
 }
 
 .fives-case-ouverte .fives-rang {
-  position: static;
   flex-shrink: 0;
   margin-bottom: 0.2rem;
 }
