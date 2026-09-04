@@ -117,7 +117,10 @@ export function MaListe({
     let abandonne = false
     chargerPalmares(univers)
       .then((reponse) => {
-        if (!abandonne) setTops(reponse.items)
+        // Ici (et seulement ici) le couronné passe devant : Ma liste est une
+        // lecture, l'ordre de création n'y dit rien.
+        if (!abandonne)
+          setTops([...reponse.items].sort((a, b) => Number(b.vie) - Number(a.vie)))
       })
       .catch(() => {
         // Des palmarès illisibles ne cassent pas la liste : section vide.

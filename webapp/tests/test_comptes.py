@@ -190,7 +190,7 @@ class FauxeBase:
                     for pid, palm in self.palmares.items()
                     if palm["compte"] == cid and palm["univers"] == univers
                 ),
-                key=lambda duo: (not duo[1]["vie"], duo[1]["ordre"]),
+                key=lambda duo: duo[1]["ordre"],
             )
             for pid, palm in miens:
                 rangs = sorted(
@@ -357,10 +357,11 @@ class TestCycleComplet:
         assert (
             client.patch(f"/api/public/fives/{second['id']}", json={"vie": True}).status_code == 200
         )
+        # L'ordre reste celui de création : la couronne bouge, pas les rangs.
         liste = client.get("/api/public/fives?univers=series").json()["items"]
-        assert [p["vie"] for p in liste] == [True, False]
-        assert liste[0]["titre"] == "Mes polars"
-        assert [o["rang"] for o in liste[1]["oeuvres"]] == [1]
+        assert [p["vie"] for p in liste] == [False, True]
+        assert liste[1]["titre"] == "Mes polars"
+        assert [o["rang"] for o in liste[0]["oeuvres"]] == [1]
 
         # Renommer, retirer une position, supprimer un palmarès.
         assert (

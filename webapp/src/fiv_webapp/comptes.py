@@ -324,8 +324,10 @@ class Comptes:
     async def palmares(
         self, conn: psycopg.AsyncConnection, compte_id: str, univers_interne: str
     ) -> list[dict[str, Any]]:
-        """Tous les TOP 5 de l'univers, positions hydratées — celui de la
-        vie d'abord, puis les autres du plus ancien au plus récent."""
+        """Tous les TOP 5 de l'univers, positions hydratées, dans l'ordre
+        de création — STABLE exprès : couronner un palmarès ne le fait pas
+        sauter en tête de liste, sinon « le premier est toujours coché » et
+        l'utilisateur ne voit jamais la couronne bouger."""
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -344,7 +346,7 @@ class Comptes:
                 left join admin.movie_card mv on p.univers = 'movies' and mv.id = o.id_tmdb
                 left join admin.livre_card lv on p.univers = 'livres' and lv.id = o.id
                 where p.compte_id = %s and p.univers = %s
-                order by p.vie desc, p.creation, pos.rang
+                order by p.creation, pos.rang
                 """,
                 (compte_id, univers_interne),
             )
