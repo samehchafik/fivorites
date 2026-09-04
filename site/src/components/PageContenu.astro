@@ -30,7 +30,34 @@ if (!entree) {
   throw new Error(`entrée de contenu introuvable : ${identifiant}`)
 }
 const { Content } = await render(entree)
-const { titre, description, surTitre, accroche, phrases, univers } = entree.data
+const {
+  titre,
+  description,
+  surTitre,
+  accroche,
+  phrases,
+  univers,
+  commentTitre,
+  etapes,
+  empreinteTitre,
+  empreinte,
+  salonsTitre,
+  salonsTexte,
+} = entree.data
+
+// Le corps Markdown est facultatif : la home dit tout dans ses sections.
+const corps = entree.body?.trim()
+
+// Le libellé du CTA : la maquette dit « Je me lance ! » sur la home.
+const cta = etapes ? 'cta.lance' : 'cta.suggestions'
+
+// Le slider de la section empreinte : les mosaïques d'affiches carmin de la
+// V1, une par univers, en fondu enchaîné.
+const diapositives = [
+  '/images/fond-image-Series.jpg',
+  '/images/fond-image-Films.jpg',
+  '/images/fond-image-Livres.jpg',
+]
 
 // Les ** du frontmatter deviennent des <strong> — c'est le seul balisage que
 // le sur-titre connaît, inutile d'invoquer un moteur Markdown pour ça.
@@ -48,7 +75,7 @@ const sur_titre_html = surTitre
         <div class="heros-texte">
           <h1>{accroche ?? titre}</h1>
           {phrases?.map((phrase) => <p>{phrase}</p>)}
-          <a class="bouton-cta" href="#suggere-moi">{traduire(langue, 'cta.suggestions')}</a>
+          <a class="bouton-cta" href="#suggere-moi">{traduire(langue, cta)}</a>
         </div>
         <div class="heros-outil" id="suggere-moi">
           {/* L'îlot : le seul JavaScript de la page. `client:load` — c'est
@@ -59,7 +86,72 @@ const sur_titre_html = surTitre
     </div>
   </section>
 
-  <article class="prose">
-    <Content />
-  </article>
+  {
+    etapes && (
+      <section class="accueil-section">
+        <div class="conteneur">
+          <h2>{commentTitre}</h2>
+          <ol class="accueil-etapes">
+            {etapes.map((etape, indice) => (
+              <li>
+                <span class="accueil-numero" aria-hidden="true">
+                  {indice + 1}
+                </span>
+                <p>{etape}</p>
+              </li>
+            ))}
+          </ol>
+          <p class="accueil-cta">
+            <a class="bouton-cta" href="#suggere-moi">
+              {traduire(langue, cta)}
+            </a>
+          </p>
+        </div>
+      </section>
+    )
+  }
+
+  {
+    empreinte && (
+      <section class="accueil-section accueil-empreinte">
+        <div class="conteneur accueil-empreinte-grille">
+          <div class="accueil-empreinte-texte">
+            <h2>{empreinteTitre}</h2>
+            {empreinte.map((paragraphe) => (
+              <p>{paragraphe}</p>
+            ))}
+          </div>
+          {/* Le fondu enchaîné est en CSS pur : trois images empilées, une
+              animation décalée chacune — pas un octet de JavaScript. */}
+          <div class="accueil-slider" aria-hidden="true">
+            {diapositives.map((source) => (
+              <img src={source} alt="" loading="lazy" />
+            ))}
+          </div>
+        </div>
+      </section>
+    )
+  }
+
+  {
+    salonsTitre && (
+      <section class="accueil-section accueil-salons">
+        <div class="conteneur">
+          <h2>
+            {salonsTitre}
+            <span class="accueil-bientot">{traduire(langue, 'commun.bientot')}</span>
+          </h2>
+          <p>{salonsTexte}</p>
+        </div>
+      </section>
+    )
+  }
+
+  {
+    corps && (
+      <article class="prose">
+        <Content />
+      </article>
+    )
+  }
 </Base>

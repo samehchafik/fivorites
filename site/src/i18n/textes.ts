@@ -41,6 +41,18 @@ export const TEXTES = {
     es: '¡Obtén sugerencias personalizadas!',
     ar: 'احصل على اقتراحات مخصّصة لك!',
   },
+  'cta.lance': {
+    fr: 'Je me lance !',
+    en: "Let's go!",
+    es: '¡Me lanzo!',
+    ar: 'أبدأ الآن!',
+  },
+  'commun.bientot': {
+    fr: 'Bientôt',
+    en: 'Coming soon',
+    es: 'Muy pronto',
+    ar: 'قريبًا',
+  },
   'voile.titre': {
     fr: 'Bienvenue en avant-première !',
     en: 'Welcome to the preview!',

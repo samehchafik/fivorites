@@ -31,6 +31,30 @@
             "livres"
           ]
         },
+        "commentTitre": {
+          "type": "string"
+        },
+        "etapes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "empreinteTitre": {
+          "type": "string"
+        },
+        "empreinte": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "salonsTitre": {
+          "type": "string"
+        },
+        "salonsTexte": {
+          "type": "string"
+        },
         "$schema": {
           "type": "string"
         }

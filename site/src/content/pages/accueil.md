@@ -4,22 +4,19 @@ description: "Partagez les 5 meilleures séries, films et livres de votre vie : 
 surTitre: "LE **TOP** DE LA CULTURE **POP**, SUR MESURE !"
 accroche: "Plus rien à regarder ? Écouter ? Lire ?"
 phrases:
-  - "Partagez les 5 meilleures séries, films, livres, bds, musiques de votre vie et obtenez des suggestions personnalisées !"
-  - "En quelques swipes, FIVO, notre moteur de recommandations apprend à vous connaitre et vous suggère les prochaines séries, films, livres, bd, musiques qui vont vous passionner !"
+  - "Fivorites, l'application pour trouver des séries, films et livres que vous allez adorer."
+  - "En quelques swipes, FIVO, notre moteur de recommandations, apprend à vous connaître et vous suggère vos prochains coups de cœur !"
+commentTitre: "Comment ça marche ?"
+etapes:
+  - "Vous partagez le TOP 5 de votre vie."
+  - "Vous obtenez des suggestions personnalisées."
+  - "Vous découvrez des membres qui ont une empreinte culturelle proche de la vôtre."
+  - "Vous construisez et gérez vos listes."
+empreinteTitre: "L'empreinte culturelle"
+empreinte:
+  - "Chaque membre dispose d'une empreinte culturelle : une signature en six dimensions, calculée à partir des œuvres qui l'ont marqué."
+  - "Elle permet de vous suggérer des membres avec des goûts proches des vôtres, et des contenus que vous allez adorer."
+  - "Elle permet aussi de vous surprendre, en allant dénicher des contenus auxquels vous n'auriez pas pensé."
+salonsTitre: "Les salons de discussion"
+salonsTexte: "Créez et contribuez dans des salons de discussion, avec des membres qui partagent vos passions."
 ---
-
-## Comment ça marche ?
-
-FIVO ne vous demande pas de noter cent films sur dix. Il vous demande ce qui
-compte : **les œuvres qui vous ont marqué**. Cherchez une série, un film ou un
-livre, dites si vous l'avez vu et aimé, si vous ne l'aimez pas, ou si vous
-voulez le voir — et c'est tout.
-
-À partir de ces quelques gestes, FIVO croise deux savoirs : **la communauté**
-— des milliers de tops 5 partagés par des passionnés qui ont vos goûts — et
-**l'empreinte culturelle** de chaque œuvre, une signature en six dimensions
-qui permet de mesurer à quel point deux histoires se ressemblent vraiment,
-au-delà du genre affiché.
-
-Le résultat : des suggestions qui collent, expliquées — vous savez toujours
-*pourquoi* une œuvre vous est proposée.

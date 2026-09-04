@@ -24,6 +24,17 @@ const pages = defineCollection({
     // L'univers que le composant de suggestion doit présélectionner sur
     // cette page. Absent = la home, qui laisse le choix.
     univers: z.enum(['series', 'films', 'livres']).optional(),
+    // --- Les sections de la home, d'après la maquette du designer ---------
+    // « Comment ça marche ? » : le titre et les étapes numérotées.
+    commentTitre: z.string().optional(),
+    etapes: z.array(z.string()).optional(),
+    // « L'empreinte culturelle » : titre + paragraphes, illustrés par le
+    // slider des mosaïques d'affiches.
+    empreinteTitre: z.string().optional(),
+    empreinte: z.array(z.string()).optional(),
+    // Le teaser des salons de discussion (la fonctionnalité arrive).
+    salonsTitre: z.string().optional(),
+    salonsTexte: z.string().optional(),
   }),
 })
 
