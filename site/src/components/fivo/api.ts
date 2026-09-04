@@ -2,7 +2,7 @@
 // relaie /api vers le service webapp (astro.config.mjs), en production c'est
 // le service qui sert le site — le cookie de session reste propriétaire.
 
-import type { Carte, Compte, Episode, Fiche, FichePersonne, Filtres, Five, FiveCommunaute, ListeFive, Signal, Statut, Suggestion, UniversSlug } from './types'
+import type { Carte, Compte, Episode, Fiche, FichePersonne, Filtres, Five, FiveCommunaute, Palmares, Signal, Statut, Suggestion, UniversSlug } from './types'
 
 const BASE = '/api/public'
 
@@ -211,31 +211,44 @@ export function deconnecter(): Promise<{ deconnecte: boolean }> {
   return requete('/compte/deconnecter', { method: 'POST' })
 }
 
-export function chargerFives(
-  univers: UniversSlug,
-  liste: ListeFive = 'vie',
-): Promise<{ items: Five[]; rangs: number[] }> {
-  return requete(`/fives?univers=${univers}&liste=${liste}`)
+export function chargerPalmares(univers: UniversSlug): Promise<{ items: Palmares[] }> {
+  return requete(`/fives?univers=${univers}`)
 }
 
-export function poserFive(
+export function creerPalmares(
   univers: UniversSlug,
-  liste: ListeFive,
+  titre?: string,
+): Promise<{ palmares: Palmares }> {
+  return requete('/fives', { method: 'POST', body: JSON.stringify({ univers, titre }) })
+}
+
+export function retoucherPalmares(
+  palmaresId: string,
+  retouche: { titre?: string; vie?: boolean },
+): Promise<{ retouche: boolean }> {
+  return requete(`/fives/${palmaresId}`, { method: 'PATCH', body: JSON.stringify(retouche) })
+}
+
+export function supprimerPalmares(palmaresId: string): Promise<{ supprime: boolean }> {
+  return requete(`/fives/${palmaresId}`, { method: 'DELETE' })
+}
+
+export function poserPosition(
+  palmaresId: string,
   rang: number,
   oeuvreId: number,
 ): Promise<{ pose: boolean }> {
-  return requete('/fives', {
+  return requete(`/fives/${palmaresId}/positions`, {
     method: 'POST',
-    body: JSON.stringify({ univers, liste, rang, oeuvreId }),
+    body: JSON.stringify({ rang, oeuvreId }),
   })
 }
 
-export function retirerFive(
-  univers: UniversSlug,
-  liste: ListeFive,
+export function retirerPosition(
+  palmaresId: string,
   rang: number,
 ): Promise<{ retire: boolean }> {
-  return requete(`/fives/${univers}/${liste}/${rang}`, { method: 'DELETE' })
+  return requete(`/fives/${palmaresId}/positions/${rang}`, { method: 'DELETE' })
 }
 
 export function fivesCommunaute(univers: UniversSlug): Promise<{ items: FiveCommunaute[] }> {

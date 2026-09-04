@@ -18,12 +18,18 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import { chargerFives, listerSignaux, urlAffiche } from './api'
+import { chargerPalmares, listerSignaux, urlAffiche } from './api'
 import { CarteOeuvre } from './CarteOeuvre'
-import { lireBrouillon } from './Fives'
+import { lirePalmaresLocaux } from './Fives'
 import { useTextes } from './textes'
 import type { CleTexte } from '../../i18n/textes'
-import { type Compte, type Five, type Signal, type Statut, type UniversSlug } from './types'
+import {
+  type Compte,
+  type Palmares,
+  type Signal,
+  type Statut,
+  type UniversSlug,
+} from './types'
 
 // L'ordre des sections : ce qui reste à faire d'abord, ce qui est acquis
 // ensuite, ce qui est écarté en dernier.
@@ -68,8 +74,7 @@ export function MaListe({
   const [etat, setEtat] = useState<'en-cours' | 'servi' | 'erreur'>('en-cours')
   // Les palmarès de l'univers courant — la première section de la maquette.
   // Rechargés à chaque ouverture de l'onglet : ils ont pu changer à côté.
-  const [topFives, setTopFives] = useState<Five[]>([])
-  const [topMoment, setTopMoment] = useState<Five[]>([])
+  const [tops, setTops] = useState<Palmares[]>([])
   // Ce que la liste affichée reflète déjà — même règle que dans les deux
   // autres onglets : caché, le panneau ne recharge rien ; visible, il ne
   // recharge que si quelque chose a bougé.
@@ -103,26 +108,20 @@ export function MaListe({
     if (!actif) return
     if (compte === null) {
       // Sans compte, les palmarès sont les brouillons locaux — lecture
-      // instantanée.
-      setTopFives(lireBrouillon(univers, 'vie'))
-      setTopMoment(lireBrouillon(univers, 'moment'))
+      // instantanée. Celui de la vie passe devant, comme au serveur.
+      setTops(
+        [...lirePalmaresLocaux(univers)].sort((a, b) => Number(b.vie) - Number(a.vie)),
+      )
       return
     }
     let abandonne = false
-    chargerFives(univers, 'vie')
+    chargerPalmares(univers)
       .then((reponse) => {
-        if (!abandonne) setTopFives(reponse.items)
+        if (!abandonne) setTops(reponse.items)
       })
       .catch(() => {
-        // Un TOP 5 illisible ne casse pas la liste : la section se montre vide.
-        if (!abandonne) setTopFives([])
-      })
-    chargerFives(univers, 'moment')
-      .then((reponse) => {
-        if (!abandonne) setTopMoment(reponse.items)
-      })
-      .catch(() => {
-        if (!abandonne) setTopMoment([])
+        // Des palmarès illisibles ne cassent pas la liste : section vide.
+        if (!abandonne) setTops([])
       })
     return () => {
       abandonne = true
@@ -136,96 +135,82 @@ export function MaListe({
     return <p className="fivo-message">{t.dit('commun.chargement')}</p>
   }
 
-  // « Le TOP 5 de ma vie » — la première section de la maquette. En lecture
-  // seule : le palmarès s'édite dans l'onglet Mes fives, « Modifier » y mène.
-  const sectionTop5 = (
-    <section className="fivo-section-liste fivo-section-top5">
-      <h4>
-        {t.dit('liste.top5')}
-        <button type="button" className="compte-lien fivo-top5-modifier" onClick={onVoirFives}>
-          {t.dit('liste.top5_modifier')}
-        </button>
-      </h4>
-      {topFives.length === 0 ? (
-        <p className="fivo-message fivo-message-discret">
-          {t.dit('liste.top5_vide')}{' '}
-          <button type="button" className="compte-lien" onClick={onVoirFives}>
-            {t.dit('fives.commencer')}
-          </button>
-        </p>
-      ) : (
-        <ol className="fives-cases">
-          {topFives.map((five) => {
-            const affiche = urlAffiche(five.affiche, 'w92')
-            return (
-              <li key={five.rang} className="fives-case fives-case-pleine">
-                <span className="fives-rang" aria-hidden="true">
-                  {five.rang}
-                </span>
-                <button
-                  type="button"
-                  className="fives-oeuvre"
-                  onClick={() => five.id !== null && onOuvrir(five.id, five.oeuvreId, univers)}
-                  title={five.titre ?? undefined}
-                >
-                  {affiche ? (
-                    <img src={affiche} alt="" loading="lazy" />
-                  ) : (
-                    <span className="fives-affiche-vide" aria-hidden="true" />
-                  )}
-                  <strong dir="auto">{five.titre ?? t.dit('carte.sans_titre')}</strong>
-                </button>
-              </li>
-            )
-          })}
-        </ol>
+  // Les TOP 5 — les premières sections de la maquette, en lecture seule :
+  // les palmarès s'éditent dans l'onglet Mes fives, « Modifier » y mène.
+  // Celui de la vie s'affiche même vide (c'est le geste attendu) ; les
+  // autres portent le nom que leur auteur leur a donné.
+  const sectionsTops = (
+    <>
+      {tops.length === 0 && (
+        <section className="fivo-section-liste fivo-section-top5">
+          <h4>{t.dit('liste.top5')}</h4>
+          <p className="fivo-message fivo-message-discret">
+            {t.dit('liste.top5_vide')}{' '}
+            <button type="button" className="compte-lien" onClick={onVoirFives}>
+              {t.dit('fives.commencer')}
+            </button>
+          </p>
+        </section>
       )}
-    </section>
-  )
-
-  // « Le TOP du moment » — seulement s'il existe : contrairement au TOP 5
-  // de la vie, il n'est pas un passage obligé.
-  const sectionMoment = topMoment.length > 0 && (
-    <section className="fivo-section-liste fivo-section-top5">
-      <h4>
-        {t.dit('fives.moment')}
-        <button type="button" className="compte-lien fivo-top5-modifier" onClick={onVoirFives}>
-          {t.dit('liste.top5_modifier')}
-        </button>
-      </h4>
-      <ol className="fives-cases">
-        {topMoment.map((five) => {
-          const affiche = urlAffiche(five.affiche, 'w92')
-          return (
-            <li key={five.rang} className="fives-case fives-case-pleine">
-              <span className="fives-rang" aria-hidden="true">
-                {five.rang}
+      {tops.map((palm) => (
+        <section key={palm.id} className="fivo-section-liste fivo-section-top5">
+          <h4>
+            {palm.vie && (
+              <span className="fives-couronne" aria-hidden="true">
+                ★
               </span>
-              <button
-                type="button"
-                className="fives-oeuvre"
-                onClick={() => five.id !== null && onOuvrir(five.id, five.oeuvreId, univers)}
-                title={five.titre ?? undefined}
-              >
-                {affiche ? (
-                  <img src={affiche} alt="" loading="lazy" />
-                ) : (
-                  <span className="fives-affiche-vide" aria-hidden="true" />
-                )}
-                <strong dir="auto">{five.titre ?? t.dit('carte.sans_titre')}</strong>
-              </button>
-            </li>
-          )
-        })}
-      </ol>
-    </section>
+            )}
+            <span dir="auto">
+              {palm.titre ?? (palm.vie ? t.dit('liste.top5') : t.dit('fives.sans_titre'))}
+            </span>
+            <button
+              type="button"
+              className="compte-lien fivo-top5-modifier"
+              onClick={onVoirFives}
+            >
+              {t.dit('liste.top5_modifier')}
+            </button>
+          </h4>
+          {palm.oeuvres.length === 0 ? (
+            <p className="fivo-message fivo-message-discret">{t.dit('liste.top5_vide')}</p>
+          ) : (
+            <ol className="fives-cases">
+              {palm.oeuvres.map((five) => {
+                const affiche = urlAffiche(five.affiche, 'w92')
+                return (
+                  <li key={five.rang} className="fives-case fives-case-pleine">
+                    <span className="fives-rang" aria-hidden="true">
+                      {five.rang}
+                    </span>
+                    <button
+                      type="button"
+                      className="fives-oeuvre"
+                      onClick={() =>
+                        five.id !== null && onOuvrir(five.id, five.oeuvreId, univers)
+                      }
+                      title={five.titre ?? undefined}
+                    >
+                      {affiche ? (
+                        <img src={affiche} alt="" loading="lazy" />
+                      ) : (
+                        <span className="fives-affiche-vide" aria-hidden="true" />
+                      )}
+                      <strong dir="auto">{five.titre ?? t.dit('carte.sans_titre')}</strong>
+                    </button>
+                  </li>
+                )
+              })}
+            </ol>
+          )}
+        </section>
+      ))}
+    </>
   )
 
   if (etat === 'servi' && items.length === 0) {
     return (
       <div className="fivo-mes-listes">
-        {sectionTop5}
-        {sectionMoment}
+        {sectionsTops}
         <p className="fivo-message">{t.dit('liste.vide')}</p>
       </div>
     )
@@ -234,8 +219,7 @@ export function MaListe({
   return (
     <div className="fivo-mes-listes">
       <p className="fivo-message fivo-message-discret">{t.dit('liste.tous_univers')}</p>
-      {sectionTop5}
-      {sectionMoment}
+      {sectionsTops}
       {SECTIONS.map(({ statut, titre }) => {
         const dedans = items.filter((item) => item.statut === statut)
         return (

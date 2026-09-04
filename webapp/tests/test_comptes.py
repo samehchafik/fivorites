@@ -41,7 +41,9 @@ class FauxeBase:
         self.comptes: dict[str, dict[str, Any]] = {}
         self.verifs: dict[str, dict[str, Any]] = {}
         self.sessions: dict[str, str | None] = {}
-        self.fives: dict[tuple[str, str, int], int] = {}
+        # id -> {compte, univers, titre, vie, ordre} ; (id, rang) -> oeuvre.
+        self.palmares: dict[str, dict[str, Any]] = {}
+        self.positions: dict[tuple[str, int], int] = {}
         self._resultat: list[tuple] = []
 
     def cursor(self) -> Any:
@@ -128,25 +130,91 @@ class FauxeBase:
                 self._resultat = [
                     (cid, c["pseudo"], c["email"], c["genre"], c["verifie_le"], c["avatar"])
                 ]
+        elif r.startswith("select 1 from visiteur.palmares where"):
+            cid, univers = parametres
+            if any(
+                p["compte"] == cid and p["univers"] == univers and p["vie"]
+                for p in self.palmares.values()
+            ):
+                self._resultat = [(1,)]
+        elif r.startswith("insert into visiteur.palmares ("):
+            import uuid
+
+            cid, univers, titre, vie = parametres
+            pid = str(uuid.uuid4())
+            self.palmares[pid] = {
+                "compte": cid,
+                "univers": univers,
+                "titre": titre,
+                "vie": vie,
+                "ordre": len(self.palmares),
+            }
+            self._resultat = [(pid,)]
+        elif r.startswith("select univers from visiteur.palmares"):
+            pid, cid = parametres
+            palm = self.palmares.get(pid)
+            if palm and palm["compte"] == cid:
+                self._resultat = [(palm["univers"],)]
+        elif r.startswith("update visiteur.palmares set vie = false"):
+            cid, univers = parametres
+            for palm in self.palmares.values():
+                if palm["compte"] == cid and palm["univers"] == univers:
+                    palm["vie"] = False
+        elif r.startswith("update visiteur.palmares set vie = true"):
+            self.palmares[parametres[0]]["vie"] = True
+        elif r.startswith("update visiteur.palmares set titre"):
+            titre, pid = parametres
+            self.palmares[pid]["titre"] = titre
+        elif r.startswith("delete from visiteur.palmares where id"):
+            pid = parametres[0]
+            self.palmares.pop(pid, None)
+            for cle in [k for k in self.positions if k[0] == pid]:
+                del self.positions[cle]
         elif r.startswith(
-            "delete from visiteur.five where compte_id = %s and univers = %s"
-            " and liste = %s and oeuvre_id"
+            "delete from visiteur.palmares_position where palmares_id = %s and oeuvre_id"
         ):
-            cid, univers, liste, oeuvre = parametres
-            for cle in [
-                k
-                for k, v in self.fives.items()
-                if k[0] == cid and k[1] == univers and k[2] == liste and v == oeuvre
-            ]:
-                del self.fives[cle]
-        elif r.startswith("insert into visiteur.five"):
-            cid, univers, liste, rang, oeuvre = parametres
-            self.fives[(cid, univers, liste, rang)] = oeuvre
-        elif r.startswith(
-            "delete from visiteur.five where compte_id = %s and univers = %s"
-            " and liste = %s and rang"
-        ):
-            self.fives.pop((parametres[0], parametres[1], parametres[2], parametres[3]), None)
+            pid, oeuvre = parametres
+            for cle in [k for k, v in self.positions.items() if k[0] == pid and v == oeuvre]:
+                del self.positions[cle]
+        elif r.startswith("insert into visiteur.palmares_position"):
+            pid, rang, oeuvre = parametres
+            self.positions[(pid, rang)] = oeuvre
+        elif r.startswith("delete from visiteur.palmares_position where palmares_id = %s and rang"):
+            self.positions.pop((parametres[0], parametres[1]), None)
+        elif "from visiteur.palmares p" in r:
+            cid, univers = parametres
+            lignes: list[tuple] = []
+            miens = sorted(
+                (
+                    (pid, palm)
+                    for pid, palm in self.palmares.items()
+                    if palm["compte"] == cid and palm["univers"] == univers
+                ),
+                key=lambda duo: (not duo[1]["vie"], duo[1]["ordre"]),
+            )
+            for pid, palm in miens:
+                rangs = sorted(
+                    (rang, oeuvre) for (p, rang), oeuvre in self.positions.items() if p == pid
+                )
+                if not rangs:
+                    lignes.append(
+                        (pid, palm["titre"], palm["vie"], None, None, None, None, None, None)
+                    )
+                for rang, oeuvre in rangs:
+                    lignes.append(
+                        (
+                            pid,
+                            palm["titre"],
+                            palm["vie"],
+                            rang,
+                            oeuvre,
+                            oeuvre - 1000,
+                            f"Œuvre {oeuvre}",
+                            None,
+                            2020,
+                        )
+                    )
+            self._resultat = lignes
         elif "from membre.five f" in r:
             # Les fives de la communauté : la vraie table n'existe pas ici —
             # un five anonyme suffit à verrouiller la forme de la réponse.
@@ -268,30 +336,50 @@ class TestCycleComplet:
         r = client.get("/api/public/compte")
         assert r.json()["compte"]["email"] == "amina@exemple.fr"
 
-        # Les fives s'ouvrent, se posent — et posent le signal « aime ».
+        # Le premier palmarès créé devient d'office « le TOP 5 de ma vie ».
+        r = client.post("/api/public/fives", json={"univers": "series"})
+        assert r.status_code == 200
+        premier = r.json()["palmares"]
+        assert premier["vie"] is True and premier["titre"] is None
+
+        # Poser une œuvre dedans pose aussi le signal « aime ».
         r = client.post(
-            "/api/public/fives", json={"univers": "series", "rang": 1, "oeuvreId": 4280}
+            f"/api/public/fives/{premier['id']}/positions",
+            json={"rang": 1, "oeuvreId": 4280},
         )
         assert r.status_code == 200
         assert signaux.poses and signaux.poses[0][1]["statut"] == "aime"
-        r = client.get("/api/public/fives?univers=series")
-        assert [f["rang"] for f in r.json()["items"]] == [1]
 
-        # Le top du moment est un palmarès à part : y poser la même œuvre ne
-        # touche pas au TOP 5 de ma vie.
-        r = client.post(
-            "/api/public/fives",
-            json={"univers": "series", "liste": "moment", "rang": 2, "oeuvreId": 4280},
+        # Le deuxième naît ordinaire, nommé — puis se fait couronner.
+        r = client.post("/api/public/fives", json={"univers": "series", "titre": "Mes polars"})
+        second = r.json()["palmares"]
+        assert second["vie"] is False and second["titre"] == "Mes polars"
+        assert (
+            client.patch(f"/api/public/fives/{second['id']}", json={"vie": True}).status_code == 200
         )
-        assert r.status_code == 200
-        assert [
-            f["rang"] for f in client.get("/api/public/fives?univers=series").json()["items"]
-        ] == [1]
-        moment = client.get("/api/public/fives?univers=series&liste=moment").json()
-        assert [f["rang"] for f in moment["items"]] == [2]
-        assert moment["liste"] == "moment"
-        # Une liste inconnue : 400, pas un palmarès fantôme.
-        assert client.get("/api/public/fives?univers=series&liste=annee").status_code == 400
+        liste = client.get("/api/public/fives?univers=series").json()["items"]
+        assert [p["vie"] for p in liste] == [True, False]
+        assert liste[0]["titre"] == "Mes polars"
+        assert [o["rang"] for o in liste[1]["oeuvres"]] == [1]
+
+        # Renommer, retirer une position, supprimer un palmarès.
+        assert (
+            client.patch(
+                f"/api/public/fives/{second['id']}", json={"titre": "Mes thrillers"}
+            ).status_code
+            == 200
+        )
+        assert client.delete(f"/api/public/fives/{premier['id']}/positions/1").status_code == 200
+        assert client.delete(f"/api/public/fives/{second['id']}").status_code == 200
+        restants = client.get("/api/public/fives?univers=series").json()["items"]
+        assert [p["id"] for p in restants] == [premier["id"]]
+        assert restants[0]["oeuvres"] == []
+
+        # Le palmarès d'un autre (ou inexistant) : 404 indistinct.
+        assert (
+            client.delete("/api/public/fives/00000000-0000-0000-0000-000000000000").status_code
+            == 404
+        )
 
         # Le profil se modifie : avatar posé, pseudo gardé.
         r = client.patch("/api/public/compte", json={"avatar": "🦊"})
@@ -306,11 +394,6 @@ class TestCycleComplet:
         assert vitrine and vitrine[0]["pseudo"] is None
         assert vitrine[0]["titre"] == "Mes séries cultes"
         assert [o["rang"] for o in vitrine[0]["oeuvres"]] == [1, 2]
-
-        # Retirer, lister : vide — le moment, lui, ne bouge pas.
-        assert client.delete("/api/public/fives/series/vie/1").status_code == 200
-        assert client.get("/api/public/fives?univers=series").json()["items"] == []
-        assert client.delete("/api/public/fives/series/moment/2").status_code == 200
 
     def test_connexion_apres_coup(self, monde) -> None:
         client, courriel, base, _ = monde

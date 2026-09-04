@@ -2152,13 +2152,52 @@
   color: rgba(255, 255, 255, 0.9);
 }
 
-/* Deux palmarès empilés — la vie, puis le moment. */
+/* Les palmarès empilés — celui de ma vie couronné, les autres nommés. */
 .fives-palmares {
   margin-bottom: 1.3rem;
 }
 
-.fives-palmares .fives-titre {
-  margin-top: 0.2rem;
+.fives-palmares-tete {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.fives-palmares-tete .fives-titre {
+  margin: 0;
+}
+
+.fives-couronne {
+  color: gold;
+  font-size: 1rem;
+}
+
+.fives-palmares-gestes {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 0.7rem;
+}
+
+.fives-palmares-gestes .compte-lien {
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.fives-renommage {
+  flex: 1;
+  min-width: 10rem;
+}
+
+.fives-nouveau {
+  margin: 0.2rem 0 1rem;
+}
+
+.fives-nouveau .compte-lien {
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* Les fives de la communauté : des listes anonymes, en vitrine. */

@@ -251,8 +251,14 @@ export interface Compte {
   avatar: string | null
 }
 
-/** Les deux palmarès d'un univers : le TOP 5 de ma vie, le top du moment. */
-export type ListeFive = 'vie' | 'moment'
+/** Un TOP 5 : nommé, par univers — `vie` distingue LE palmarès de ma vie
+ *  (un seul par univers). Les brouillons anonymes portent un id local. */
+export interface Palmares {
+  id: string
+  titre: string | null
+  vie: boolean
+  oeuvres: Five[]
+}
 
 /** Un five : une œuvre à un rang (1-5) d'un univers. */
 export interface Five {
@@ -269,7 +275,6 @@ export interface Five {
  *  masqués), avec le titre que son auteur lui avait donné. */
 export interface FiveCommunaute {
   titre: string | null
-  liste: ListeFive
   pseudo: string | null
   oeuvres: Five[]
 }

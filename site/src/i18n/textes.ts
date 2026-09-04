@@ -595,11 +595,26 @@ export const TEXTES = {
     es: 'Una cuenta (o inicia sesión) y se guarda al instante.',
     ar: 'حساب واحد (أو تسجيل دخول) وتُحفظ فورًا.',
   },
-  'fives.moment': {
-    fr: 'Le TOP du moment',
-    en: 'The TOP right now',
-    es: 'El TOP del momento',
-    ar: 'أفضل ما في هذه الفترة',
+  'fives.nouveau': {
+    fr: 'Créer un nouveau TOP 5',
+    en: 'Create a new TOP 5',
+    es: 'Crear un nuevo TOP 5',
+    ar: 'أنشئ قائمة TOP 5 جديدة',
+  },
+  'fives.sans_titre': { fr: 'Mon TOP 5', en: 'My TOP 5', es: 'Mi TOP 5', ar: 'قائمتي الخمسية' },
+  'fives.promouvoir': {
+    fr: 'En faire mon TOP 5 de ma vie',
+    en: 'Make it the TOP 5 of my life',
+    es: 'Convertirlo en el TOP 5 de mi vida',
+    ar: 'اجعلها أفضل 5 في حياتي',
+  },
+  'fives.renommer': { fr: 'Renommer', en: 'Rename', es: 'Renombrar', ar: 'إعادة تسمية' },
+  'fives.supprimer': { fr: 'Supprimer', en: 'Delete', es: 'Eliminar', ar: 'حذف' },
+  'fives.confirmer_suppression': {
+    fr: 'Supprimer ce TOP 5 et ses œuvres ?',
+    en: 'Delete this TOP 5 and its works?',
+    es: '¿Eliminar este TOP 5 y sus obras?',
+    ar: 'حذف هذه القائمة وأعمالها؟',
   },
   'fives.communaute': {
     fr: 'Les fives de la communauté',

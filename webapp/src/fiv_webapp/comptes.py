@@ -32,8 +32,6 @@ _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 16384, 8, 1
 CODE_VALIDITE_MINUTES = 15
 CODE_TENTATIVES_MAX = 5
 FIVES_RANGS = (1, 2, 3, 4, 5)
-# Les deux palmarès — le vocabulaire de la V1 (periode life/moment), en français.
-FIVES_LISTES = ("vie", "moment")
 
 
 def hacher(mot_de_passe: str) -> str:
@@ -321,92 +319,176 @@ class Comptes:
             avatar=avatar_neuf,
         )
 
-    # --- les fives ----------------------------------------------------------
+    # --- les palmarès -------------------------------------------------------
 
-    async def fives(
-        self,
-        conn: psycopg.AsyncConnection,
-        compte_id: str,
-        univers_interne: str,
-        liste: str = "vie",
+    async def palmares(
+        self, conn: psycopg.AsyncConnection, compte_id: str, univers_interne: str
     ) -> list[dict[str, Any]]:
-        """Les cinq rangs du palmarès demandé, hydratés pour l'affichage —
-        les rangs vides n'apparaissent pas, le front dessine les manquants."""
+        """Tous les TOP 5 de l'univers, positions hydratées — celui de la
+        vie d'abord, puis les autres du plus ancien au plus récent."""
         async with conn.cursor() as cur:
             await cur.execute(
                 """
-                select f.rang, f.oeuvre_id,
+                select p.id, p.titre, p.vie,
+                       pos.rang, pos.oeuvre_id,
                        coalesce(tv.id, mv.id, lv.id),
                        coalesce(tv.name, mv.name, lv.name, o.titre),
                        nullif(coalesce(tv.poster_path, mv.poster_path, lv.poster_path), ''),
                        coalesce(extract(year from tv.first_air_date)::int,
                                 extract(year from mv.first_air_date)::int,
                                 extract(year from lv.first_air_date)::int, o.annee)
-                from visiteur.five f
-                join sourcing.oeuvre o on o.id = f.oeuvre_id
-                left join admin.tv_card tv    on f.univers = 'series' and tv.id = o.id_tmdb
-                left join admin.movie_card mv on f.univers = 'movies' and mv.id = o.id_tmdb
-                left join admin.livre_card lv on f.univers = 'livres' and lv.id = o.id
-                where f.compte_id = %s and f.univers = %s and f.liste = %s
-                order by f.rang
+                from visiteur.palmares p
+                left join visiteur.palmares_position pos on pos.palmares_id = p.id
+                left join sourcing.oeuvre o on o.id = pos.oeuvre_id
+                left join admin.tv_card tv    on p.univers = 'series' and tv.id = o.id_tmdb
+                left join admin.movie_card mv on p.univers = 'movies' and mv.id = o.id_tmdb
+                left join admin.livre_card lv on p.univers = 'livres' and lv.id = o.id
+                where p.compte_id = %s and p.univers = %s
+                order by p.vie desc, p.creation, pos.rang
                 """,
-                (compte_id, univers_interne, liste),
+                (compte_id, univers_interne),
             )
             lignes = await cur.fetchall()
-        return [
-            {
-                "rang": rang,
-                "oeuvreId": oeuvre_id,
-                "id": vignette,
-                "titre": titre,
-                "affiche": affiche,
-                "annee": annee,
-            }
-            for rang, oeuvre_id, vignette, titre, affiche, annee in lignes
-        ]
+        retenus: dict[str, dict[str, Any]] = {}
+        for pid, titre, vie, rang, oeuvre_id, vignette, nom, affiche, annee in lignes:
+            palm = retenus.setdefault(
+                str(pid), {"id": str(pid), "titre": titre, "vie": vie, "oeuvres": []}
+            )
+            if rang is not None:
+                palm["oeuvres"].append(
+                    {
+                        "rang": rang,
+                        "oeuvreId": oeuvre_id,
+                        "id": vignette,
+                        "titre": nom,
+                        "affiche": affiche,
+                        "annee": annee,
+                    }
+                )
+        return list(retenus.values())
 
-    async def poser_five(
+    async def creer_palmares(
         self,
         conn: psycopg.AsyncConnection,
         compte_id: str,
         *,
         univers_interne: str,
-        liste: str = "vie",
+        titre: str | None = None,
+    ) -> dict[str, Any]:
+        """Crée un TOP 5 vide. Le PREMIER d'un univers devient d'office « le
+        TOP 5 de ma vie » — c'est le geste fondateur qu'on attend, et les
+        suivants naissent ordinaires (promouvables ensuite)."""
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select 1 from visiteur.palmares where compte_id = %s and univers = %s and vie",
+                (compte_id, univers_interne),
+            )
+            vie = await cur.fetchone() is None
+            await cur.execute(
+                "insert into visiteur.palmares (compte_id, univers, titre, vie)"
+                " values (%s, %s, %s, %s) returning id",
+                (compte_id, univers_interne, titre, vie),
+            )
+            (palmares_id,) = await cur.fetchone()
+        return {"id": str(palmares_id), "titre": titre, "vie": vie, "oeuvres": []}
+
+    async def _univers_du_palmares(
+        self, conn: psycopg.AsyncConnection, compte_id: str, palmares_id: str
+    ) -> str | None:
+        """L'univers du palmarès SI ce compte le possède — None sinon. C'est
+        la garde de toutes les écritures : pas de palmarès d'autrui."""
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "select univers from visiteur.palmares where id = %s and compte_id = %s",
+                (palmares_id, compte_id),
+            )
+            ligne = await cur.fetchone()
+        return ligne[0] if ligne else None
+
+    async def promouvoir_palmares(
+        self, conn: psycopg.AsyncConnection, compte_id: str, palmares_id: str
+    ) -> bool:
+        """En fait « le TOP 5 de ma vie » de son univers — l'ancien roi
+        redevient un palmarès ordinaire."""
+        univers = await self._univers_du_palmares(conn, compte_id, palmares_id)
+        if univers is None:
+            return False
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update visiteur.palmares set vie = false"
+                " where compte_id = %s and univers = %s and vie",
+                (compte_id, univers),
+            )
+            await cur.execute(
+                "update visiteur.palmares set vie = true where id = %s", (palmares_id,)
+            )
+        return True
+
+    async def renommer_palmares(
+        self,
+        conn: psycopg.AsyncConnection,
+        compte_id: str,
+        palmares_id: str,
+        titre: str | None,
+    ) -> bool:
+        if await self._univers_du_palmares(conn, compte_id, palmares_id) is None:
+            return False
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update visiteur.palmares set titre = %s where id = %s", (titre, palmares_id)
+            )
+        return True
+
+    async def supprimer_palmares(
+        self, conn: psycopg.AsyncConnection, compte_id: str, palmares_id: str
+    ) -> bool:
+        if await self._univers_du_palmares(conn, compte_id, palmares_id) is None:
+            return False
+        async with conn.cursor() as cur:
+            await cur.execute("delete from visiteur.palmares where id = %s", (palmares_id,))
+        return True
+
+    async def poser_position(
+        self,
+        conn: psycopg.AsyncConnection,
+        compte_id: str,
+        palmares_id: str,
+        *,
         rang: int,
         oeuvre_id: int,
-    ) -> None:
-        """Pose l'œuvre au rang — et la retire d'abord de son ancien rang du
-        même palmarès si elle y était : déplacer un five est un geste, pas
-        une erreur. (Elle peut en revanche vivre dans les DEUX palmarès.)"""
+    ) -> str | None:
+        """Pose l'œuvre au rang du palmarès — et la retire d'abord de son
+        ancien rang du MÊME palmarès si elle y était : déplacer est un geste,
+        pas une erreur. Rend l'univers du palmarès (pour le signal), None si
+        le palmarès n'est pas à ce compte."""
+        univers = await self._univers_du_palmares(conn, compte_id, palmares_id)
+        if univers is None:
+            return None
         async with conn.cursor() as cur:
             await cur.execute(
-                "delete from visiteur.five"
-                " where compte_id = %s and univers = %s and liste = %s and oeuvre_id = %s",
-                (compte_id, univers_interne, liste, oeuvre_id),
+                "delete from visiteur.palmares_position where palmares_id = %s and oeuvre_id = %s",
+                (palmares_id, oeuvre_id),
             )
             await cur.execute(
-                "insert into visiteur.five (compte_id, univers, liste, rang, oeuvre_id)"
-                " values (%s, %s, %s, %s, %s)"
-                " on conflict (compte_id, univers, liste, rang) do update"
+                "insert into visiteur.palmares_position (palmares_id, rang, oeuvre_id)"
+                " values (%s, %s, %s)"
+                " on conflict (palmares_id, rang) do update"
                 "   set oeuvre_id = excluded.oeuvre_id, creation = now()",
-                (compte_id, univers_interne, liste, rang, oeuvre_id),
+                (palmares_id, rang, oeuvre_id),
             )
+        return univers
 
-    async def retirer_five(
-        self,
-        conn: psycopg.AsyncConnection,
-        compte_id: str,
-        *,
-        univers_interne: str,
-        liste: str = "vie",
-        rang: int,
-    ) -> None:
+    async def retirer_position(
+        self, conn: psycopg.AsyncConnection, compte_id: str, palmares_id: str, rang: int
+    ) -> bool:
+        if await self._univers_du_palmares(conn, compte_id, palmares_id) is None:
+            return False
         async with conn.cursor() as cur:
             await cur.execute(
-                "delete from visiteur.five"
-                " where compte_id = %s and univers = %s and liste = %s and rang = %s",
-                (compte_id, univers_interne, liste, rang),
+                "delete from visiteur.palmares_position where palmares_id = %s and rang = %s",
+                (palmares_id, rang),
             )
+        return True
 
     # --- les fives de la communauté -----------------------------------------
 

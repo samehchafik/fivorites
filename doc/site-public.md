@@ -453,9 +453,13 @@ plateau s'ouvre au bouton « Commence ton premier five », se compose en
 local (brouillon en localStorage, il survit au détour par la boîte mail),
 et la connexion n'arrive qu'au moment de GARDER (bouton, ou d'elle-même à
 la cinquième case) ; le brouillon est alors versé au compte rang par rang.
-Et il y a désormais **deux palmarès par univers** — « Le TOP 5 de ma vie »
-et « Le TOP du moment », la colonne `liste` ('vie'/'moment', migration
-003_fives_listes) reprenant les periode `life`/`moment` de la V1. Sous les
+Et les palmarès sont devenus LIBRES (migration 004_palmares, qui remplace
+le vie/moment de la 003 à peine née) : on crée **autant de TOP 5 qu'on
+veut**, on les nomme (« Mes polars »…), et UN SEUL porte la couronne « Le
+TOP 5 de ma vie » — le premier créé la reçoit d'office, `PATCH
+/fives/{id} {vie: true}` la déplace (index partiel unique en base). Le
+modèle est celui de la V1 : `visiteur.palmares` + `palmares_position`,
+comme `membre.five` + `five_position` — les fives déjà posés ont migré. Sous les
 siens, **les fives de la communauté** (`GET /fives/communaute`) : des
 listes de membres V1 tirées au sort, ANONYMES par construction — l'import a
 levé `masque` sur tous les membres, leur pseudo ne sort pas, seul le titre
