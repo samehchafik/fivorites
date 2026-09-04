@@ -2185,6 +2185,31 @@
   cursor: pointer;
 }
 
+/* La case « TOP 5 de ma vie » : cochée et dorée sur le couronné, cochable
+   sur les autres pour lui prendre la couronne. */
+.fives-vie-choix {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+}
+
+.fives-vie-choix:has(input:checked) {
+  color: gold;
+}
+
+.fives-vie-choix input {
+  accent-color: var(--fivorites1, #fa0036);
+  cursor: pointer;
+}
+
+.fives-vie-choix input:disabled {
+  cursor: default;
+}
+
 .fives-renommage {
   flex: 1;
   min-width: 10rem;

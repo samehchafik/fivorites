@@ -423,6 +423,19 @@ export function Fives({
                 </h4>
               )}
               <span className="fives-palmares-gestes">
+                {/* La case « TOP 5 de ma vie » est sur CHAQUE palmarès — même
+                    quand il n'y en a qu'un, on voit où ça se joue. Cochée et
+                    figée sur le couronné : la couronne se prend en cochant un
+                    autre, elle ne s'abandonne pas. */}
+                <label className="fives-vie-choix" title={t.dit('fives.promouvoir')}>
+                  <input
+                    type="checkbox"
+                    checked={palm.vie}
+                    disabled={palm.vie}
+                    onChange={() => promouvoir(palm.id)}
+                  />
+                  ★ {t.dit('liste.top5')}
+                </label>
                 <button
                   type="button"
                   className="compte-lien"
@@ -431,22 +444,13 @@ export function Fives({
                   {t.dit('fives.renommer')}
                 </button>
                 {!palm.vie && (
-                  <>
-                    <button
-                      type="button"
-                      className="compte-lien"
-                      onClick={() => promouvoir(palm.id)}
-                    >
-                      ★ {t.dit('fives.promouvoir')}
-                    </button>
-                    <button
-                      type="button"
-                      className="compte-lien"
-                      onClick={() => supprimer(palm.id)}
-                    >
-                      {t.dit('fives.supprimer')}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="compte-lien"
+                    onClick={() => supprimer(palm.id)}
+                  >
+                    {t.dit('fives.supprimer')}
+                  </button>
                 )}
               </span>
             </header>
