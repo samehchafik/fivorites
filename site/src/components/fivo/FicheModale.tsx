@@ -259,19 +259,37 @@ export function FicheModale({
                       {OFFRES[offre.genre] ? t.dit(OFFRES[offre.genre]) : offre.libelle}
                     </span>
                     <ul className="fiche-plateformes">
-                      {offre.plateformes.map((plateforme) => (
-                        <li key={plateforme.nom} title={plateforme.nom}>
-                          {plateforme.logo ? (
-                            <img
-                              src={urlAffiche(plateforme.logo, 'w92') ?? ''}
-                              alt={plateforme.nom}
-                              loading="lazy"
-                            />
-                          ) : (
-                            <span>{plateforme.nom}</span>
-                          )}
-                        </li>
-                      ))}
+                      {offre.plateformes.map((plateforme) => {
+                        const pastille = plateforme.logo ? (
+                          <img
+                            src={urlAffiche(plateforme.logo, 'w92') ?? ''}
+                            alt={plateforme.nom}
+                            loading="lazy"
+                          />
+                        ) : (
+                          <span>{plateforme.nom}</span>
+                        )
+                        return (
+                          <li key={plateforme.nom} title={plateforme.nom}>
+                            {/* TMDB ne donne pas d'URL par offre — chaque
+                                pastille mène à la page « où regarder » de
+                                l'œuvre (JustWatch), où les liens directs
+                                vivent. C'est aussi la voie conforme. */}
+                            {fiche.lienOffres ? (
+                              <a
+                                href={fiche.lienOffres}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                aria-label={`${plateforme.nom} — ${t.dit('fiche.ou_regarder')}`}
+                              >
+                                {pastille}
+                              </a>
+                            ) : (
+                              pastille
+                            )}
+                          </li>
+                        )
+                      })}
                     </ul>
                   </div>
                 ))}

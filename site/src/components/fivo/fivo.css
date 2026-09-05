@@ -1257,6 +1257,18 @@
   display: block;
 }
 
+/* La pastille cliquable : elle mène à la page « où regarder » de l'œuvre. */
+.fiche-plateformes a {
+  display: block;
+  border-radius: 6px;
+  transition: transform 0.1s ease;
+}
+
+.fiche-plateformes a:hover {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 2px white;
+}
+
 /* Sans logo, le nom : une plateforme sans image reste une réponse. */
 .fiche-plateformes li > span {
   display: inline-block;
