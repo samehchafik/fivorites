@@ -271,13 +271,14 @@ export function FicheModale({
                         )
                         return (
                           <li key={plateforme.nom} title={plateforme.nom}>
-                            {/* TMDB ne donne pas d'URL par offre — chaque
-                                pastille mène à la page « où regarder » de
-                                l'œuvre (JustWatch), où les liens directs
-                                vivent. C'est aussi la voie conforme. */}
-                            {fiche.lienOffres ? (
+                            {/* Le lien est LE NÔTRE (la recherche du titre
+                                chez l'enseigne, voir LIENS_PLATEFORMES côté
+                                serveur) — on maîtrise chaque sortie. Sans
+                                lien : pastille muette, pas de destination
+                                qu'on ne contrôle pas. */}
+                            {plateforme.lien ? (
                               <a
-                                href={fiche.lienOffres}
+                                href={plateforme.lien}
                                 target="_blank"
                                 rel="noreferrer noopener"
                                 aria-label={`${plateforme.nom} — ${t.dit('fiche.ou_regarder')}`}

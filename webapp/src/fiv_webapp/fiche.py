@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote
 
 import psycopg
 from psycopg.rows import dict_row
@@ -135,13 +136,15 @@ class Episode:
 
 @dataclass(frozen=True, slots=True)
 class Plateforme:
-    """Un service, tel que JustWatch le rend à travers TMDB."""
+    """Un service, tel que JustWatch le rend à travers TMDB — plus NOTRE
+    lien sortant (recherche du titre chez l'enseigne), quand on en a un."""
 
     nom: str
     logo: str | None
+    lien: str | None = None
 
     def publique(self) -> dict[str, Any]:
-        return {"nom": self.nom, "logo": self.logo}
+        return {"nom": self.nom, "logo": self.logo, "lien": self.lien}
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +237,36 @@ class Video:
 # nomment la même chose pareil. Le libellé français part quand même dans la
 # réponse : le site public traduit par le CODE (`offre.flatrate`…), l'admin,
 # qui n'existe qu'en français, se sert du libellé.
+# Les liens sortants par plateforme — LES NÔTRES, pas ceux de TMDB : la
+# demande explicite est de maîtriser où mènent les clics. TMDB ne fournit
+# pas d'URL par offre (l'actif de JustWatch) ; on construit donc un lien de
+# RECHERCHE du titre sur le site de chaque enseigne connue, par son
+# `provider_id` (stable d'un pays à l'autre). Une enseigne absente de la
+# table ne rend pas de lien — sa pastille reste muette, plutôt qu'un lien
+# qu'on ne contrôle pas.
+LIENS_PLATEFORMES: dict[int, str] = {
+    8: "https://www.netflix.com/search?q={titre}",  # Netflix
+    1796: "https://www.netflix.com/search?q={titre}",  # Netflix Standard with Ads
+    9: "https://www.primevideo.com/search/?phrase={titre}",  # Amazon Prime Video
+    119: "https://www.primevideo.com/search/?phrase={titre}",  # Amazon Prime Video
+    10: "https://www.primevideo.com/search/?phrase={titre}",  # Amazon Video (achat)
+    337: "https://www.disneyplus.com/search?q={titre}",  # Disney Plus
+    350: "https://tv.apple.com/fr/search?term={titre}",  # Apple TV+
+    2: "https://tv.apple.com/fr/search?term={titre}",  # Apple TV Store
+    381: "https://www.canalplus.com/recherche?q={titre}",  # Canal+
+    58: "https://www.canalplus.com/recherche?q={titre}",  # Canal VOD
+    1899: "https://play.max.com/search?q={titre}",  # Max
+    531: "https://www.paramountplus.com/fr/search/",  # Paramount+ (pas de q stable)
+    283: "https://www.crunchyroll.com/fr/search?q={titre}",  # Crunchyroll
+    415: "https://animationdigitalnetwork.com/recherche?search={titre}",  # ADN
+    192: "https://www.youtube.com/results?search_query={titre}",  # YouTube
+    188: "https://www.youtube.com/results?search_query={titre}",  # YouTube Premium
+    236: "https://www.france.tv/recherche/?q={titre}",  # France TV
+    234: "https://www.arte.tv/fr/search/?q={titre}",  # Arte
+    35: "https://www.rakuten.tv/fr/search?q={titre}",  # Rakuten TV
+}
+
+
 OFFRES = (
     ("flatrate", "Par abonnement"),
     ("free", "Gratuit"),
@@ -649,7 +682,7 @@ class Fiches:
             distribution=self._distribution(ligne.get("distribution")),
             realisation=self._realisation(ligne.get("realisation"), ligne.get("creation")),
             saisons=self._saisons(ligne.get("saisons")),
-            offres=self._offres(ligne.get("offres")),
+            offres=self._offres(ligne.get("offres"), titre_traduit or ligne.get("titre")),
             lien_offres=(ligne.get("offres") or {}).get("link"),
             pays_offres=list(ligne.get("pays_offres") or []),
             videos=self._videos(videos),
@@ -770,17 +803,29 @@ class Fiches:
             )
         return sorted(retenues, key=lambda saison: saison.numero)
 
-    def _offres(self, offres: dict[str, Any] | None) -> list[Offre]:
+    def _offres(self, offres: dict[str, Any] | None, titre: str | None) -> list[Offre]:
         """Les façons de regarder l'œuvre, dans l'ordre d'intérêt.
 
         Les plateformes de chaque type sont triées par `display_priority` —
         l'ordre que JustWatch juge pertinent pour le pays, et le seul dont on
         dispose. Un type sans plateforme ne produit pas de ligne vide.
+        Chaque plateforme CONNUE reçoit notre lien sortant — la recherche du
+        titre chez elle (voir LIENS_PLATEFORMES).
         """
+        recherche = quote(titre.strip()) if titre and titre.strip() else None
         retenues: list[Offre] = []
         for genre, libelle in OFFRES:
             plateformes = [
-                Plateforme(nom=nom, logo=fournisseur.get("logo_path"))
+                Plateforme(
+                    nom=nom,
+                    logo=fournisseur.get("logo_path"),
+                    lien=(
+                        gabarit.format(titre=recherche)
+                        if recherche
+                        and (gabarit := LIENS_PLATEFORMES.get(fournisseur.get("provider_id")))
+                        else None
+                    ),
+                )
                 for fournisseur in sorted(
                     (offres or {}).get(genre) or [],
                     key=lambda f: f.get("display_priority") or 0,

@@ -59,6 +59,9 @@ export interface Filtres {
 export interface Plateforme {
   nom: string
   logo: string | null
+  /** NOTRE lien sortant — la recherche du titre chez l'enseigne. Nul :
+   *  enseigne inconnue de notre table, la pastille n'est pas cliquable. */
+  lien: string | null
 }
 
 /** Une façon de regarder l'œuvre, et qui la propose. */
