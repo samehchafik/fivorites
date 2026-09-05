@@ -32,6 +32,22 @@ SOURCE = "wikidata"
 SPARQL_URL = "https://query.wikidata.org/sparql"
 ENTITY_URL = "https://www.wikidata.org/w/api.php"
 
+# Les identifiants de titre par plateforme, pour cent œuvres d'un coup.
+# Mesuré le 2026-09-01 : Lucifer (P4983 = 63174) rend Netflix 80057918,
+# Prime B01AMXSQE6, Apple umc.cmc.3vmo… — les pages exactes des titres.
+LIENS_LOT = """
+SELECT ?tmdb ?netflix ?prime ?disney ?apple ?crunchyroll
+WHERE {
+  VALUES ?tmdb { %(valeurs)s }
+  ?item wdt:%(propriete)s ?tmdb .
+  OPTIONAL { ?item wdt:P1874 ?netflix }
+  OPTIONAL { ?item wdt:P8055 ?prime }
+  OPTIONAL { ?item wdt:%(disney)s ?disney }
+  OPTIONAL { ?item wdt:%(apple)s ?apple }
+  OPTIONAL { ?item wdt:P4110 ?crunchyroll }
+}
+"""
+
 # Un seul motif, paramétré par la propriété d'entrée. Les faits demandés sont
 # ceux dont la couche 1 aura besoin — pays et langue pour la taxonomie
 # « origine », P915/P840 pour la couche géographique.
@@ -315,6 +331,29 @@ class WikidataClient:
                 "format": "json",
             },
         )
+
+    async def liens_plateformes_lot(
+        self,
+        ids: Sequence[int],
+        *,
+        propriete: str = "P4983",
+        disney: str = "P7596",
+        apple: str = "P9751",
+    ) -> FetchResult:
+        """Les identifiants de titre par plateforme, pour un lot d'ids TMDB.
+
+        C'est le répertoire qui permet un lien EXACT (netflix.com/title/…)
+        au lieu d'une page de recherche. Les propriétés Disney+ et Apple TV
+        diffèrent entre séries et films — l'appelant passe les bonnes.
+        """
+        valeurs = " ".join(f'"{int(i)}"' for i in ids)
+        requete = LIENS_LOT % {
+            "valeurs": valeurs,
+            "propriete": propriete,
+            "disney": disney,
+            "apple": apple,
+        }
+        return await self._fetcher.get_json(SPARQL_URL, {"query": requete, "format": "json"})
 
     async def by_imdb(self, imdb_id: str) -> FetchResult:
         return await self._sparql("P345", imdb_id)

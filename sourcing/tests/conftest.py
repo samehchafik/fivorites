@@ -56,6 +56,7 @@ async def conn(settings: Settings):
         # échouerait sur la contrainte.
         await connection.execute(
             "truncate raw_source, fetch_state, tmdb_catalog, riche_source, oeuvre,"
+            " lien_plateforme,"
             " video, video_scan,"
             " rss_feed, raw_rss_item, actualite, actualite_typage, actualite_curseur,"
             # Depuis la migration 013, les tables `membre` rangent tops,

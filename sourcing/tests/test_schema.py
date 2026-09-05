@@ -28,6 +28,7 @@ async def test_les_tables_de_collecte_sont_dans_le_schema_sourcing(conn, setting
         "actualite_curseur",
         "actualite_typage",
         "fetch_state",
+        "lien_plateforme",
         "oeuvre",
         "raw_rss_item",
         "raw_source",

@@ -29,6 +29,11 @@ run enrich --order recent  # leur enrichissement (les autres sont déjà vues)
 # et APRÈS backfill — c'est lui qui fait grossir le brut, donc c'est sa fin qui
 # rend les diffs disponibles. `|| true` : rien en aval ne fait échouer la passe.
 run actualite-derive || true
+# Le répertoire des pages de titre par plateforme (Wikidata, par lots
+# SPARQL) : idempotent, rattrape les documents fraîchement importés. La
+# fiche fait un lien EXACT quand il est là, une recherche sinon — `|| true` :
+# une vitrine incomplète n'est pas une collecte ratée.
+run liens-plateformes || true
 docker compose run --rm admin catalog refresh   # la grille de l'admin
 # L'index de recherche rattrape ce que la passe vient d'importer — APRÈS le
 # refresh : la synchronisation relit les métadonnées dans la projection.

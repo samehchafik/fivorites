@@ -469,6 +469,29 @@ l'en-tête** : un îlot React séparé (`CompteEntete`, sans Mantine), tenu
 d'accord avec le module par deux CustomEvent sur `window`
 (`fivo:compte`, `fivo:ouvrir-connexion` — voir `compteBus.ts`).
 
+## Les liens sortants des plateformes
+
+*Ajouté le 1er septembre 2026.*
+
+Deux étages, tous deux À NOUS (la consigne : « maîtriser les liens
+sortants ») :
+
+1. **La page exacte du titre** quand on la connaît : `sourcing
+   liens-plateformes` récolte sur Wikidata, par lots SPARQL de 200 et par
+   nos clés TMDB (P4947/P4983), l'identifiant du titre chez Netflix
+   (P1874), Prime Video (P8055), Disney+ (P7595/P7596), Apple TV
+   (P9586/P9751) et Crunchyroll (P4110) → `sourcing.lien_plateforme`. La
+   fiche en fait `netflix.com/title/80057918`… La commande est idempotente
+   et dans le nightly. Couverture mesurée : ~4 800 séries et ~26 100 films
+   rien que pour Netflix — les titres populaires d'abord, c'est ce qu'on
+   veut.
+2. **La recherche du titre chez l'enseigne** sinon : la table
+   `LIENS_PLATEFORMES` de `webapp/fiche.py` (provider_id → gabarit,
+   dix-huit enseignes). Une enseigne hors table = pastille non cliquable —
+   jamais une destination qu'on ne contrôle pas. La mention de source
+   JustWatch/TMDB reste en pied de section : c'est leur condition d'usage,
+   plus le chemin du clic.
+
 ## Ce qui reste devant
 
 * **Le rattrapage des empreintes reste LE chantier du moteur.** L'index

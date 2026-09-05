@@ -267,6 +267,45 @@ LIENS_PLATEFORMES: dict[int, str] = {
 }
 
 
+# Le RÉPERTOIRE des pages exactes : `sourcing.lien_plateforme` (récolté sur
+# Wikidata par `fiv-sourcing liens-plateformes`) donne l'identifiant du titre
+# chez l'enseigne — ces gabarits en font l'URL de SA page. Quand le
+# répertoire ne connaît pas l'œuvre, le lien de recherche ci-dessus reste le
+# repli. Disney+ et Apple TV n'ont pas le même chemin selon l'univers.
+LIENS_TITRES = {
+    "netflix": "https://www.netflix.com/title/{id}",
+    "prime": "https://www.primevideo.com/detail/{id}",
+    "crunchyroll": "https://www.crunchyroll.com/{id}",
+}
+
+LIENS_TITRES_PAR_UNIVERS = {
+    ("disney", "series"): "https://www.disneyplus.com/fr-fr/series/wd/{id}",
+    ("disney", "films"): "https://www.disneyplus.com/fr-fr/movies/wd/{id}",
+    ("apple", "series"): "https://tv.apple.com/fr/show/{id}",
+    ("apple", "films"): "https://tv.apple.com/fr/movie/{id}",
+}
+
+# provider_id TMDB → la clé du répertoire. Les enseignes hors répertoire
+# (Canal+, Arte…) gardent leur lien de recherche.
+FOURNISSEURS_CLES = {
+    8: "netflix",
+    1796: "netflix",
+    9: "prime",
+    119: "prime",
+    10: "prime",
+    337: "disney",
+    350: "apple",
+    2: "apple",
+    283: "crunchyroll",
+}
+
+_LIENS_TITRES_SQL = """
+    select plateforme, identifiant
+    from sourcing.lien_plateforme
+    where oeuvre_id = %(oeuvre_id)s
+"""
+
+
 OFFRES = (
     ("flatrate", "Par abonnement"),
     ("free", "Gratuit"),
@@ -636,6 +675,10 @@ class Fiches:
                 return None
             await cur.execute(_PIVOT, {"univers": univers.interne, "id": identifiant})
             pivot = await cur.fetchone()
+            titres_connus: list[dict[str, Any]] = []
+            if pivot:
+                await cur.execute(_LIENS_TITRES_SQL, {"oeuvre_id": pivot["id"]})
+                titres_connus = await cur.fetchall()
             await cur.execute(
                 _VIDEOS,
                 {
@@ -682,7 +725,11 @@ class Fiches:
             distribution=self._distribution(ligne.get("distribution")),
             realisation=self._realisation(ligne.get("realisation"), ligne.get("creation")),
             saisons=self._saisons(ligne.get("saisons")),
-            offres=self._offres(ligne.get("offres"), titre_traduit or ligne.get("titre")),
+            offres=self._offres(
+                ligne.get("offres"),
+                titre_traduit or ligne.get("titre"),
+                self._liens_titres(titres_connus, univers.slug),
+            ),
             lien_offres=(ligne.get("offres") or {}).get("link"),
             pays_offres=list(ligne.get("pays_offres") or []),
             videos=self._videos(videos),
@@ -803,35 +850,55 @@ class Fiches:
             )
         return sorted(retenues, key=lambda saison: saison.numero)
 
-    def _offres(self, offres: dict[str, Any] | None, titre: str | None) -> list[Offre]:
+    def _liens_titres(self, lignes: list[dict[str, Any]], univers_slug: str) -> dict[str, str]:
+        """Les URL de page EXACTE, par clé de plateforme — construites depuis
+        le répertoire `lien_plateforme` et nos gabarits."""
+        liens: dict[str, str] = {}
+        for ligne in lignes:
+            plateforme = ligne["plateforme"]
+            gabarit = LIENS_TITRES.get(plateforme) or LIENS_TITRES_PAR_UNIVERS.get(
+                (plateforme, univers_slug)
+            )
+            if gabarit:
+                liens[plateforme] = gabarit.format(id=quote(ligne["identifiant"], safe="/.-"))
+        return liens
+
+    def _offres(
+        self,
+        offres: dict[str, Any] | None,
+        titre: str | None,
+        liens_titres: dict[str, str] | None = None,
+    ) -> list[Offre]:
         """Les façons de regarder l'œuvre, dans l'ordre d'intérêt.
 
         Les plateformes de chaque type sont triées par `display_priority` —
         l'ordre que JustWatch juge pertinent pour le pays, et le seul dont on
         dispose. Un type sans plateforme ne produit pas de ligne vide.
-        Chaque plateforme CONNUE reçoit notre lien sortant — la recherche du
-        titre chez elle (voir LIENS_PLATEFORMES).
+
+        Le lien de chaque plateforme est LE NÔTRE, avec deux étages : la page
+        EXACTE du titre quand le répertoire la connaît, la recherche du titre
+        chez l'enseigne sinon (voir LIENS_TITRES et LIENS_PLATEFORMES).
         """
         recherche = quote(titre.strip()) if titre and titre.strip() else None
+        exacts = liens_titres or {}
         retenues: list[Offre] = []
         for genre, libelle in OFFRES:
-            plateformes = [
-                Plateforme(
-                    nom=nom,
-                    logo=fournisseur.get("logo_path"),
-                    lien=(
-                        gabarit.format(titre=recherche)
-                        if recherche
-                        and (gabarit := LIENS_PLATEFORMES.get(fournisseur.get("provider_id")))
-                        else None
-                    ),
+            plateformes: list[Plateforme] = []
+            for fournisseur in sorted(
+                (offres or {}).get(genre) or [],
+                key=lambda f: f.get("display_priority") or 0,
+            ):
+                nom = (fournisseur.get("provider_name") or "").strip()
+                if not nom:
+                    continue
+                identifiant = fournisseur.get("provider_id")
+                lien = exacts.get(FOURNISSEURS_CLES.get(identifiant, ""))
+                if lien is None and recherche:
+                    gabarit = LIENS_PLATEFORMES.get(identifiant)
+                    lien = gabarit.format(titre=recherche) if gabarit else None
+                plateformes.append(
+                    Plateforme(nom=nom, logo=fournisseur.get("logo_path"), lien=lien)
                 )
-                for fournisseur in sorted(
-                    (offres or {}).get(genre) or [],
-                    key=lambda f: f.get("display_priority") or 0,
-                )
-                if (nom := (fournisseur.get("provider_name") or "").strip())
-            ]
             if plateformes:
                 retenues.append(Offre(genre=genre, libelle=libelle, plateformes=plateformes))
         return retenues

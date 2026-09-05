@@ -347,6 +347,62 @@ def enrich(
         typer.echo("Interrompu. Relancer la même commande reprend où on s'est arrêté.")
 
 
+@app.command("liens-plateformes")
+def liens_plateformes(
+    univers: Annotated[
+        str, typer.Option("--univers", help="series, movies — ou all (défaut).")
+    ] = "all",
+    lot: Annotated[int, typer.Option("--lot", help="Œuvres par requête SPARQL.")] = 200,
+) -> None:
+    """Récolte sur Wikidata l'identifiant du titre chez chaque plateforme.
+
+    C'est le répertoire des pages exactes : netflix.com/title/…,
+    primevideo.com/detail/… Le site s'en sert quand il l'a, et retombe sur
+    la page de recherche de l'enseigne sinon. Idempotent — à relancer au fil
+    des nouveaux documents (le nightly le fait).
+    """
+    from fiv_sourcing.enrich import build_fetcher
+    from fiv_sourcing.liens import PROPRIETES, recolter
+    from fiv_sourcing.sources.wikidata import WikidataClient
+
+    settings = get_settings()
+    cibles = list(PROPRIETES) if univers == "all" else [univers]
+    for cible in cibles:
+        if cible not in PROPRIETES:
+            typer.echo(f"ERREUR : univers inconnu ou sans plateformes : {cible}")
+            raise typer.Exit(2)
+
+    async def run() -> list[dict]:
+        rapports = []
+        async with connect(settings.database_url, schema=settings.db_schema) as conn:
+            fetcher = build_fetcher(settings)
+            async with fetcher:
+                client = WikidataClient(fetcher)
+                for cible in cibles:
+                    rapports.append(
+                        await recolter(
+                            conn,
+                            client,
+                            univers=cible,
+                            lot=lot,
+                            avancement=lambda fait, total: (
+                                typer.echo(f"  … {fait}/{total}", nl=True)
+                                if fait % 2000 == 0 or fait == total
+                                else None
+                            ),
+                        )
+                    )
+        return rapports
+
+    for rapport in _run_db(run):
+        detail = ", ".join(f"{nom} {n}" for nom, n in rapport["parPlateforme"].items())
+        typer.echo(
+            f"{rapport['univers']} : {rapport['liens']} lien(s) posés sur "
+            f"{rapport['oeuvres']} œuvres ({detail or 'aucun'})"
+            + (f" — {rapport['lotsEnErreur']} lot(s) en erreur" if rapport["lotsEnErreur"] else "")
+        )
+
+
 @app.command()
 def videos(
     ids: Annotated[
